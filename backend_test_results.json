@@ -1,52 +1,64 @@
 {
   "summary": {
-    "total_tests": 7,
-    "passed_tests": 6,
-    "success_rate": "85.7%",
-    "timestamp": "2026-03-14T17:54:13.289561"
+    "total_tests": 9,
+    "passed_tests": 8,
+    "success_rate": "88.9%",
+    "timestamp": "2026-03-14T18:08:45.529089"
   },
   "test_results": [
     {
       "test": "Health Check",
       "success": true,
       "details": "Status: healthy",
-      "timestamp": "2026-03-14T17:53:52.260482"
+      "timestamp": "2026-03-14T18:08:24.005748"
     },
     {
-      "test": "Chains Configuration",
+      "test": "Chains + Contracts Configuration",
       "success": true,
-      "details": "Found 3 chains",
-      "timestamp": "2026-03-14T17:53:52.385631"
+      "details": "Found 3 chains with Uniswap integration",
+      "timestamp": "2026-03-14T18:08:24.274255"
+    },
+    {
+      "test": "Swap Tokens API",
+      "success": true,
+      "details": "Found 3 tokens for base_sepolia",
+      "timestamp": "2026-03-14T18:08:24.388811"
+    },
+    {
+      "test": "Swap Quote API",
+      "success": true,
+      "details": "Quote: 999500000000000000 output, 0.05% fee",
+      "timestamp": "2026-03-14T18:08:24.554938"
     },
     {
       "test": "Stealth Address Generation",
       "success": true,
-      "details": "Generated: 0x5C585C14...",
-      "timestamp": "2026-03-14T17:53:52.518819"
+      "details": "Generated: 0x3fFd9aEc...",
+      "timestamp": "2026-03-14T18:08:24.740637"
     },
     {
       "test": "Dual-Key Wallet Creation",
       "success": true,
-      "details": "Main: 0x360EF762..., Privacy: 0x4F3A8A29...",
-      "timestamp": "2026-03-14T17:53:52.734299"
+      "details": "Main: 0x39b08D02..., Privacy: 0x2936e180...",
+      "timestamp": "2026-03-14T18:08:24.975625"
     },
     {
       "test": "Encrypted Receipt System",
       "success": true,
-      "details": "Receipt ID: 41ec3f5f...",
-      "timestamp": "2026-03-14T17:53:53.102435"
+      "details": "Receipt ID: 7583e07a...",
+      "timestamp": "2026-03-14T18:08:25.342293"
     },
     {
       "test": "Transaction Recording",
       "success": true,
-      "details": "Transaction ID: 2bdde989...",
-      "timestamp": "2026-03-14T17:53:53.219348"
+      "details": "Transaction ID: 471db3c5...",
+      "timestamp": "2026-03-14T18:08:25.454794"
     },
     {
       "test": "Balance Aggregation",
       "success": false,
       "details": "HTTPSConnectionPool(host='doc-to-deployment.preview.emergentagent.com', port=443): Read timed out. (read timeout=20)",
-      "timestamp": "2026-03-14T17:54:13.289427"
+      "timestamp": "2026-03-14T18:08:45.528922"
     }
   ]
 }
