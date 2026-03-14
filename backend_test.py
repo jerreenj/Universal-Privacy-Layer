@@ -319,6 +319,95 @@ class UPLAPITester:
             self.log_test("Balance Aggregation", False, str(e))
         return False
 
+    def test_swap_tokens_endpoint(self):
+        """Test /api/swap/tokens/{chain} endpoint"""
+        try:
+            test_chain = "base_sepolia"
+            response = requests.get(f"{self.api_url}/swap/tokens/{test_chain}", timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "chain" in data and "tokens" in data:
+                    if data["chain"] == test_chain:
+                        tokens = data["tokens"]
+                        # Should have at least ETH, WETH, USDC
+                        expected_symbols = ["ETH", "WETH", "USDC"]
+                        found_symbols = [token["symbol"] for token in tokens]
+                        
+                        if all(symbol in found_symbols for symbol in expected_symbols):
+                            # Validate token structure
+                            valid_tokens = True
+                            for token in tokens:
+                                required_fields = ["symbol", "name", "address", "decimals"]
+                                if not all(field in token for field in required_fields):
+                                    valid_tokens = False
+                                    break
+                            
+                            if valid_tokens:
+                                self.log_test("Swap Tokens API", True, f"Found {len(tokens)} tokens for {test_chain}")
+                                return True
+                            else:
+                                self.log_test("Swap Tokens API", False, "Invalid token structure")
+                        else:
+                            missing = [s for s in expected_symbols if s not in found_symbols]
+                            self.log_test("Swap Tokens API", False, f"Missing tokens: {missing}")
+                    else:
+                        self.log_test("Swap Tokens API", False, f"Chain mismatch: expected {test_chain}, got {data['chain']}")
+                else:
+                    self.log_test("Swap Tokens API", False, "Missing 'chain' or 'tokens' field")
+            else:
+                self.log_test("Swap Tokens API", False, f"Status code: {response.status_code}, Response: {response.text}")
+        except Exception as e:
+            self.log_test("Swap Tokens API", False, str(e))
+        return False
+
+    def test_swap_quote_endpoint(self):
+        """Test /api/swap/quote endpoint"""
+        try:
+            payload = {
+                "chain": "base_sepolia",
+                "token_in": "ETH",
+                "token_out": "USDC",
+                "amount_in": "1000000000000000000"  # 1 ETH in wei
+            }
+            
+            response = requests.post(
+                f"{self.api_url}/swap/quote", 
+                json=payload, 
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                required_fields = ["chain", "token_in", "token_out", "amount_in", "fee", "fee_percent", "amount_after_fee", "estimated_output", "uniswap_router"]
+                
+                if all(field in data for field in required_fields):
+                    # Validate fee calculation
+                    amount_in = int(data["amount_in"])
+                    fee = int(data["fee"])
+                    amount_after_fee = int(data["amount_after_fee"])
+                    
+                    # Fee should be 0.05% = 5 basis points
+                    expected_fee = amount_in * 5 // 10000
+                    expected_after_fee = amount_in - expected_fee
+                    
+                    if fee == expected_fee and amount_after_fee == expected_after_fee:
+                        if data["fee_percent"] == "0.05%":
+                            self.log_test("Swap Quote API", True, f"Quote: {data['estimated_output']} output, {data['fee_percent']} fee")
+                            return True
+                        else:
+                            self.log_test("Swap Quote API", False, f"Incorrect fee percentage: {data['fee_percent']}")
+                    else:
+                        self.log_test("Swap Quote API", False, f"Fee calculation error: expected {expected_fee}, got {fee}")
+                else:
+                    missing = [f for f in required_fields if f not in data]
+                    self.log_test("Swap Quote API", False, f"Missing fields: {missing}")
+            else:
+                self.log_test("Swap Quote API", False, f"Status code: {response.status_code}, Response: {response.text}")
+        except Exception as e:
+            self.log_test("Swap Quote API", False, str(e))
+        return False
+
     def run_all_tests(self):
         """Run all backend API tests"""
         print("🚀 Starting Universal Privacy Layer Backend Tests")
