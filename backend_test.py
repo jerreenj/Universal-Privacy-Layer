@@ -418,6 +418,10 @@ class UPLAPITester:
         self.test_health_endpoint()
         self.test_chains_endpoint()
         
+        # New Uniswap integration tests
+        self.test_swap_tokens_endpoint()
+        self.test_swap_quote_endpoint()
+        
         # Cryptography tests
         self.test_stealth_address_generation()
         self.test_wallet_creation()
