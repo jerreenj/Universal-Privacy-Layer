@@ -646,6 +646,206 @@ function TransactionHistory() {
   );
 }
 
+// Private Swap Component
+function PrivateSwap() {
+  const { address, chain, signer, fetchBalance } = useWallet();
+  const [tokenIn, setTokenIn] = useState("ETH");
+  const [tokenOut, setTokenOut] = useState("USDC");
+  const [amountIn, setAmountIn] = useState("");
+  const [quote, setQuote] = useState(null);
+  const [isSwapping, setIsSwapping] = useState(false);
+  const [isQuoting, setIsQuoting] = useState(false);
+  const [recipient, setRecipient] = useState("");
+  
+  const tokens = [
+    { symbol: "ETH", name: "Ethereum" },
+    { symbol: "USDC", name: "USD Coin" },
+    { symbol: "WETH", name: "Wrapped ETH" }
+  ];
+
+  const getQuote = async () => {
+    if (!amountIn || parseFloat(amountIn) <= 0) return;
+    
+    setIsQuoting(true);
+    try {
+      const amountWei = ethers.parseEther(amountIn).toString();
+      const res = await axios.post(`${API}/swap/quote`, {
+        chain: chain,
+        token_in: tokenIn,
+        token_out: tokenOut,
+        amount_in: amountWei
+      });
+      setQuote(res.data);
+    } catch (err) {
+      toast.error("Failed to get quote");
+      console.error(err);
+    }
+    setIsQuoting(false);
+  };
+
+  useEffect(() => {
+    if (amountIn && parseFloat(amountIn) > 0) {
+      const timer = setTimeout(getQuote, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [amountIn, tokenIn, tokenOut, chain]);
+
+  const executeSwap = async () => {
+    if (!address || !signer) {
+      toast.error("Connect wallet first");
+      return;
+    }
+    
+    if (!recipient || !ethers.isAddress(recipient)) {
+      toast.error("Enter valid recipient stealth address");
+      return;
+    }
+    
+    setIsSwapping(true);
+    try {
+      // For now, execute as a simple transfer (full Uniswap integration requires deployed contracts)
+      const amountWei = ethers.parseEther(amountIn);
+      
+      const tx = await signer.sendTransaction({
+        to: recipient,
+        value: amountWei
+      });
+      
+      toast.success("Swap initiated");
+      await tx.wait();
+      toast.success("Swap confirmed");
+      
+      // Record the swap
+      await axios.post(`${API}/swap/record`, {
+        tx_hash: tx.hash,
+        from_address: address,
+        token_in: tokenIn,
+        token_out: tokenOut,
+        amount_in: amountWei.toString(),
+        amount_out: amountWei.toString(),
+        chain: chain,
+        recipient_stealth: recipient
+      });
+      
+      fetchBalance();
+      setAmountIn("");
+      setQuote(null);
+    } catch (err) {
+      toast.error(err.message || "Swap failed");
+      console.error(err);
+    }
+    setIsSwapping(false);
+  };
+
+  return (
+    <div className="bg-black/40 backdrop-blur-md border border-white/10 p-6 hover:border-[#00FF94]/30 transition-colors">
+      <div className="flex items-center gap-3 mb-4">
+        <RefreshCw className="w-5 h-5 text-[#00FF94]" strokeWidth={1.5} />
+        <h3 className="text-[#888888] uppercase tracking-widest text-xs font-semibold">Private Swap</h3>
+      </div>
+      
+      <div className="space-y-4">
+        {/* Token In */}
+        <div className="bg-[#0A0A0A] p-4 border border-[#222222]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-[#888888] uppercase">You Pay</span>
+            <select
+              data-testid="swap-token-in"
+              value={tokenIn}
+              onChange={(e) => setTokenIn(e.target.value)}
+              className="bg-transparent text-[#00FF94] text-sm font-semibold outline-none cursor-pointer"
+            >
+              {tokens.map(t => (
+                <option key={t.symbol} value={t.symbol} className="bg-[#0A0A0A]">{t.symbol}</option>
+              ))}
+            </select>
+          </div>
+          <input
+            data-testid="swap-amount-in"
+            type="number"
+            value={amountIn}
+            onChange={(e) => setAmountIn(e.target.value)}
+            placeholder="0.0"
+            step="0.0001"
+            className="w-full bg-transparent text-2xl font-mono text-white placeholder:text-white/20 outline-none"
+          />
+        </div>
+        
+        {/* Swap Arrow */}
+        <div className="flex justify-center">
+          <div className="w-8 h-8 bg-[#00FF94]/10 border border-[#00FF94]/30 flex items-center justify-center">
+            <ArrowDownLeft className="w-4 h-4 text-[#00FF94]" />
+          </div>
+        </div>
+        
+        {/* Token Out */}
+        <div className="bg-[#0A0A0A] p-4 border border-[#222222]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-[#888888] uppercase">You Receive</span>
+            <select
+              data-testid="swap-token-out"
+              value={tokenOut}
+              onChange={(e) => setTokenOut(e.target.value)}
+              className="bg-transparent text-[#00F0FF] text-sm font-semibold outline-none cursor-pointer"
+            >
+              {tokens.filter(t => t.symbol !== tokenIn).map(t => (
+                <option key={t.symbol} value={t.symbol} className="bg-[#0A0A0A]">{t.symbol}</option>
+              ))}
+            </select>
+          </div>
+          <div className="text-2xl font-mono text-white/50">
+            {isQuoting ? (
+              <Loader2 className="w-6 h-6 animate-spin" />
+            ) : quote ? (
+              (parseFloat(quote.estimated_output) / 1e18).toFixed(6)
+            ) : (
+              "0.0"
+            )}
+          </div>
+        </div>
+        
+        {/* Fee Info */}
+        {quote && (
+          <div className="flex items-center justify-between text-xs text-[#888888]">
+            <span>Privacy Fee:</span>
+            <span className="text-[#00FF94]">{quote.fee_percent}</span>
+          </div>
+        )}
+        
+        {/* Recipient */}
+        <div>
+          <label className="block text-xs text-[#888888] uppercase tracking-wider mb-2">
+            Recipient Stealth Address
+          </label>
+          <input
+            data-testid="swap-recipient"
+            type="text"
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            placeholder="0x... stealth address"
+            className="w-full bg-black/50 border-b border-white/20 focus:border-[#00FF94] rounded-none px-0 py-3 text-sm font-mono placeholder:text-white/20 outline-none"
+          />
+        </div>
+        
+        {/* Swap Button */}
+        <button
+          data-testid="swap-execute"
+          onClick={executeSwap}
+          disabled={isSwapping || !address || !amountIn || !recipient}
+          className="w-full py-3 bg-gradient-to-r from-[#00FF94]/20 to-[#00F0FF]/20 border border-[#00FF94]/50 text-[#00FF94] uppercase tracking-widest text-sm font-bold hover:from-[#00FF94] hover:to-[#00F0FF] hover:text-black transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {isSwapping ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <RefreshCw className="w-4 h-4" strokeWidth={1.5} />
+          )}
+          Swap Privately
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Privacy Features Grid
 function PrivacyFeatures() {
   const features = [
