@@ -220,8 +220,126 @@ async def health():
 
 @api_router.get("/chains")
 async def get_chains():
-    """Get supported blockchain networks"""
-    return {"chains": CHAIN_CONFIG}
+    """Get supported blockchain networks with Uniswap info"""
+    return {
+        "chains": CHAIN_CONFIG,
+        "contracts": UPL_CONTRACTS
+    }
+
+# Swap Quote API
+class SwapQuoteRequest(BaseModel):
+    chain: str = "base_sepolia"
+    token_in: str  # "ETH" or token address
+    token_out: str  # "ETH" or token address
+    amount_in: str  # Amount in wei/smallest unit
+
+@api_router.post("/swap/quote")
+async def get_swap_quote(request: SwapQuoteRequest):
+    """Get a quote for a private swap via Uniswap"""
+    try:
+        if request.chain not in CHAIN_CONFIG:
+            raise HTTPException(status_code=400, detail="Unsupported chain")
+        
+        config = CHAIN_CONFIG[request.chain]
+        
+        # Determine token addresses
+        token_in = config["weth"] if request.token_in.upper() == "ETH" else request.token_in
+        token_out = config["weth"] if request.token_out.upper() == "ETH" else request.token_out
+        
+        amount_in = int(request.amount_in)
+        
+        # Calculate fee (0.05%)
+        fee = amount_in * 5 // 10000
+        amount_after_fee = amount_in - fee
+        
+        # For testnet, provide estimated output (actual quote requires on-chain call)
+        # Using a simple 1:1 estimate for testnets
+        estimated_output = amount_after_fee
+        
+        return {
+            "chain": request.chain,
+            "token_in": token_in,
+            "token_out": token_out,
+            "amount_in": str(amount_in),
+            "fee": str(fee),
+            "fee_percent": "0.05%",
+            "amount_after_fee": str(amount_after_fee),
+            "estimated_output": str(estimated_output),
+            "uniswap_router": config["uniswap_router"],
+            "weth": config["weth"],
+            "note": "Actual output may vary based on pool liquidity and slippage"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Swap quote error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Record a swap transaction
+@api_router.post("/swap/record")
+async def record_swap(
+    tx_hash: str = Body(...),
+    from_address: str = Body(...),
+    token_in: str = Body(...),
+    token_out: str = Body(...),
+    amount_in: str = Body(...),
+    amount_out: str = Body(...),
+    chain: str = Body(...),
+    recipient_stealth: str = Body(...)
+):
+    """Record a private swap transaction"""
+    try:
+        doc = {
+            "id": str(uuid.uuid4()),
+            "tx_hash": tx_hash,
+            "from_address": from_address,
+            "token_in": token_in,
+            "token_out": token_out,
+            "amount_in": amount_in,
+            "amount_out": amount_out,
+            "chain": chain,
+            "recipient_stealth": recipient_stealth,
+            "tx_type": "private_swap",
+            "status": "confirmed",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.transactions.insert_one(doc)
+        return {"success": True, "swap_id": doc["id"]}
+    except Exception as e:
+        logger.error(f"Swap record error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Get available tokens for swapping
+@api_router.get("/swap/tokens/{chain}")
+async def get_swap_tokens(chain: str):
+    """Get available tokens for swapping on a chain"""
+    if chain not in CHAIN_CONFIG:
+        raise HTTPException(status_code=400, detail="Unsupported chain")
+    
+    config = CHAIN_CONFIG[chain]
+    
+    tokens = [
+        {
+            "symbol": "ETH",
+            "name": "Ethereum",
+            "address": "native",
+            "decimals": 18
+        },
+        {
+            "symbol": "WETH",
+            "name": "Wrapped Ethereum",
+            "address": config["weth"],
+            "decimals": 18
+        },
+        {
+            "symbol": "USDC",
+            "name": "USD Coin",
+            "address": config["usdc"],
+            "decimals": 6
+        }
+    ]
+    
+    return {"chain": chain, "tokens": tokens}
 
 # Wallet Management
 @api_router.post("/wallet/create", response_model=WalletCreateResponse)
