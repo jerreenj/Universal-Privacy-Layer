@@ -93,32 +93,34 @@ function WalletProvider({ children }) {
   };
 
   const switchChain = async (chainKey) => {
-    if (!window.ethereum) return;
+    // Update UI immediately for better UX
+    setChain(chainKey);
+    toast.success(`Switched to ${CHAINS[chainKey].name}`);
     
-    const chainConfig = CHAINS[chainKey];
-    try {
-      await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: chainConfig.chainId }]
-      });
-      setChain(chainKey);
-      toast.success(`Switched to ${chainConfig.name}`);
-    } catch (err) {
-      if (err.code === 4902) {
-        try {
-          await window.ethereum.request({
-            method: "wallet_addEthereumChain",
-            params: [{
-              chainId: chainConfig.chainId,
-              chainName: chainConfig.name,
-              rpcUrls: [chainConfig.rpcUrl],
-              blockExplorerUrls: [chainConfig.explorer],
-              nativeCurrency: { name: chainConfig.symbol, symbol: chainConfig.symbol, decimals: 18 }
-            }]
-          });
-          setChain(chainKey);
-        } catch (addErr) {
-          toast.error("Failed to add network");
+    // If wallet connected, also switch network in MetaMask
+    if (window.ethereum && address) {
+      const chainConfig = CHAINS[chainKey];
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: chainConfig.chainId }]
+        });
+      } catch (err) {
+        if (err.code === 4902) {
+          try {
+            await window.ethereum.request({
+              method: "wallet_addEthereumChain",
+              params: [{
+                chainId: chainConfig.chainId,
+                chainName: chainConfig.name,
+                rpcUrls: [chainConfig.rpcUrl],
+                blockExplorerUrls: [chainConfig.explorer],
+                nativeCurrency: { name: chainConfig.symbol, symbol: chainConfig.symbol, decimals: 18 }
+              }]
+            });
+          } catch (addErr) {
+            console.error("Failed to add network", addErr);
+          }
         }
       }
     }
