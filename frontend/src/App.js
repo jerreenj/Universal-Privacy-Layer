@@ -697,7 +697,9 @@ function LandingPage() {
           data-testid="landing-connect"
           onClick={connectWallet}
           disabled={isConnecting}
-          className="px-10 py-4 bg-[#00FF94] text-black font-bold uppercase tracking-widest text-lg hover:glow-primary-lg transition-all disabled:opacity-50 flex items-center gap-3 mx-auto"
+          aria-disabled={isConnecting}
+          aria-busy={isConnecting}
+          className="px-10 py-4 bg-[#00FF94] text-black font-bold uppercase tracking-widest text-lg hover:glow-primary-lg hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 mx-auto"
         >
           {isConnecting ? (
             <Loader2 className="w-5 h-5 animate-spin" />
