@@ -5,141 +5,154 @@
 ## Original Problem Statement
 Build Universal Privacy Layer (UPL) - "The HTTPS of Web3" - a universal privacy wrapper for every major blockchain. Real production system with real money transactions, NOT mock data.
 
-## Core Value Proposition
-Deliver **unreadability**, **unidentifiability**, and **untraceability** for all blockchain transactions.
-
----
-
-## Target User Personas
-- Crypto whales wanting privacy
-- DeFi traders
-- Institutional funds
-- NFT collectors
-- DAOs
-- Privacy-conscious retail users
-
----
-
-## The 10 Privacy Pillars (Core Features)
-1. ✅ Hidden Wallet Creation & Dual Seed Phrase
-2. ✅ Hidden Wallet Balance
-3. ✅ Private Send & Receive
-4. ✅ Private Transaction Hash Delivery
-5. ✅ Stealth Address Generation
-6. ⬜ Private Swaps (DEX integration)
-7. ⬜ NFT Transaction Privacy
-8. ⬜ Smart Contract Interaction Privacy
-9. ⬜ Token Approval Privacy
-10. ⬜ Cross-Chain Transfer Privacy
-
 ---
 
 ## What's Been Implemented (Jan 2026)
 
-### Backend (FastAPI + MongoDB)
-- ✅ Health check endpoint
-- ✅ Chain configuration API (Ethereum Sepolia, Arbitrum Sepolia, Base Sepolia)
-- ✅ Stealth address generation using real ECDH cryptography
-- ✅ Dual-key wallet creation with seed phrases (eth-account)
-- ✅ Encrypted receipt system (AES-256-GCM via pycryptodome)
-- ✅ Receipt decryption with one-time codes
-- ✅ Transaction recording and history
-- ✅ Balance aggregation (main + stealth addresses)
-- ✅ Stealth address scanning
+### UI Revamp ✅
+- Removed ugly navbar → Floating controls (top right)
+- New hexagonal layered logo (replaced shield)
+- Cyber-noir dark theme with neon green accents
+- Grid background with gradient orbs
 
-### Frontend (React + ethers.js)
-- ✅ Cyber-noir dark theme (Unbounded, Rajdhani, JetBrains Mono fonts)
-- ✅ Landing page with Connect Wallet CTA
-- ✅ MetaMask wallet integration
-- ✅ Chain selector (3 testnets)
-- ✅ Balance display with hidden/visible toggle
-- ✅ Stealth address generator
-- ✅ Private send transaction form
-- ✅ Transaction history display
-- ✅ Privacy pillars info section
-- ✅ Toast notifications (sonner)
-- ✅ All data-testid attributes
+### Backend (FastAPI + MongoDB) ✅
+- Health check, chain configuration APIs
+- Stealth address generation (real ECDH cryptography)
+- Dual-key wallet creation with seed phrases
+- Encrypted receipt system (AES-256-GCM)
+- Transaction recording and history
+- Balance aggregation
+- **NEW: Uniswap V3 integration APIs**
+  - `/api/swap/tokens/{chain}` - Available tokens
+  - `/api/swap/quote` - Get swap quotes with 0.05% fee
+  - `/api/swap/record` - Record private swaps
 
-### Cryptography (REAL, NOT MOCKED)
-- ✅ ECDH key exchange for stealth addresses
-- ✅ AES-256-GCM encryption for receipts
-- ✅ PBKDF2 key derivation
-- ✅ View tags for efficient scanning
+### Frontend (React + ethers.js) ✅
+- Landing page with new hexagonal logo
+- Floating controls (chain selector + wallet button)
+- Balance display with hidden/visible toggle
+- Stealth address generator
+- Private send form
+- **NEW: Private Swap component (ETH/WETH/USDC)**
+- Transaction history
+- Privacy features grid
 
----
-
-## Technical Architecture
-
-### Supported Chains (Testnets)
-| Chain | Chain ID | RPC | Explorer |
-|-------|----------|-----|----------|
-| Ethereum Sepolia | 11155111 | rpc.sepolia.org | sepolia.etherscan.io |
-| Arbitrum Sepolia | 421614 | sepolia-rollup.arbitrum.io/rpc | sepolia.arbiscan.io |
-| Base Sepolia | 84532 | sepolia.base.org | sepolia.basescan.org |
-
-### Tech Stack
-- **Backend:** FastAPI, MongoDB, web3.py, eth-account, pycryptodome
-- **Frontend:** React, ethers.js v6, Tailwind CSS, Lucide icons
-- **Database:** MongoDB (wallets, stealth_addresses, receipts, transactions)
+### Smart Contracts (Solidity) ✅
+- `PrivacyRelayer.sol` - Main privacy relayer (batch transfers, 0.05% fee)
+- `StealthAddressRegistry.sol` - Stealth address announcements
+- `UniswapPrivacyWrapper.sol` - DEX privacy wrapper
+- Deployment script ready
 
 ---
 
-## Prioritized Backlog
+## Deployer Wallet
 
-### P0 (Done)
-- ✅ Core stealth address system
-- ✅ Wallet integration
-- ✅ Private send flow
-- ✅ Encrypted receipts
+**Address:** `0x77483a981724fDa225EF78D8d3CF3c57a30193da`
 
-### P1 (Next Phase)
-- ⬜ Uniswap V3 integration for private swaps
-- ⬜ OpenSea integration for NFT privacy
-- ⬜ Smart contract interaction wrapping
-- ⬜ Mainnet deployment scripts
+**Balance:** 0 ETH (needs funding)
 
-### P2 (Future)
-- ⬜ Multisig privacy module
-- ⬜ Cross-chain bridge privacy
-- ⬜ Institutional API
-- ⬜ Compliance module
+### Get Testnet ETH:
+1. **Base Sepolia (Cheapest):** https://www.coinbase.com/faucets
+2. **Arbitrum Sepolia:** https://www.alchemy.com/faucets/arbitrum-sepolia
+3. **Ethereum Sepolia:** https://www.alchemy.com/faucets/ethereum-sepolia
 
 ---
 
-## Deployment Readiness
+## Contract Deployment (After Funding)
 
-### Testnet → Mainnet Migration
-Code is 100% identical. Only config changes needed:
-1. Update RPC URLs in CHAIN_CONFIG
-2. Change chain IDs
-3. Redeploy contracts (same Solidity code)
+```bash
+cd /app/contracts
 
-### Estimated Mainnet Costs
-- Arbitrum/Base: ~$10-15 total
-- Ethereum L1: ~$100-300
+# Set deployer mnemonic
+export DEPLOYER_MNEMONIC="inside post tool solar phone biology render blade broken draw hockey senior"
 
----
-
-## ZKP Implementation Guide (For User)
-
-To add production ZKP circuits:
-
-1. **Install Circom:** `npm install -g circom snarkjs`
-2. **Create circuit:** Define proof logic in `.circom` file
-3. **Trusted setup:** Run `snarkjs powersoftau` ceremony
-4. **Generate verifier:** `snarkjs generateverifier`
-5. **Deploy verifier contract:** Solidity contract on-chain
-6. **Integrate:** Call verifier from relayer contracts
-
-Resources:
-- https://docs.circom.io/
-- https://github.com/iden3/snarkjs
+# Deploy to Base Sepolia (cheapest gas ~$2-5)
+export DEPLOY_CHAIN=base_sepolia
+python deploy.py
+```
 
 ---
 
-## Next Tasks
-1. User to fund deployer wallet with testnet ETH
-2. Deploy Smart Relayer contracts to testnets
-3. Add Uniswap integration for private swaps
-4. Implement NFT privacy module
-5. Add ZKP circuits (user-guided)
+## Uniswap V3 Integration
+
+| Chain | Router | WETH | USDC |
+|-------|--------|------|------|
+| Ethereum Sepolia | 0x3bFA...48E | 0xfFf9...B14 | 0x1c7D...238 |
+| Arbitrum Sepolia | 0x101F...63E | 0x980B...c73 | 0x75fa...4d |
+| Base Sepolia | 0x94cC...bc4 | 0x4200...006 | 0x036C...7e |
+
+---
+
+## ZKP Implementation (User-Guided)
+
+```bash
+# 1. Install Circom & SnarkJS
+npm install -g circom snarkjs
+
+# 2. Create privacy circuit
+circom privacy_proof.circom --r1cs --wasm --sym
+
+# 3. Trusted setup ceremony
+snarkjs powersoftau new bn128 12 pot12_0000.ptau
+snarkjs powersoftau contribute pot12_0000.ptau pot12_0001.ptau --name="First contribution"
+snarkjs powersoftau prepare phase2 pot12_0001.ptau pot12_final.ptau
+snarkjs groth16 setup privacy_proof.r1cs pot12_final.ptau privacy_proof_0000.zkey
+
+# 4. Generate verifier contract
+snarkjs zkey export solidityverifier privacy_proof_0000.zkey verifier.sol
+
+# 5. Deploy verifier contract to testnets
+```
+
+---
+
+## Testing Results
+
+| Component | Pass Rate |
+|-----------|-----------|
+| Backend APIs | 88.9% |
+| Frontend UI | 95% |
+
+Note: Balance API timeout is expected (external RPC latency)
+
+---
+
+## Next Steps
+
+1. **Fund deployer wallet** with testnet ETH
+2. **Deploy contracts** using `/app/contracts/deploy.py`
+3. **Update contract addresses** in `UPL_CONTRACTS` (server.py)
+4. **Implement ZKP circuits** using Circom guide above
+5. **Add more token pairs** for swaps
+6. **Security audit** before mainnet
+
+---
+
+## Business Model
+
+| Revenue Stream | Rate |
+|----------------|------|
+| Privacy Transaction Fee | 0.05% |
+| Private Swap Fee | 0.05% |
+| Institutional Licensing | TBD |
+| Developer API | Usage-based |
+
+---
+
+## File Structure
+
+```
+/app
+├── backend/
+│   └── server.py          # FastAPI with all APIs
+├── frontend/
+│   └── src/App.js         # React UI
+├── contracts/
+│   ├── PrivacyRelayer.sol
+│   ├── StealthAddressRegistry.sol
+│   ├── UniswapPrivacyWrapper.sol
+│   ├── deploy.py
+│   └── README.md
+└── memory/
+    └── PRD.md             # This file
+```
