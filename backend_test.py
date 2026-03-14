@@ -52,13 +52,14 @@ class UPLAPITester:
         return False
 
     def test_chains_endpoint(self):
-        """Test /api/chains endpoint"""
+        """Test /api/chains endpoint - now includes contracts info"""
         try:
             response = requests.get(f"{self.api_url}/chains", timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                if "chains" in data:
+                if "chains" in data and "contracts" in data:
                     chains = data["chains"]
+                    contracts = data["contracts"]
                     expected_chains = ["ethereum_sepolia", "arbitrum_sepolia", "base_sepolia"]
                     
                     # Check if all expected chains are present
@@ -67,24 +68,36 @@ class UPLAPITester:
                         # Validate chain structure
                         valid_structure = True
                         for chain_key, chain_data in chains.items():
-                            required_fields = ["name", "chain_id", "rpc_url", "explorer", "symbol"]
+                            required_fields = ["name", "chain_id", "rpc_url", "explorer", "symbol", "uniswap_router", "weth", "usdc"]
                             if not all(field in chain_data for field in required_fields):
                                 valid_structure = False
                                 break
                         
-                        if valid_structure:
-                            self.log_test("Chains Configuration", True, f"Found {len(chains)} chains")
+                        # Validate contracts structure
+                        contracts_valid = True
+                        for chain_key in expected_chains:
+                            if chain_key in contracts:
+                                contract_fields = ["privacy_relayer", "stealth_registry", "uniswap_wrapper"]
+                                if not all(field in contracts[chain_key] for field in contract_fields):
+                                    contracts_valid = False
+                                    break
+                            else:
+                                contracts_valid = False
+                                break
+                        
+                        if valid_structure and contracts_valid:
+                            self.log_test("Chains + Contracts Configuration", True, f"Found {len(chains)} chains with Uniswap integration")
                             return True
                         else:
-                            self.log_test("Chains Configuration", False, "Invalid chain structure")
+                            self.log_test("Chains + Contracts Configuration", False, "Invalid chain or contracts structure")
                     else:
-                        self.log_test("Chains Configuration", False, f"Missing chains: {missing_chains}")
+                        self.log_test("Chains + Contracts Configuration", False, f"Missing chains: {missing_chains}")
                 else:
-                    self.log_test("Chains Configuration", False, "No 'chains' field in response")
+                    self.log_test("Chains + Contracts Configuration", False, "Missing 'chains' or 'contracts' field in response")
             else:
-                self.log_test("Chains Configuration", False, f"Status code: {response.status_code}")
+                self.log_test("Chains + Contracts Configuration", False, f"Status code: {response.status_code}")
         except Exception as e:
-            self.log_test("Chains Configuration", False, str(e))
+            self.log_test("Chains + Contracts Configuration", False, str(e))
         return False
 
     def test_stealth_address_generation(self):
