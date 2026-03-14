@@ -35,28 +35,56 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Chain configurations
+# Chain configurations with Uniswap addresses
 CHAIN_CONFIG = {
     "ethereum_sepolia": {
         "name": "Ethereum Sepolia",
         "chain_id": 11155111,
         "rpc_url": "https://rpc.sepolia.org",
         "explorer": "https://sepolia.etherscan.io",
-        "symbol": "ETH"
+        "symbol": "ETH",
+        "uniswap_router": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
+        "weth": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+        "usdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
     },
     "arbitrum_sepolia": {
         "name": "Arbitrum Sepolia",
         "chain_id": 421614,
         "rpc_url": "https://sepolia-rollup.arbitrum.io/rpc",
         "explorer": "https://sepolia.arbiscan.io",
-        "symbol": "ETH"
+        "symbol": "ETH",
+        "uniswap_router": "0x101F443B4d1b059569D643917553c771E1b9663E",
+        "weth": "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73",
+        "usdc": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d"
     },
     "base_sepolia": {
         "name": "Base Sepolia",
         "chain_id": 84532,
         "rpc_url": "https://sepolia.base.org",
         "explorer": "https://sepolia.basescan.org",
-        "symbol": "ETH"
+        "symbol": "ETH",
+        "uniswap_router": "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+        "weth": "0x4200000000000000000000000000000000000006",
+        "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    }
+}
+
+# UPL Contract addresses (to be updated after deployment)
+UPL_CONTRACTS = {
+    "ethereum_sepolia": {
+        "privacy_relayer": None,
+        "stealth_registry": None,
+        "uniswap_wrapper": None
+    },
+    "arbitrum_sepolia": {
+        "privacy_relayer": None,
+        "stealth_registry": None,
+        "uniswap_wrapper": None
+    },
+    "base_sepolia": {
+        "privacy_relayer": None,
+        "stealth_registry": None,
+        "uniswap_wrapper": None
     }
 }
 
