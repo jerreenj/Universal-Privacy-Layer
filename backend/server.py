@@ -35,59 +35,76 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Chain configurations with Uniswap addresses
+# Chain configurations - MAINNET
 CHAIN_CONFIG = {
-    "ethereum_sepolia": {
-        "name": "Ethereum Sepolia",
-        "chain_id": 11155111,
-        "rpc_url": "https://rpc.sepolia.org",
-        "explorer": "https://sepolia.etherscan.io",
+    "base": {
+        "name": "Base",
+        "chain_id": 8453,
+        "rpc_url": "https://mainnet.base.org",
+        "explorer": "https://basescan.org",
         "symbol": "ETH",
-        "uniswap_router": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
-        "weth": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
-        "usdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
-    },
-    "arbitrum_sepolia": {
-        "name": "Arbitrum Sepolia",
-        "chain_id": 421614,
-        "rpc_url": "https://sepolia-rollup.arbitrum.io/rpc",
-        "explorer": "https://sepolia.arbiscan.io",
-        "symbol": "ETH",
-        "uniswap_router": "0x101F443B4d1b059569D643917553c771E1b9663E",
-        "weth": "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73",
-        "usdc": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d"
-    },
-    "base_sepolia": {
-        "name": "Base Sepolia",
-        "chain_id": 84532,
-        "rpc_url": "https://sepolia.base.org",
-        "explorer": "https://sepolia.basescan.org",
-        "symbol": "ETH",
-        "uniswap_router": "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+        "color": "#0052FF",
         "weth": "0x4200000000000000000000000000000000000006",
-        "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+        "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    },
+    "arbitrum": {
+        "name": "Arbitrum One",
+        "chain_id": 42161,
+        "rpc_url": "https://arb1.arbitrum.io/rpc",
+        "explorer": "https://arbiscan.io",
+        "symbol": "ETH",
+        "color": "#28A0F0",
+        "weth": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+        "usdc": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+    },
+    "polygon": {
+        "name": "Polygon",
+        "chain_id": 137,
+        "rpc_url": "https://rpc-mainnet.matic.quiknode.pro",
+        "explorer": "https://polygonscan.com",
+        "symbol": "POL",
+        "color": "#8247E5",
+        "weth": "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",
+        "usdc": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+    },
+    "optimism": {
+        "name": "Optimism",
+        "chain_id": 10,
+        "rpc_url": "https://mainnet.optimism.io",
+        "explorer": "https://optimistic.etherscan.io",
+        "symbol": "ETH",
+        "color": "#FF0420",
+        "weth": "0x4200000000000000000000000000000000000006",
+        "usdc": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"
     }
 }
 
-# UPL Contract addresses - DEPLOYED ON BASE MAINNET
+# UPL Contracts - DEPLOYED ON ALL 4 MAINNETS
+# Same addresses across all chains (deterministic deployer nonce)
 UPL_CONTRACTS = {
     "base": {
         "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
         "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
-        "uniswap_wrapper": "0xD04f9cE68CfF7C0FD6d631794964784B99423943",
+        "uniswap_wrapper": None,
         "explorer": "https://basescan.org"
     },
     "arbitrum": {
-        "privacy_relayer": None,
-        "stealth_registry": None,
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
         "uniswap_wrapper": None,
         "explorer": "https://arbiscan.io"
     },
-    "ethereum": {
-        "privacy_relayer": None,
-        "stealth_registry": None,
+    "polygon": {
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
         "uniswap_wrapper": None,
-        "explorer": "https://etherscan.io"
+        "explorer": "https://polygonscan.com"
+    },
+    "optimism": {
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
+        "uniswap_wrapper": None,
+        "explorer": "https://optimistic.etherscan.io"
     }
 }
 
@@ -107,11 +124,17 @@ TOKENS = {
         "DAI": {"address": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", "decimals": 18, "name": "Dai Stablecoin"},
         "ARB": {"address": "0x912CE59144191C1204E64559FE8253a0e49E6548", "decimals": 18, "name": "Arbitrum"},
     },
-    "ethereum": {
+    "polygon": {
+        "POL": {"address": "native", "decimals": 18, "name": "Polygon"},
+        "WETH": {"address": "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619", "decimals": 18, "name": "Wrapped ETH"},
+        "USDC": {"address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", "decimals": 6, "name": "USD Coin"},
+        "USDT": {"address": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", "decimals": 6, "name": "Tether USD"},
+    },
+    "optimism": {
         "ETH": {"address": "native", "decimals": 18, "name": "Ethereum"},
-        "WETH": {"address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "decimals": 18, "name": "Wrapped ETH"},
-        "USDC": {"address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "decimals": 6, "name": "USD Coin"},
-        "DAI": {"address": "0x6B175474E89094C44Da98b954EescdeCB5BE3830", "decimals": 18, "name": "Dai Stablecoin"},
+        "WETH": {"address": "0x4200000000000000000000000000000000000006", "decimals": 18, "name": "Wrapped ETH"},
+        "USDC": {"address": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", "decimals": 6, "name": "USD Coin"},
+        "OP": {"address": "0x4200000000000000000000000000000000000042", "decimals": 18, "name": "Optimism"},
     }
 }
 
@@ -247,11 +270,12 @@ async def health():
 
 @api_router.get("/chains")
 async def get_chains():
-    """Get supported blockchain networks with Uniswap info"""
+    """Get supported blockchain networks"""
     return {
         "chains": CHAIN_CONFIG,
         "contracts": UPL_CONTRACTS,
-        "tokens": TOKENS
+        "tokens": TOKENS,
+        "live_chains": list(UPL_CONTRACTS.keys())
     }
 
 # Get tokens for a chain
@@ -261,6 +285,18 @@ async def get_tokens(chain: str):
     if chain not in TOKENS:
         raise HTTPException(status_code=400, detail="Unsupported chain")
     return {"chain": chain, "tokens": TOKENS[chain]}
+
+@api_router.get("/deployer-info")
+async def get_deployer_info():
+    """Get deployer wallet info for all live chains"""
+    deployer = "0x77483a981724fDa225EF78D8d3CF3c57a30193da"
+    return {
+        "deployer_address": deployer,
+        "contracts_address": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+        "deployed_on": ["base", "arbitrum", "polygon", "optimism"],
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4"
+    }
 
 # Swap Quote API
 class SwapQuoteRequest(BaseModel):
