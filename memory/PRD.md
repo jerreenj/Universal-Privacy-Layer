@@ -22,6 +22,44 @@ Address: 0x92b4c9BF1fFa6D7e... (drained)
 ## OVERVIEW
 Universal Privacy Layer provides private transactions across 7 EVM chains with ZKP verification, stealth addresses, and cross-chain privacy splitting.
 
+## LATEST UPDATE (December 2025)
+
+### Newly Implemented Features
+
+#### 1. Cross-Chain Privacy Splitting (Enhanced) ✅
+- Full frontend UI with execution tracking
+- Auto-generate stealth addresses for splits
+- Auto-distribute percentages
+- Execute individual or all splits
+- Chain switching support
+- Transaction status tracking (pending/confirming/confirmed/failed)
+
+#### 2. PWA (Progressive Web App) ✅
+- Installable on iOS/Android devices
+- Service worker for offline support
+- Push notification support
+- Background sync for pending transactions
+- App manifest with icons
+
+#### 3. Developer API ✅
+- **Documentation endpoint:** `GET /api/v1/docs`
+- **API Key Management:**
+  - Create keys: `POST /api/developer/keys/create`
+  - List keys: `GET /api/developer/keys/{address}`
+  - Revoke keys: `DELETE /api/developer/keys/{key_name}`
+  - Usage stats: `GET /api/developer/usage/{address}`
+- **Public API endpoints:**
+  - `GET /api/v1/chains` - List supported chains
+  - `POST /api/v1/stealth/generate` - Generate stealth addresses
+- **Rate limiting:** 100 req/min default, customizable per key
+
+#### 4. React Native Mobile App (Scaffolding) ✅
+- Complete project structure in `/app/mobile/`
+- Navigation setup with React Navigation
+- Home, Receive, Send, Swap, Split screens
+- Wallet context for state management
+- Styled components matching web theme
+
 ## DEPLOYED CONTRACTS
 
 ### Privacy Relayer (All 7 Chains)
