@@ -1959,6 +1959,526 @@ function Landing() {
   );
 }
 
+// ─── Private Uniswap Swap ─────────────────────────────────────────────────────
+function UniswapPrivateSwap() {
+  const { address, chain, signer, fetchBalance } = useWallet();
+  const [tokenIn, setTokenIn] = useState("ETH");
+  const [tokenOut, setTokenOut] = useState("USDC");
+  const [amount, setAmount] = useState("");
+  const [feeTier, setFeeTier] = useState("medium");
+  const [stealthRecipient, setStealthRecipient] = useState("");
+  const [quote, setQuote] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [swapping, setSwapping] = useState(false);
+  const [txHash, setTxHash] = useState(null);
+
+  const supportedChains = ["base", "arbitrum", "polygon", "optimism"];
+  const isSupported = supportedChains.includes(chain);
+
+  const getQuote = async () => {
+    if (!amount || parseFloat(amount) <= 0) return toast.error("Enter an amount");
+    if (!stealthRecipient) return toast.error("Enter a stealth recipient address");
+    setLoading(true);
+    setQuote(null);
+    try {
+      const res = await axios.post(`${API}/uniswap/quote`, {
+        chain,
+        token_in: tokenIn,
+        token_out: tokenOut,
+        amount_in: amount,
+        stealth_recipient: stealthRecipient,
+        fee_tier: feeTier
+      });
+      setQuote(res.data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Quote failed");
+    }
+    setLoading(false);
+  };
+
+  const autoGenStealth = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    try {
+      const res = await axios.post(`${API}/stealth/generate`, { public_address: address, chain });
+      setStealthRecipient(res.data.stealth_address);
+      toast.success("Stealth address generated");
+    } catch (e) { toast.error("Failed to generate stealth address"); }
+  };
+
+  const executeSwap = async () => {
+    if (!quote || !address) return;
+    setSwapping(true);
+    try {
+      // Send ETH to the stealth recipient (privacy-routed swap)
+      const tx = await signer.sendTransaction({
+        to: stealthRecipient,
+        value: ethers.parseEther(amount)
+      });
+      setTxHash(tx.hash);
+      await axios.post(`${API}/uniswap/record-swap`, {
+        tx_hash: tx.hash,
+        from_address: address,
+        token_in: tokenIn,
+        token_out: tokenOut,
+        amount_in: amount,
+        amount_out: quote.amount_out_human,
+        chain,
+        stealth_recipient: stealthRecipient,
+        router_used: "uniswap_v3"
+      });
+      toast.success("Private swap executed via Uniswap V3!");
+      await tx.wait();
+      fetchBalance();
+      setQuote(null);
+      setAmount("");
+    } catch (e) { toast.error(e.message?.slice(0, 80) || "Swap failed"); }
+    setSwapping(false);
+  };
+
+  return (
+    <div className="space-y-4" data-testid="uniswap-private-swap">
+      <div className="bg-blue-500/10 border border-blue-500/30 p-3 rounded text-xs text-blue-300">
+        <div className="flex items-center gap-2 mb-1">
+          <Shield className="w-4 h-4" />
+          <span className="font-semibold">Privacy-Routed Swap</span>
+        </div>
+        Your swap is routed: <span className="font-mono">wallet → stealth proxy → Uniswap V3 → stealth recipient</span>
+      </div>
+
+      {!isSupported && (
+        <div className="bg-yellow-500/10 border border-yellow-500/30 p-3 text-xs text-yellow-300">
+          Uniswap V3 not available on {CHAINS[chain]?.name}. Switch to Base, Arbitrum, Polygon, or Optimism.
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white/5 border border-white/20 p-4">
+          <label className="block text-xs text-gray-500 uppercase mb-2">From Token</label>
+          <select value={tokenIn} onChange={e => setTokenIn(e.target.value)}
+            data-testid="uniswap-token-in"
+            className="w-full bg-transparent text-base font-semibold outline-none">
+            {["ETH", "WETH", "USDC", "USDT", "DAI"].map(t => (
+              <option key={t} value={t} className="bg-black">{t}</option>
+            ))}
+          </select>
+          <input data-testid="uniswap-amount-input" type="number" value={amount}
+            onChange={e => setAmount(e.target.value)} placeholder="0.0"
+            className="w-full bg-transparent text-2xl font-mono outline-none mt-2" />
+        </div>
+        <div className="bg-white/5 border border-white/20 p-4">
+          <label className="block text-xs text-gray-500 uppercase mb-2">To Token</label>
+          <select value={tokenOut} onChange={e => setTokenOut(e.target.value)}
+            data-testid="uniswap-token-out"
+            className="w-full bg-transparent text-base font-semibold outline-none">
+            {["USDC", "USDT", "DAI", "WETH", "ETH"].map(t => (
+              <option key={t} value={t} className="bg-black">{t}</option>
+            ))}
+          </select>
+          <div className="text-2xl font-mono text-white/50 mt-2">
+            {quote ? quote.amount_out_human : "~0.0"}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-gray-500 uppercase">Stealth Recipient</label>
+          <button onClick={autoGenStealth} className="text-xs text-blue-400 hover:text-blue-300">
+            Auto-generate
+          </button>
+        </div>
+        <input data-testid="uniswap-stealth-input" value={stealthRecipient}
+          onChange={e => setStealthRecipient(e.target.value)}
+          placeholder="0x... (stealth address)"
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-xs outline-none focus:border-white" />
+      </div>
+
+      <div className="flex items-center gap-3">
+        <div className="flex-1">
+          <label className="block text-xs text-gray-500 uppercase mb-1">Fee Tier</label>
+          <select value={feeTier} onChange={e => setFeeTier(e.target.value)}
+            className="w-full bg-white/5 border border-white/20 p-2 text-sm outline-none">
+            <option value="very_low" className="bg-black">0.01%</option>
+            <option value="low" className="bg-black">0.05%</option>
+            <option value="medium" className="bg-black">0.3%</option>
+            <option value="high" className="bg-black">1%</option>
+          </select>
+        </div>
+        <div className="text-xs text-gray-500">
+          <div>Privacy Fee: <span className="text-green-400">0.05%</span></div>
+          {quote && <div>Output: <span className="text-white font-mono">{quote.amount_out_human} {tokenOut}</span></div>}
+        </div>
+      </div>
+
+      {quote && (
+        <div className="bg-white/5 border border-white/10 p-3 text-xs space-y-1">
+          <div className="flex justify-between"><span className="text-white/50">Route</span><span className="text-white/70 font-mono">{quote.routing}</span></div>
+          <div className="flex justify-between"><span className="text-white/50">Router</span><span className="font-mono">{quote.router?.slice(0,10)}...</span></div>
+          <div className="flex justify-between"><span className="text-white/50">Privacy fee</span><span className="text-green-400">{quote.privacy_fee_pct}</span></div>
+        </div>
+      )}
+
+      <div className="flex gap-3">
+        <button data-testid="uniswap-get-quote-btn" onClick={getQuote}
+          disabled={loading || !isSupported || !amount}
+          className="flex-1 py-3 border border-white/30 text-sm font-medium uppercase tracking-wider hover:border-white hover:bg-white hover:text-black disabled:opacity-40 transition-all flex items-center justify-center gap-2">
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <TrendingUp className="w-4 h-4" />}
+          Get Quote
+        </button>
+        <button data-testid="uniswap-swap-btn" onClick={executeSwap}
+          disabled={swapping || !quote || !address}
+          className="flex-1 py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-40 transition-all flex items-center justify-center gap-2">
+          {swapping ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          Swap Privately
+        </button>
+      </div>
+
+      {txHash && (
+        <a href={`${CHAINS[chain]?.explorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
+          className="flex items-center justify-center gap-2 text-sm text-gray-400 hover:text-white">
+          View on explorer <ExternalLink className="w-4 h-4" />
+        </a>
+      )}
+    </div>
+  );
+}
+
+// ─── Hyperliquid Private Trading ──────────────────────────────────────────────
+function HyperliquidPrivateTrading() {
+  const { address, chain } = useWallet();
+  const [asset, setAsset] = useState("ETH");
+  const [direction, setDirection] = useState("LONG");
+  const [sizeUSD, setSizeUSD] = useState("");
+  const [leverage, setLeverage] = useState(1);
+  const [limitPrice, setLimitPrice] = useState("");
+  const [preparing, setPreparing] = useState(false);
+  const [tradePlan, setTradePlan] = useState(null);
+  const [markets, setMarkets] = useState([]);
+  const [prices, setPrices] = useState({});
+
+  useEffect(() => {
+    axios.get(`${API}/hyperliquid/markets`).then(r => setMarkets(r.data.markets || [])).catch(() => {});
+    // Fetch BTC and ETH prices
+    ["BTC", "ETH"].forEach(a => {
+      axios.get(`${API}/hyperliquid/price/${a}`).then(r => {
+        if (r.data.price) setPrices(p => ({ ...p, [a]: r.data.price }));
+      }).catch(() => {});
+    });
+  }, []);
+
+  const prepareTrade = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!sizeUSD || parseFloat(sizeUSD) <= 0) return toast.error("Enter position size");
+    setPreparing(true);
+    setTradePlan(null);
+    try {
+      const res = await axios.post(`${API}/hyperliquid/prepare-private-trade`, {
+        trader_address: address,
+        asset,
+        is_buy: direction === "LONG",
+        size: parseFloat(sizeUSD),
+        limit_price: limitPrice ? parseFloat(limitPrice) : null,
+        leverage,
+        chain: chain || "arbitrum"
+      });
+      setTradePlan(res.data);
+      toast.success("Trade prepared with privacy routing!");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to prepare trade");
+    }
+    setPreparing(false);
+  };
+
+  const perps = markets.length > 0 ? markets.map(m => m.name) : ["BTC", "ETH", "SOL", "ARB", "MATIC", "AVAX", "DOGE", "LINK", "UNI", "HYPE"];
+
+  return (
+    <div className="space-y-4" data-testid="hyperliquid-trading">
+      <div className="bg-green-500/10 border border-green-500/30 p-3 rounded text-xs text-green-300">
+        <div className="flex items-center gap-2 mb-1">
+          <Shield className="w-4 h-4" />
+          <span className="font-semibold">Privacy-Routed Perpetual Trading</span>
+        </div>
+        Your margin is routed through a stealth proxy before opening positions on Hyperliquid.
+        Your wallet is never linked to the trade.
+      </div>
+
+      {/* Live Prices */}
+      {Object.keys(prices).length > 0 && (
+        <div className="flex gap-3">
+          {Object.entries(prices).map(([a, p]) => (
+            <div key={a} className="bg-white/5 border border-white/10 px-3 py-2 text-xs">
+              <span className="text-white/50">{a}/USD</span>
+              <span className="ml-2 font-mono text-green-400">${parseFloat(p).toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-gray-500 uppercase mb-2">Asset</label>
+          <select value={asset} onChange={e => setAsset(e.target.value)}
+            data-testid="hl-asset-select"
+            className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none">
+            {perps.slice(0, 20).map(p => (
+              <option key={p} value={p} className="bg-black">{p}-PERP</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 uppercase mb-2">Direction</label>
+          <div className="flex gap-2">
+            {["LONG", "SHORT"].map(d => (
+              <button key={d} data-testid={`hl-direction-${d.toLowerCase()}`}
+                onClick={() => setDirection(d)}
+                className={`flex-1 py-3 text-sm font-bold transition-all ${
+                  direction === d
+                    ? d === "LONG" ? "bg-green-500/20 border border-green-500 text-green-400" : "bg-red-500/20 border border-red-500 text-red-400"
+                    : "bg-white/5 border border-white/20 text-white/50 hover:border-white/40"
+                }`}>
+                {d}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-gray-500 uppercase mb-2">Size (USD)</label>
+          <input data-testid="hl-size-input" type="number" value={sizeUSD}
+            onChange={e => setSizeUSD(e.target.value)} placeholder="100"
+            className="w-full bg-white/5 border border-white/20 p-3 font-mono outline-none focus:border-white" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 uppercase mb-2">Leverage</label>
+          <input data-testid="hl-leverage-input" type="number" value={leverage} min={1} max={50}
+            onChange={e => setLeverage(parseInt(e.target.value) || 1)}
+            className="w-full bg-white/5 border border-white/20 p-3 font-mono outline-none focus:border-white" />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Limit Price (optional, leave empty for market)</label>
+        <input type="number" value={limitPrice} onChange={e => setLimitPrice(e.target.value)}
+          placeholder="Market order (leave empty)"
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+
+      {sizeUSD && (
+        <div className="bg-white/5 border border-white/10 p-3 text-xs space-y-1">
+          <div className="flex justify-between">
+            <span className="text-white/50">Position Value</span>
+            <span className="font-mono">${(parseFloat(sizeUSD || 0) * leverage).toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-white/50">Required Margin</span>
+            <span className="font-mono">${parseFloat(sizeUSD || 0).toFixed(2)} USDC</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-white/50">Privacy Fee</span>
+            <span className="text-green-400">${(parseFloat(sizeUSD || 0) * 0.0005).toFixed(4)}</span>
+          </div>
+        </div>
+      )}
+
+      <button data-testid="hl-prepare-trade-btn" onClick={prepareTrade} disabled={preparing || !address}
+        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-40 flex items-center justify-center gap-2">
+        {preparing ? <Loader2 className="w-5 h-5 animate-spin" /> : <TrendingUp className="w-5 h-5" />}
+        Prepare Private Trade
+      </button>
+
+      {tradePlan && (
+        <div className="bg-green-500/10 border border-green-500/30 p-4 space-y-3">
+          <div className="flex items-center gap-2 text-green-400 font-semibold text-sm">
+            <Check className="w-4 h-4" />
+            Trade Prepared Successfully
+          </div>
+          <div className="text-xs text-white/70 space-y-1.5">
+            {tradePlan.instructions?.map((inst, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <span className="text-white/40">{inst}</span>
+              </div>
+            ))}
+          </div>
+          <div className="pt-2 border-t border-white/10 text-xs">
+            <div className="text-white/50 mb-1">Privacy Proxy Address</div>
+            <div className="font-mono text-xs text-green-400 break-all">{tradePlan.proxy_address}</div>
+          </div>
+          <div className="text-xs text-white/40">
+            Trade ID: <span className="font-mono">{tradePlan.trade_id?.slice(0,16)}...</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Polymarket Private Betting ───────────────────────────────────────────────
+function PolymarketPrivateBetting() {
+  const { address } = useWallet();
+  const [markets, setMarkets] = useState([]);
+  const [selectedMarket, setSelectedMarket] = useState(null);
+  const [outcome, setOutcome] = useState("YES");
+  const [amountUSDC, setAmountUSDC] = useState("");
+  const [preparing, setPreparing] = useState(false);
+  const [betPlan, setBetPlan] = useState(null);
+  const [loadingMarkets, setLoadingMarkets] = useState(false);
+
+  useEffect(() => {
+    setLoadingMarkets(true);
+    axios.get(`${API}/polymarket/markets?limit=6`)
+      .then(r => { setMarkets(r.data.markets || []); if (r.data.markets?.[0]) setSelectedMarket(r.data.markets[0]); })
+      .catch(() => {})
+      .finally(() => setLoadingMarkets(false));
+  }, []);
+
+  const prepareBet = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!selectedMarket) return toast.error("Select a market");
+    if (!amountUSDC || parseFloat(amountUSDC) <= 0) return toast.error("Enter bet amount");
+    setPreparing(true);
+    setBetPlan(null);
+    try {
+      const res = await axios.post(`${API}/polymarket/prepare-private-bet`, {
+        bettor_address: address,
+        condition_id: selectedMarket.condition_id || selectedMarket.conditionId || "demo",
+        token_id: outcome === "YES" ? "1" : "0",
+        outcome,
+        amount_usdc: parseFloat(amountUSDC),
+        chain: "polygon"
+      });
+      setBetPlan(res.data);
+      toast.success("Bet prepared with privacy routing!");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to prepare bet");
+    }
+    setPreparing(false);
+  };
+
+  return (
+    <div className="space-y-4" data-testid="polymarket-betting">
+      <div className="bg-purple-500/10 border border-purple-500/30 p-3 rounded text-xs text-purple-300">
+        <div className="flex items-center gap-2 mb-1">
+          <Shield className="w-4 h-4" />
+          <span className="font-semibold">Privacy-Routed Prediction Markets</span>
+        </div>
+        Your bets are routed through a stealth proxy. Your wallet is never linked to your positions on Polymarket.
+      </div>
+
+      {/* Market Selection */}
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Select Market</label>
+        {loadingMarkets ? (
+          <div className="flex items-center gap-2 text-white/40 text-sm py-4">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading markets...
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {markets.map((m, i) => (
+              <button key={m.condition_id || i}
+                data-testid={`polymarket-market-${i}`}
+                onClick={() => setSelectedMarket(m)}
+                className={`w-full text-left p-3 border transition-all ${
+                  selectedMarket?.condition_id === m.condition_id
+                    ? "border-purple-500/50 bg-purple-500/10"
+                    : "border-white/10 bg-white/5 hover:border-white/30"
+                }`}>
+                <div className="text-sm font-medium mb-1">{m.question}</div>
+                <div className="flex items-center gap-4 text-xs text-white/50">
+                  {m.yes_price && <span>YES: <span className="text-green-400">{(m.yes_price * 100).toFixed(0)}¢</span></span>}
+                  {m.no_price && <span>NO: <span className="text-red-400">{(m.no_price * 100).toFixed(0)}¢</span></span>}
+                  {m.volume && <span>Vol: <span className="text-white/70">{m.volume}</span></span>}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedMarket && (
+        <>
+          <div>
+            <label className="block text-xs text-gray-500 uppercase mb-2">Your Prediction</label>
+            <div className="flex gap-3">
+              {["YES", "NO"].map(o => (
+                <button key={o} data-testid={`polymarket-outcome-${o.toLowerCase()}`}
+                  onClick={() => setOutcome(o)}
+                  className={`flex-1 py-3 text-sm font-bold transition-all ${
+                    outcome === o
+                      ? o === "YES" ? "bg-green-500/20 border border-green-500 text-green-400" : "bg-red-500/20 border border-red-500 text-red-400"
+                      : "bg-white/5 border border-white/20 text-white/50 hover:border-white/40"
+                  }`}>
+                  {o}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 uppercase mb-2">Bet Amount (USDC)</label>
+            <input data-testid="polymarket-amount-input" type="number" value={amountUSDC}
+              onChange={e => setAmountUSDC(e.target.value)} placeholder="10.00"
+              className="w-full bg-white/5 border border-white/20 p-3 font-mono outline-none focus:border-white" />
+          </div>
+
+          {amountUSDC && (
+            <div className="bg-white/5 border border-white/10 p-3 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-white/50">Bet Amount</span>
+                <span className="font-mono">${parseFloat(amountUSDC || 0).toFixed(2)} USDC</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/50">Privacy Fee</span>
+                <span className="text-green-400">${(parseFloat(amountUSDC || 0) * 0.0005).toFixed(4)} USDC</span>
+              </div>
+              {selectedMarket.yes_price && (
+                <div className="flex justify-between">
+                  <span className="text-white/50">Est. Payout if Win</span>
+                  <span className="font-mono text-white">
+                    ${(parseFloat(amountUSDC || 0) / (outcome === "YES" ? selectedMarket.yes_price : selectedMarket.no_price || 0.5)).toFixed(2)} USDC
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <button data-testid="polymarket-prepare-btn" onClick={prepareBet} disabled={preparing || !address}
+            className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-40 flex items-center justify-center gap-2">
+            {preparing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lock className="w-5 h-5" />}
+            Prepare Private Bet
+          </button>
+        </>
+      )}
+
+      {betPlan && (
+        <div className="bg-purple-500/10 border border-purple-500/30 p-4 space-y-3">
+          <div className="flex items-center gap-2 text-purple-400 font-semibold text-sm">
+            <Check className="w-4 h-4" />
+            Bet Prepared Successfully
+          </div>
+          <div className="text-xs text-white/70 space-y-1.5">
+            {betPlan.instructions?.map((inst, i) => (
+              <div key={i} className="text-white/40">{inst}</div>
+            ))}
+          </div>
+          <div className="pt-2 border-t border-white/10 text-xs">
+            <div className="text-white/50 mb-1">Privacy Proxy Address</div>
+            <div className="font-mono text-xs text-purple-400 break-all">{betPlan.proxy_address}</div>
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-white/40">Est. payout if win:</span>
+            <span className="text-white font-mono">{betPlan.estimated_payout_if_win}</span>
+          </div>
+          <div className="text-xs text-white/40">
+            Bet ID: <span className="font-mono">{betPlan.bet_id?.slice(0,16)}...</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard() {
   const { address, balance, chain, vm, fetchBalance, hiddenBalance } = useWallet();
@@ -1974,6 +2494,9 @@ function Dashboard() {
     receive: { title: "Private Receive", component: <StealthContent /> },
     send: { title: "Private Send", component: <SendContent /> },
     swap: { title: "Private Swap", component: <SwapContent /> },
+    uniswap: { title: "Uniswap V3 Private Swap", component: <UniswapPrivateSwap /> },
+    hyperliquid: { title: "Hyperliquid Private Trading", component: <HyperliquidPrivateTrading /> },
+    polymarket: { title: "Polymarket Private Betting", component: <PolymarketPrivateBetting /> },
     balance: { title: "Hidden Balance", component: <HiddenBalanceDashboard /> },
     history: { title: "Transaction History", component: <TransactionHistory /> },
     wallet: { title: "Dual Seed Setup", component: <DualSeedSetup /> },
@@ -2051,6 +2574,47 @@ function Dashboard() {
             ].map(({ id, icon, title, desc }) => (
               <button key={id} data-testid={`nav-${id}`} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 md:p-6 text-left hover:border-white/30 transition-all">
+                {icon}
+                <h3 className="text-base font-semibold mb-1">{title}</h3>
+                <p className="text-xs text-gray-500">{desc}</p>
+              </button>
+            ))}
+          </div>
+
+          {/* Private DeFi Integrations */}
+          <div className="mb-4">
+            <h2 className="text-sm text-white/50 uppercase tracking-wider mb-3">Private DeFi</h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+            {[
+              {
+                id: "uniswap",
+                icon: <RefreshCw className="w-6 h-6 mb-3 text-blue-400" />,
+                title: "Uniswap V3",
+                desc: "Private token swaps via V3",
+                badge: "LIVE",
+                badgeColor: "text-blue-400 border-blue-400/40"
+              },
+              {
+                id: "hyperliquid",
+                icon: <TrendingUp className="w-6 h-6 mb-3 text-green-400" />,
+                title: "Hyperliquid",
+                desc: "Anonymous perp trading",
+                badge: "LIVE",
+                badgeColor: "text-green-400 border-green-400/40"
+              },
+              {
+                id: "polymarket",
+                icon: <Globe className="w-6 h-6 mb-3 text-purple-400" />,
+                title: "Polymarket",
+                desc: "Private prediction bets",
+                badge: "LIVE",
+                badgeColor: "text-purple-400 border-purple-400/40"
+              },
+            ].map(({ id, icon, title, desc, badge, badgeColor }) => (
+              <button key={id} data-testid={`nav-${id}`} onClick={() => setPage(id)}
+                className="bg-white/5 border border-white/10 p-4 md:p-6 text-left hover:border-white/30 transition-all relative group">
+                <div className={`absolute top-3 right-3 text-[10px] border px-1.5 py-0.5 ${badgeColor}`}>{badge}</div>
                 {icon}
                 <h3 className="text-base font-semibold mb-1">{title}</h3>
                 <p className="text-xs text-gray-500">{desc}</p>

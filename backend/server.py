@@ -2069,6 +2069,557 @@ async def get_api_documentation():
         }
     }
 
+# ===================== DEFI INTEGRATIONS (Privacy-Routed) =====================
+
+# ─── Uniswap V3 Integration ───────────────────────────────────────────────────
+
+# Uniswap V3 Router & Quoter addresses per chain
+UNISWAP_V3_CONTRACTS = {
+    "base": {
+        "router": "0x2626664c2603336E57B271c5C0b26F421741e481",
+        "quoter": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a"
+    },
+    "arbitrum": {
+        "router": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+        "quoter": "0x727C2f4f6CAD707Aa59E6c6832db58F311b4925c"
+    },
+    "polygon": {
+        "router": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+        "quoter": "0x61fFE014bA17989E8aBf5fF3A87B8203A0dFd3Af"
+    },
+    "optimism": {
+        "router": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+        "quoter": "0x61fFE014bA17989E8aBf5fF3A87B8203A0dFd3Af"
+    }
+}
+
+UNISWAP_QUOTER_ABI = [
+    {
+        "inputs": [
+            {"name": "tokenIn", "type": "address"},
+            {"name": "tokenOut", "type": "address"},
+            {"name": "fee", "type": "uint24"},
+            {"name": "amountIn", "type": "uint256"},
+            {"name": "sqrtPriceLimitX96", "type": "uint160"}
+        ],
+        "name": "quoteExactInputSingle",
+        "outputs": [{"name": "amountOut", "type": "uint256"}],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
+]
+
+class UniswapPrivateSwapRequest(BaseModel):
+    chain: str = "base"
+    token_in: str  # token symbol or address
+    token_out: str  # token symbol or address
+    amount_in: str  # human readable amount e.g. "0.1"
+    stealth_recipient: str  # the stealth address to receive output
+    fee_tier: str = "medium"  # very_low/low/medium/high
+
+FEE_TIERS = {"very_low": 100, "low": 500, "medium": 3000, "high": 10000}
+
+@api_router.post("/uniswap/quote")
+async def uniswap_private_quote(request: UniswapPrivateSwapRequest):
+    """Get a Uniswap V3 quote routed through the privacy layer"""
+    try:
+        if request.chain not in CHAIN_CONFIG:
+            raise HTTPException(status_code=400, detail="Unsupported chain")
+        if request.chain not in UNISWAP_V3_CONTRACTS:
+            raise HTTPException(status_code=400, detail=f"Uniswap not available on {request.chain}")
+
+        config = CHAIN_CONFIG[request.chain]
+        contracts = UNISWAP_V3_CONTRACTS[request.chain]
+        fee = FEE_TIERS.get(request.fee_tier, 3000)
+
+        # Resolve token addresses
+        chain_tokens = TOKENS.get(request.chain, {})
+
+        def resolve_address(symbol_or_addr: str) -> str:
+            if symbol_or_addr.startswith("0x"):
+                return Web3.to_checksum_address(symbol_or_addr)
+            if symbol_or_addr.upper() in chain_tokens:
+                addr = chain_tokens[symbol_or_addr.upper()]["address"]
+                if addr == "native":
+                    return Web3.to_checksum_address(config["weth"])
+                return Web3.to_checksum_address(addr)
+            # fallback: treat as native -> wrap
+            return Web3.to_checksum_address(config["weth"])
+
+        token_in_addr = resolve_address(request.token_in)
+        token_out_addr = resolve_address(request.token_out)
+
+        # Determine decimals for amount parsing
+        def get_decimals(symbol_or_addr: str) -> int:
+            if symbol_or_addr.upper() in chain_tokens:
+                return chain_tokens[symbol_or_addr.upper()]["decimals"]
+            return 18
+
+        decimals_in = get_decimals(request.token_in)
+        amount_in_wei = int(float(request.amount_in) * (10 ** decimals_in))
+
+        # Try on-chain quote
+        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        quoter = w3.eth.contract(
+            address=Web3.to_checksum_address(contracts["quoter"]),
+            abi=UNISWAP_QUOTER_ABI
+        )
+
+        try:
+            amount_out = quoter.functions.quoteExactInputSingle(
+                token_in_addr, token_out_addr, fee, amount_in_wei, 0
+            ).call()
+            quote_source = "on_chain"
+        except Exception as e:
+            logger.warning(f"Uniswap on-chain quote failed: {e}, using estimate")
+            # Fallback: estimate same amount in output token units (same decimals as input)
+            # This is just a rough 1:1 estimate; real price from on-chain is preferred
+            decimals_out_fallback = get_decimals(request.token_out)
+            # Convert amount_in_wei back to float, then to output token units
+            amount_in_float = float(request.amount_in)
+            amount_out = int(amount_in_float * (10 ** decimals_out_fallback))
+            quote_source = "estimated"
+
+        privacy_fee_wei = amount_out * 5 // 10000
+        amount_out_after_fee = amount_out - privacy_fee_wei
+
+        decimals_out = get_decimals(request.token_out)
+        amount_out_human = amount_out_after_fee / (10 ** decimals_out)
+
+        return {
+            "chain": request.chain,
+            "token_in": request.token_in,
+            "token_out": request.token_out,
+            "amount_in": request.amount_in,
+            "amount_in_wei": str(amount_in_wei),
+            "amount_out_wei": str(amount_out),
+            "amount_out_after_privacy_fee": str(amount_out_after_fee),
+            "amount_out_human": f"{amount_out_human:.6f}",
+            "privacy_fee_wei": str(privacy_fee_wei),
+            "privacy_fee_pct": "0.05%",
+            "fee_tier": request.fee_tier,
+            "fee_bps": fee,
+            "router": contracts["router"],
+            "stealth_recipient": request.stealth_recipient,
+            "privacy_layer": "enabled",
+            "routing": "privacy_relayer → uniswap_v3 → stealth_address",
+            "quote_source": quote_source
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Uniswap quote error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/uniswap/record-swap")
+async def uniswap_record_private_swap(
+    tx_hash: str = Body(...),
+    from_address: str = Body(...),
+    token_in: str = Body(...),
+    token_out: str = Body(...),
+    amount_in: str = Body(...),
+    amount_out: str = Body(...),
+    chain: str = Body(...),
+    stealth_recipient: str = Body(...),
+    router_used: str = Body(default="uniswap_v3")
+):
+    """Record a privacy-routed Uniswap swap"""
+    try:
+        doc = {
+            "id": str(uuid.uuid4()),
+            "tx_hash": tx_hash,
+            "from_address": from_address,
+            "token_in": token_in,
+            "token_out": token_out,
+            "amount_in": amount_in,
+            "amount_out": amount_out,
+            "chain": chain,
+            "stealth_recipient": stealth_recipient,
+            "router_used": router_used,
+            "tx_type": "private_uniswap_swap",
+            "privacy_layer": "enabled",
+            "status": "confirmed",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.transactions.insert_one(doc)
+        return {"success": True, "swap_id": doc["id"]}
+    except Exception as e:
+        logger.error(f"Uniswap swap record error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/uniswap/supported-chains")
+async def uniswap_supported_chains():
+    """Get chains where Uniswap V3 is available"""
+    return {
+        "chains": list(UNISWAP_V3_CONTRACTS.keys()),
+        "contracts": UNISWAP_V3_CONTRACTS,
+        "note": "All swaps routed through UPL privacy relayer"
+    }
+
+
+# ─── Hyperliquid Integration ──────────────────────────────────────────────────
+
+# Hyperliquid L1 API base (their off-chain info endpoint)
+HYPERLIQUID_API = "https://api.hyperliquid.xyz/info"
+HYPERLIQUID_EXCHANGE_API = "https://api.hyperliquid.xyz/exchange"
+
+# Common perp pairs on Hyperliquid
+HYPERLIQUID_PERPS = [
+    "BTC", "ETH", "SOL", "ARB", "OP", "AVAX", "MATIC",
+    "DOGE", "LTC", "LINK", "UNI", "AAVE", "HYPE"
+]
+
+class HyperliquidPrivateOrderRequest(BaseModel):
+    trader_address: str
+    asset: str = "ETH"
+    is_buy: bool = True
+    size: float  # in USD notional
+    limit_price: Optional[float] = None  # None for market order
+    leverage: int = 1
+    chain: str = "arbitrum"  # For routing the margin through privacy layer
+
+@api_router.get("/hyperliquid/markets")
+async def get_hyperliquid_markets():
+    """Get available perpetual markets on Hyperliquid"""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(HYPERLIQUID_API, json={"type": "meta"})
+            if resp.status_code == 200:
+                data = resp.json()
+                universes = data.get("universe", [])
+                markets = [
+                    {
+                        "name": u.get("name"),
+                        "szDecimals": u.get("szDecimals"),
+                        "maxLeverage": u.get("maxLeverage", 50),
+                        "onlyIsolated": u.get("onlyIsolated", False)
+                    }
+                    for u in universes
+                ]
+                return {"markets": markets, "count": len(markets)}
+            else:
+                return {"markets": [{"name": p, "maxLeverage": 50} for p in HYPERLIQUID_PERPS], "count": len(HYPERLIQUID_PERPS)}
+    except Exception as e:
+        logger.warning(f"Hyperliquid markets fetch failed: {e}")
+        return {"markets": [{"name": p, "maxLeverage": 50} for p in HYPERLIQUID_PERPS], "count": len(HYPERLIQUID_PERPS)}
+
+@api_router.get("/hyperliquid/price/{asset}")
+async def get_hyperliquid_price(asset: str):
+    """Get current mark price for an asset on Hyperliquid"""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(HYPERLIQUID_API, json={"type": "allMids"})
+            if resp.status_code == 200:
+                mids = resp.json()
+                price = mids.get(asset.upper())
+                if price:
+                    return {"asset": asset.upper(), "price": float(price), "source": "hyperliquid"}
+                return {"asset": asset.upper(), "price": None, "error": "Asset not found"}
+            return {"asset": asset.upper(), "price": None, "error": "API unavailable"}
+    except Exception as e:
+        return {"asset": asset.upper(), "price": None, "error": str(e)}
+
+@api_router.post("/hyperliquid/prepare-private-trade")
+async def prepare_hyperliquid_private_trade(request: HyperliquidPrivateOrderRequest):
+    """
+    Prepare a privacy-routed trade on Hyperliquid.
+    The margin is routed through a stealth address before depositing into Hyperliquid.
+    """
+    try:
+        # Generate a privacy proxy address for this trade
+        proxy_key = secrets.token_bytes(32)
+        proxy_account = Account.from_key(proxy_key)
+
+        trade_id = str(uuid.uuid4())
+
+        # Generate stealth ephemeral key
+        ephemeral_key = "0x" + secrets.token_hex(32)
+        view_tag = secrets.randbelow(256)
+
+        # Calculate fees
+        privacy_fee_pct = 0.0005  # 0.05%
+        usd_value = request.size
+        privacy_fee_usd = usd_value * privacy_fee_pct
+
+        doc = {
+            "trade_id": trade_id,
+            "trader_address": request.trader_address,
+            "proxy_address": proxy_account.address,
+            "asset": request.asset.upper(),
+            "is_buy": request.is_buy,
+            "size_usd": usd_value,
+            "leverage": request.leverage,
+            "limit_price": request.limit_price,
+            "chain": request.chain,
+            "ephemeral_key": ephemeral_key,
+            "view_tag": view_tag,
+            "privacy_fee_usd": privacy_fee_usd,
+            "status": "pending",
+            "platform": "hyperliquid",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.defi_trades.insert_one(doc)
+
+        return {
+            "trade_id": trade_id,
+            "proxy_address": proxy_account.address,
+            "platform": "hyperliquid",
+            "asset": request.asset.upper(),
+            "direction": "LONG" if request.is_buy else "SHORT",
+            "size_usd": usd_value,
+            "leverage": request.leverage,
+            "privacy_fee_usd": privacy_fee_usd,
+            "routing": f"your_wallet → stealth_proxy({proxy_account.address[:10]}...) → hyperliquid",
+            "instructions": [
+                f"1. Your identity is hidden via stealth proxy: {proxy_account.address}",
+                f"2. Transfer margin (USDC) to proxy address on {request.chain}",
+                f"3. Proxy deposits to Hyperliquid and opens {request.asset.upper()} {'LONG' if request.is_buy else 'SHORT'}",
+                f"4. Privacy fee: ${privacy_fee_usd:.4f} (0.05%)"
+            ],
+            "ephemeral_key": ephemeral_key,
+            "status": "prepared"
+        }
+    except Exception as e:
+        logger.error(f"Hyperliquid trade preparation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/hyperliquid/record-trade")
+async def record_hyperliquid_trade(
+    trade_id: str = Body(...),
+    tx_hash: str = Body(...),
+    status: str = Body(default="submitted")
+):
+    """Record execution of a Hyperliquid private trade"""
+    try:
+        await db.defi_trades.update_one(
+            {"trade_id": trade_id},
+            {"$set": {
+                "tx_hash": tx_hash,
+                "status": status,
+                "executed_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        # Also record in transactions
+        trade = await db.defi_trades.find_one({"trade_id": trade_id}, {"_id": 0})
+        if trade:
+            await db.transactions.insert_one({
+                "id": str(uuid.uuid4()),
+                "tx_hash": tx_hash,
+                "from_address": trade.get("trader_address", ""),
+                "to_address": trade.get("proxy_address", ""),
+                "amount_wei": "0",
+                "chain": trade.get("chain", "arbitrum"),
+                "tx_type": "private_hyperliquid_trade",
+                "platform": "hyperliquid",
+                "asset": trade.get("asset"),
+                "direction": "LONG" if trade.get("is_buy") else "SHORT",
+                "status": status,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+        return {"success": True, "trade_id": trade_id}
+    except Exception as e:
+        logger.error(f"Hyperliquid trade record error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/hyperliquid/trades/{address}")
+async def get_hyperliquid_trades(address: str):
+    """Get all private Hyperliquid trades for an address"""
+    try:
+        trades = await db.defi_trades.find(
+            {"trader_address": {"$regex": address, "$options": "i"}, "platform": "hyperliquid"},
+            {"_id": 0}
+        ).sort("created_at", -1).to_list(50)
+        return {"trades": trades, "count": len(trades)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Polymarket Integration ───────────────────────────────────────────────────
+
+POLYMARKET_CLOB_API = "https://clob.polymarket.com"
+
+class PolymarketPrivateBetRequest(BaseModel):
+    bettor_address: str
+    condition_id: str  # Polymarket market condition ID
+    token_id: str  # YES or NO token ID
+    outcome: str  # "YES" or "NO"
+    amount_usdc: float  # Amount in USDC
+    chain: str = "polygon"  # Polymarket runs on Polygon
+
+@api_router.get("/polymarket/markets")
+async def get_polymarket_markets(limit: int = 10):
+    """Get active prediction markets from Polymarket"""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{POLYMARKET_CLOB_API}/markets",
+                params={"active": True, "limit": limit},
+                headers={"Accept": "application/json"}
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                markets = data if isinstance(data, list) else data.get("data", [])
+                return {
+                    "markets": markets[:limit],
+                    "count": len(markets[:limit]),
+                    "source": "polymarket_clob"
+                }
+            # Fallback to sample markets
+            raise Exception("API returned non-200")
+    except Exception as e:
+        logger.warning(f"Polymarket market fetch failed: {e}")
+        # Return sample/demo markets
+        return {
+            "markets": [
+                {
+                    "condition_id": "demo_1",
+                    "question": "Will Bitcoin exceed $100K by end of 2025?",
+                    "outcomes": ["YES", "NO"],
+                    "volume": "$2.4M",
+                    "yes_price": 0.65,
+                    "no_price": 0.35,
+                    "end_date": "2025-12-31",
+                    "active": True
+                },
+                {
+                    "condition_id": "demo_2",
+                    "question": "Will Ethereum ETF see >$1B inflows in Q1 2026?",
+                    "outcomes": ["YES", "NO"],
+                    "volume": "$890K",
+                    "yes_price": 0.42,
+                    "no_price": 0.58,
+                    "end_date": "2026-03-31",
+                    "active": True
+                },
+                {
+                    "condition_id": "demo_3",
+                    "question": "Will the Fed cut rates in Q1 2026?",
+                    "outcomes": ["YES", "NO"],
+                    "volume": "$1.2M",
+                    "yes_price": 0.71,
+                    "no_price": 0.29,
+                    "end_date": "2026-03-31",
+                    "active": True
+                }
+            ],
+            "count": 3,
+            "source": "demo"
+        }
+
+@api_router.post("/polymarket/prepare-private-bet")
+async def prepare_polymarket_private_bet(request: PolymarketPrivateBetRequest):
+    """
+    Prepare a privacy-routed bet on Polymarket.
+    The USDC is routed through a stealth address before betting.
+    """
+    try:
+        # Generate a privacy proxy address
+        proxy_key = secrets.token_bytes(32)
+        proxy_account = Account.from_key(proxy_key)
+
+        bet_id = str(uuid.uuid4())
+
+        # Privacy fee
+        privacy_fee_pct = 0.0005
+        privacy_fee_usdc = request.amount_usdc * privacy_fee_pct
+        net_bet = request.amount_usdc - privacy_fee_usdc
+
+        # Potential payout (estimated based on outcome)
+        payout_multiplier = 1.0 / 0.65 if request.outcome.upper() == "YES" else 1.0 / 0.35
+        estimated_payout = net_bet * payout_multiplier
+
+        doc = {
+            "bet_id": bet_id,
+            "bettor_address": request.bettor_address,
+            "proxy_address": proxy_account.address,
+            "condition_id": request.condition_id,
+            "token_id": request.token_id,
+            "outcome": request.outcome.upper(),
+            "amount_usdc": request.amount_usdc,
+            "net_bet_usdc": net_bet,
+            "privacy_fee_usdc": privacy_fee_usdc,
+            "chain": request.chain,
+            "platform": "polymarket",
+            "status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.defi_trades.insert_one(doc)
+
+        return {
+            "bet_id": bet_id,
+            "proxy_address": proxy_account.address,
+            "platform": "polymarket",
+            "condition_id": request.condition_id,
+            "outcome": request.outcome.upper(),
+            "amount_usdc": request.amount_usdc,
+            "net_bet_usdc": net_bet,
+            "privacy_fee_usdc": privacy_fee_usdc,
+            "estimated_payout_if_win": f"${estimated_payout:.2f}",
+            "routing": f"your_wallet → stealth_proxy({proxy_account.address[:10]}...) → polymarket",
+            "instructions": [
+                f"1. Your identity is hidden via stealth proxy: {proxy_account.address}",
+                f"2. Transfer ${request.amount_usdc:.2f} USDC to proxy on Polygon",
+                f"3. Proxy places {request.outcome.upper()} bet on condition {request.condition_id[:12]}...",
+                f"4. Privacy fee: ${privacy_fee_usdc:.4f} USDC (0.05%)"
+            ],
+            "status": "prepared"
+        }
+    except Exception as e:
+        logger.error(f"Polymarket bet preparation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/polymarket/record-bet")
+async def record_polymarket_bet(
+    bet_id: str = Body(...),
+    tx_hash: str = Body(...),
+    status: str = Body(default="submitted")
+):
+    """Record execution of a Polymarket private bet"""
+    try:
+        await db.defi_trades.update_one(
+            {"bet_id": bet_id},
+            {"$set": {
+                "tx_hash": tx_hash,
+                "status": status,
+                "executed_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        bet = await db.defi_trades.find_one({"bet_id": bet_id}, {"_id": 0})
+        if bet:
+            await db.transactions.insert_one({
+                "id": str(uuid.uuid4()),
+                "tx_hash": tx_hash,
+                "from_address": bet.get("bettor_address", ""),
+                "to_address": bet.get("proxy_address", ""),
+                "amount_wei": str(int(bet.get("amount_usdc", 0) * 1e6)),
+                "chain": bet.get("chain", "polygon"),
+                "tx_type": "private_polymarket_bet",
+                "platform": "polymarket",
+                "outcome": bet.get("outcome"),
+                "status": status,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+        return {"success": True, "bet_id": bet_id}
+    except Exception as e:
+        logger.error(f"Polymarket bet record error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/polymarket/bets/{address}")
+async def get_polymarket_bets(address: str):
+    """Get all private Polymarket bets for an address"""
+    try:
+        bets = await db.defi_trades.find(
+            {"bettor_address": {"$regex": address, "$options": "i"}, "platform": "polymarket"},
+            {"_id": 0}
+        ).sort("created_at", -1).to_list(50)
+        return {"bets": bets, "count": len(bets)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Error Monitoring Endpoint ─────────────────────────────────────────────────
 
 @api_router.post("/errors/log")

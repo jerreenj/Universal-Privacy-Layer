@@ -1,7 +1,7 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE = 'https://upl-crypto.preview.emergentagent.com/api';
+const API_BASE = 'https://privacy-dex-pro.preview.emergentagent.com/api';
 
 const api = axios.create({
   baseURL: API_BASE,

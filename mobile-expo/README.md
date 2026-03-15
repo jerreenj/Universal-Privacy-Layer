@@ -56,7 +56,7 @@ That's it! The app will load on your phone.
 ### API Connection
 The app connects to your live backend:
 ```
-https://upl-crypto.preview.emergentagent.com/api
+https://privacy-dex-pro.preview.emergentagent.com/api
 ```
 
 ---
