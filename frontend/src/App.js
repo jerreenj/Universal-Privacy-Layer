@@ -7,14 +7,15 @@ import {
   RefreshCw, Copy, Check, ExternalLink, Eye, EyeOff,
   ChevronDown, Zap, Lock, Layers, Activity,
   Loader2, Hexagon, Fingerprint, ArrowRight, 
-  Shield, Globe, Cpu, Database, Code, TrendingUp
+  Shield, Globe, Cpu, Database, Code, TrendingUp, X
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
+import RotatingEarth from "@/components/ui/RotatingEarth";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-// Chain configurations - MAINNET
+// MAINNET Chains
 const CHAINS = {
   base: {
     name: "Base",
@@ -24,17 +25,20 @@ const CHAINS = {
     explorer: "https://basescan.org",
     symbol: "ETH",
     color: "#0052FF",
-    isMainnet: true
+    contracts: {
+      privacyRelayer: "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+      stealthRegistry: "0xf2E7A6734E58774A8417c176AaE3898667699Ff4"
+    }
   },
   arbitrum: {
-    name: "Arbitrum One", 
+    name: "Arbitrum",
     chainId: "0xa4b1",
     chainIdDec: 42161,
     rpcUrl: "https://arb1.arbitrum.io/rpc",
     explorer: "https://arbiscan.io",
     symbol: "ETH",
     color: "#28A0F0",
-    isMainnet: true
+    contracts: null
   },
   ethereum: {
     name: "Ethereum",
@@ -44,33 +48,15 @@ const CHAINS = {
     explorer: "https://etherscan.io",
     symbol: "ETH",
     color: "#627EEA",
-    isMainnet: true
+    contracts: null
   }
 };
 
-// Wallet Context
+// Context
 const WalletContext = createContext();
 export const useWallet = () => useContext(WalletContext);
 
-// Custom Logo
-function UPLLogo({ size = 48, animated = false }) {
-  return (
-    <div className={`relative ${animated ? 'animate-pulse-glow' : ''}`} style={{ width: size, height: size }}>
-      <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-        <path d="M50 5L90 27.5V72.5L50 95L10 72.5V27.5L50 5Z" stroke="#00FF94" strokeWidth="2" fill="rgba(0,255,148,0.05)"/>
-        <path d="M50 20L75 35V65L50 80L25 65V35L50 20Z" stroke="#00FF94" strokeWidth="1.5" strokeOpacity="0.6" fill="none"/>
-        <path d="M50 32L65 41V59L50 68L35 59V41L50 32Z" stroke="#00FF94" strokeWidth="1" strokeOpacity="0.4" fill="rgba(0,255,148,0.1)"/>
-        <circle cx="50" cy="50" r="4" fill="#00FF94" />
-        <line x1="50" y1="46" x2="50" y2="32" stroke="#00FF94" strokeWidth="1" strokeOpacity="0.5" />
-        <line x1="54" y1="50" x2="65" y2="50" stroke="#00FF94" strokeWidth="1" strokeOpacity="0.5" />
-        <line x1="46" y1="50" x2="35" y2="50" stroke="#00FF94" strokeWidth="1" strokeOpacity="0.5" />
-        <line x1="50" y1="54" x2="50" y2="68" stroke="#00FF94" strokeWidth="1" strokeOpacity="0.5" />
-      </svg>
-    </div>
-  );
-}
-
-// WalletProvider
+// Provider
 function WalletProvider({ children }) {
   const [address, setAddress] = useState(null);
   const [chain, setChain] = useState("base");
@@ -80,10 +66,7 @@ function WalletProvider({ children }) {
   const [isConnecting, setIsConnecting] = useState(false);
 
   const connectWallet = async () => {
-    if (!window.ethereum) {
-      toast.error("Please install MetaMask");
-      return;
-    }
+    if (!window.ethereum) { toast.error("Install MetaMask"); return; }
     setIsConnecting(true);
     try {
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
@@ -92,10 +75,8 @@ function WalletProvider({ children }) {
       setAddress(accounts[0]);
       setProvider(ethProvider);
       setSigner(ethSigner);
-      toast.success("Wallet connected");
-    } catch (err) {
-      toast.error("Connection failed");
-    }
+      toast.success("Connected");
+    } catch { toast.error("Failed"); }
     setIsConnecting(false);
   };
 
@@ -108,25 +89,19 @@ function WalletProvider({ children }) {
 
   const switchChain = async (chainKey) => {
     setChain(chainKey);
-    toast.success(`Switched to ${CHAINS[chainKey].name}`);
     if (window.ethereum && address) {
-      const chainConfig = CHAINS[chainKey];
       try {
         await window.ethereum.request({
           method: "wallet_switchEthereumChain",
-          params: [{ chainId: chainConfig.chainId }]
+          params: [{ chainId: CHAINS[chainKey].chainId }]
         });
+        toast.success(`Switched to ${CHAINS[chainKey].name}`);
       } catch (err) {
         if (err.code === 4902) {
+          const c = CHAINS[chainKey];
           await window.ethereum.request({
             method: "wallet_addEthereumChain",
-            params: [{
-              chainId: chainConfig.chainId,
-              chainName: chainConfig.name,
-              rpcUrls: [chainConfig.rpcUrl],
-              blockExplorerUrls: [chainConfig.explorer],
-              nativeCurrency: { name: chainConfig.symbol, symbol: chainConfig.symbol, decimals: 18 }
-            }]
+            params: [{ chainId: c.chainId, chainName: c.name, rpcUrls: [c.rpcUrl], blockExplorerUrls: [c.explorer], nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 } }]
           });
         }
       }
@@ -134,23 +109,26 @@ function WalletProvider({ children }) {
   };
 
   const fetchBalance = useCallback(async () => {
-    if (!address || !provider) return;
+    if (!address) return;
     try {
-      const bal = await provider.getBalance(address);
+      const rpc = CHAINS[chain].rpcUrl;
+      const tempProvider = new ethers.JsonRpcProvider(rpc);
+      const bal = await tempProvider.getBalance(address);
+      const ethBal = ethers.formatEther(bal);
       setBalance({
-        total_balance_eth: ethers.formatEther(bal),
-        main_balance_wei: bal.toString(),
-        stealth_balance_wei: "0",
-        symbol: CHAINS[chain].symbol
+        wei: bal.toString(),
+        eth: ethBal,
+        formatted: parseFloat(ethBal).toFixed(6),
+        symbol: "ETH"
       });
     } catch (err) {
-      console.error(err);
+      console.error("Balance error:", err);
     }
-  }, [address, chain, provider]);
+  }, [address, chain]);
 
   useEffect(() => {
-    if (address && provider) fetchBalance();
-  }, [address, chain, provider, fetchBalance]);
+    if (address) fetchBalance();
+  }, [address, chain, fetchBalance]);
 
   useEffect(() => {
     if (window.ethereum) {
@@ -162,10 +140,7 @@ function WalletProvider({ children }) {
   }, []);
 
   return (
-    <WalletContext.Provider value={{
-      address, chain, balance, provider, signer, isConnecting,
-      connectWallet, disconnectWallet, switchChain, fetchBalance, setChain
-    }}>
+    <WalletContext.Provider value={{ address, chain, balance, provider, signer, isConnecting, connectWallet, disconnectWallet, switchChain, fetchBalance, setChain }}>
       {children}
     </WalletContext.Provider>
   );
@@ -174,42 +149,31 @@ function WalletProvider({ children }) {
 // Floating Controls
 function FloatingControls() {
   const { address, chain, connectWallet, disconnectWallet, switchChain, isConnecting } = useWallet();
-  const [showChainMenu, setShowChainMenu] = useState(false);
-  const truncateAddress = (addr) => addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : "";
+  const [showChains, setShowChains] = useState(false);
 
   return (
     <div className="fixed top-6 right-6 z-50 flex items-center gap-3">
       <div className="relative">
-        <button
-          data-testid="chain-selector"
-          onClick={() => setShowChainMenu(!showChainMenu)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-black/80 backdrop-blur-xl border border-white/10 hover:border-[#00FF94]/50 transition-all"
-        >
+        <button onClick={() => setShowChains(!showChains)} className="flex items-center gap-2 px-4 py-2.5 bg-black/90 backdrop-blur border border-white/10 hover:border-[#00FF94]/50 transition-all">
           <div className="w-2 h-2 rounded-full" style={{ backgroundColor: CHAINS[chain].color }} />
-          <span className="text-sm text-[#EDEDED]">{CHAINS[chain].name}</span>
-          <ChevronDown className={`w-4 h-4 text-[#888] transition-transform ${showChainMenu ? 'rotate-180' : ''}`} />
+          <span className="text-sm">{CHAINS[chain].name}</span>
+          <ChevronDown className={`w-4 h-4 text-[#666] transition-transform ${showChains ? 'rotate-180' : ''}`} />
         </button>
-        {showChainMenu && (
-          <div className="absolute top-full mt-2 right-0 bg-black/95 backdrop-blur-xl border border-white/10 min-w-[180px]">
-            {Object.entries(CHAINS).map(([key, config]) => (
-              <button
-                key={key}
-                onClick={() => { switchChain(key); setShowChainMenu(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-[#00FF94]/10 transition-colors text-left ${chain === key ? 'bg-[#00FF94]/5 border-l-2 border-[#00FF94]' : ''}`}
-              >
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: config.color }} />
-                <span className="text-sm">{config.name}</span>
-                {config.isMainnet && <span className="text-[10px] text-[#00FF94] ml-auto">MAINNET</span>}
+        {showChains && (
+          <div className="absolute top-full mt-2 right-0 bg-black/95 backdrop-blur border border-white/10 min-w-[160px]">
+            {Object.entries(CHAINS).map(([k, v]) => (
+              <button key={k} onClick={() => { switchChain(k); setShowChains(false); }} className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-[#00FF94]/10 text-left ${chain === k ? 'bg-[#00FF94]/5 border-l-2 border-[#00FF94]' : ''}`}>
+                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
+                <span className="text-sm">{v.name}</span>
               </button>
             ))}
           </div>
         )}
       </div>
-
       {address ? (
         <button onClick={disconnectWallet} className="flex items-center gap-2 px-4 py-2.5 bg-[#00FF94]/10 border border-[#00FF94]/50 text-[#00FF94] hover:bg-[#00FF94] hover:text-black transition-all">
           <div className="w-2 h-2 rounded-full bg-[#00FF94] animate-pulse" />
-          <span className="font-mono text-sm">{truncateAddress(address)}</span>
+          <span className="font-mono text-sm">{address.slice(0,6)}...{address.slice(-4)}</span>
         </button>
       ) : (
         <button onClick={connectWallet} disabled={isConnecting} className="flex items-center gap-2 px-5 py-2.5 bg-[#00FF94] text-black font-bold uppercase tracking-widest text-sm hover:scale-105 transition-all disabled:opacity-50">
@@ -221,34 +185,16 @@ function FloatingControls() {
   );
 }
 
-// Quick Action Card
-function QuickAction({ icon: Icon, title, desc, color, onClick, testId }) {
-  return (
-    <button
-      data-testid={testId}
-      onClick={onClick}
-      className="group bg-black/30 backdrop-blur border border-white/5 p-6 text-left hover:border-white/20 transition-all duration-300 hover:bg-black/50"
-    >
-      <Icon className="w-8 h-8 mb-4 transition-colors" style={{ color }} strokeWidth={1.5} />
-      <h3 className="text-lg font-semibold text-white mb-1">{title}</h3>
-      <p className="text-sm text-[#888]">{desc}</p>
-      <ArrowRight className="w-4 h-4 mt-4 text-[#888] group-hover:text-white group-hover:translate-x-1 transition-all" />
-    </button>
-  );
-}
-
-// Modal Component
+// Modal
 function Modal({ isOpen, onClose, title, children }) {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-[#0A0A0A] border border-white/10 w-full max-w-lg max-h-[80vh] overflow-auto">
-        <div className="sticky top-0 bg-[#0A0A0A] border-b border-white/10 p-4 flex items-center justify-between">
+      <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-[#0A0A0A] border border-white/10 w-full max-w-lg max-h-[85vh] overflow-auto animate-fade-in">
+        <div className="sticky top-0 bg-[#0A0A0A] border-b border-white/10 p-5 flex items-center justify-between">
           <h2 className="text-lg font-semibold">{title}</h2>
-          <button onClick={onClose} className="p-2 hover:bg-white/5 transition-colors">
-            <ArrowRight className="w-5 h-5 rotate-45" />
-          </button>
+          <button onClick={onClose} className="p-2 hover:bg-white/5"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-6">{children}</div>
       </div>
@@ -256,53 +202,44 @@ function Modal({ isOpen, onClose, title, children }) {
   );
 }
 
-// Stealth Address Modal Content
+// Stealth Content
 function StealthContent() {
   const { address, chain } = useWallet();
-  const [stealthAddress, setStealthAddress] = useState(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [stealth, setStealth] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const generate = async () => {
-    if (!address) { toast.error("Connect wallet first"); return; }
-    setIsGenerating(true);
+    if (!address) { toast.error("Connect wallet"); return; }
+    setLoading(true);
     try {
       const res = await axios.post(`${API}/stealth/generate`, { public_address: address, chain });
-      setStealthAddress(res.data);
-      toast.success("Stealth address generated");
-    } catch { toast.error("Generation failed"); }
-    setIsGenerating(false);
+      setStealth(res.data);
+      toast.success("Generated!");
+    } catch { toast.error("Failed"); }
+    setLoading(false);
   };
 
-  const copy = async (text) => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    toast.success("Copied!");
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const copy = async (t) => { await navigator.clipboard.writeText(t); setCopied(true); toast.success("Copied!"); setTimeout(() => setCopied(false), 2000); };
 
   return (
     <div className="space-y-6">
-      <p className="text-[#888]">Generate a one-time stealth address. The sender cannot link this address to you.</p>
-      <button
-        onClick={generate}
-        disabled={isGenerating || !address}
-        className="w-full py-4 bg-[#00FF94]/10 border border-[#00FF94]/50 text-[#00FF94] uppercase tracking-widest font-bold hover:bg-[#00FF94] hover:text-black transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-      >
-        {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Fingerprint className="w-5 h-5" />}
-        Generate Address
+      <p className="text-[#888]">Generate a one-time stealth address that cannot be linked to your wallet.</p>
+      <button onClick={generate} disabled={loading || !address} className="w-full py-4 bg-[#00FF94]/10 border border-[#00FF94]/50 text-[#00FF94] uppercase tracking-widest font-bold hover:bg-[#00FF94] hover:text-black transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Fingerprint className="w-5 h-5" />}
+        Generate
       </button>
-      {stealthAddress && (
-        <div className="bg-black/50 p-4 border border-[#00FF94]/30 space-y-3">
+      {stealth && (
+        <div className="bg-black/50 p-5 border border-[#00FF94]/30 space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-xs text-[#888] uppercase tracking-wider">Stealth Address</span>
-            <button onClick={() => copy(stealthAddress.stealth_address)} className="p-1 hover:bg-white/5">
+            <button onClick={() => copy(stealth.stealth_address)} className="p-1 hover:bg-white/5">
               {copied ? <Check className="w-4 h-4 text-[#00FF94]" /> : <Copy className="w-4 h-4 text-[#888]" />}
             </button>
           </div>
-          <p className="font-mono text-sm text-[#00FF94] break-all">{stealthAddress.stealth_address}</p>
+          <p className="font-mono text-sm text-[#00FF94] break-all">{stealth.stealth_address}</p>
           <div className="pt-3 border-t border-white/10 flex justify-between text-xs text-[#888]">
-            <span>View Tag: <span className="text-white font-mono">{stealthAddress.view_tag}</span></span>
+            <span>Tag: <span className="text-white font-mono">{stealth.view_tag}</span></span>
             <span>{CHAINS[chain].name}</span>
           </div>
         </div>
@@ -311,64 +248,44 @@ function StealthContent() {
   );
 }
 
-// Private Send Modal Content
+// Send Content
 function SendContent() {
   const { address, chain, signer, fetchBalance } = useWallet();
-  const [recipient, setRecipient] = useState("");
+  const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
-  const [isSending, setIsSending] = useState(false);
+  const [sending, setSending] = useState(false);
   const [txHash, setTxHash] = useState(null);
 
   const send = async () => {
-    if (!address || !signer) { toast.error("Connect wallet first"); return; }
-    if (!ethers.isAddress(recipient)) { toast.error("Invalid address"); return; }
+    if (!signer) { toast.error("Connect wallet"); return; }
+    if (!ethers.isAddress(to)) { toast.error("Invalid address"); return; }
     if (!amount || parseFloat(amount) <= 0) { toast.error("Enter amount"); return; }
-    
-    setIsSending(true);
+    setSending(true);
     try {
-      const tx = await signer.sendTransaction({ to: recipient, value: ethers.parseEther(amount) });
-      toast.success("Transaction sent");
+      const tx = await signer.sendTransaction({ to, value: ethers.parseEther(amount) });
       setTxHash(tx.hash);
+      toast.success("Sent!");
       await tx.wait();
       toast.success("Confirmed!");
       fetchBalance();
-      setRecipient("");
-      setAmount("");
-    } catch (err) {
-      toast.error(err.message || "Failed");
-    }
-    setIsSending(false);
+      setTo(""); setAmount("");
+    } catch (e) { toast.error(e.message || "Failed"); }
+    setSending(false);
   };
 
   return (
     <div className="space-y-6">
       <div>
         <label className="block text-xs text-[#888] uppercase tracking-wider mb-2">Recipient</label>
-        <input
-          value={recipient}
-          onChange={(e) => setRecipient(e.target.value)}
-          placeholder="0x... or stealth address"
-          className="w-full bg-black/50 border border-white/10 focus:border-[#00FF94] p-4 font-mono text-sm outline-none transition-colors"
-        />
+        <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="0x... or stealth address" className="w-full bg-black/50 border border-white/10 focus:border-[#00FF94] p-4 font-mono text-sm outline-none" />
       </div>
       <div>
         <label className="block text-xs text-[#888] uppercase tracking-wider mb-2">Amount (ETH)</label>
-        <input
-          type="number"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="0.0"
-          step="0.001"
-          className="w-full bg-black/50 border border-white/10 focus:border-[#00FF94] p-4 font-mono text-sm outline-none transition-colors"
-        />
+        <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0" step="0.001" className="w-full bg-black/50 border border-white/10 focus:border-[#00FF94] p-4 font-mono text-sm outline-none" />
       </div>
-      <button
-        onClick={send}
-        disabled={isSending || !address}
-        className="w-full py-4 bg-[#00F0FF]/10 border border-[#00F0FF]/50 text-[#00F0FF] uppercase tracking-widest font-bold hover:bg-[#00F0FF] hover:text-black transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-      >
-        {isSending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
-        Send Privately
+      <button onClick={send} disabled={sending || !address} className="w-full py-4 bg-[#00F0FF]/10 border border-[#00F0FF]/50 text-[#00F0FF] uppercase tracking-widest font-bold hover:bg-[#00F0FF] hover:text-black transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+        {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
+        Send
       </button>
       {txHash && (
         <a href={`${CHAINS[chain].explorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 text-sm text-[#00FF94] hover:underline">
@@ -379,210 +296,158 @@ function SendContent() {
   );
 }
 
-// Swap Modal Content
-function SwapContent() {
-  const { address, chain, signer, fetchBalance } = useWallet();
-  const [amountIn, setAmountIn] = useState("");
-  const [recipient, setRecipient] = useState("");
-  const [isSwapping, setIsSwapping] = useState(false);
-
-  const swap = async () => {
-    if (!address || !signer) { toast.error("Connect wallet first"); return; }
-    if (!recipient || !ethers.isAddress(recipient)) { toast.error("Enter stealth address"); return; }
-    if (!amountIn || parseFloat(amountIn) <= 0) { toast.error("Enter amount"); return; }
-    
-    setIsSwapping(true);
-    try {
-      const tx = await signer.sendTransaction({ to: recipient, value: ethers.parseEther(amountIn) });
-      toast.success("Swap initiated");
-      await tx.wait();
-      toast.success("Swap confirmed!");
-      fetchBalance();
-      setAmountIn("");
-    } catch (err) {
-      toast.error(err.message || "Swap failed");
-    }
-    setIsSwapping(false);
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-black/50 p-4 border border-white/10">
-        <div className="flex justify-between mb-2">
-          <span className="text-xs text-[#888] uppercase">You Pay</span>
-          <span className="text-xs text-[#00FF94]">ETH</span>
-        </div>
-        <input
-          type="number"
-          value={amountIn}
-          onChange={(e) => setAmountIn(e.target.value)}
-          placeholder="0.0"
-          className="w-full bg-transparent text-2xl font-mono outline-none"
-        />
-      </div>
-      <div className="flex justify-center">
-        <div className="w-10 h-10 bg-[#00FF94]/10 border border-[#00FF94]/30 flex items-center justify-center">
-          <ArrowDownLeft className="w-5 h-5 text-[#00FF94]" />
-        </div>
-      </div>
-      <div>
-        <label className="block text-xs text-[#888] uppercase tracking-wider mb-2">Recipient Stealth Address</label>
-        <input
-          value={recipient}
-          onChange={(e) => setRecipient(e.target.value)}
-          placeholder="0x..."
-          className="w-full bg-black/50 border border-white/10 focus:border-[#00FF94] p-4 font-mono text-sm outline-none"
-        />
-      </div>
-      <div className="flex justify-between text-xs text-[#888]">
-        <span>Privacy Fee</span>
-        <span className="text-[#00FF94]">0.05%</span>
-      </div>
-      <button
-        onClick={swap}
-        disabled={isSwapping || !address}
-        className="w-full py-4 bg-gradient-to-r from-[#00FF94]/20 to-[#00F0FF]/20 border border-[#00FF94]/50 text-[#00FF94] uppercase tracking-widest font-bold hover:from-[#00FF94] hover:to-[#00F0FF] hover:text-black transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-      >
-        {isSwapping ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCw className="w-5 h-5" />}
-        Swap Privately
-      </button>
-    </div>
-  );
-}
-
-// Balance Display
-function BalanceDisplay() {
-  const { balance, address } = useWallet();
+// Balance Card
+function BalanceCard() {
+  const { balance, address, chain, fetchBalance } = useWallet();
   const [show, setShow] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refresh = async () => { setRefreshing(true); await fetchBalance(); setRefreshing(false); };
+
   if (!address) return null;
 
   return (
-    <div className="bg-black/30 backdrop-blur border border-white/5 p-6">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-[#888] uppercase tracking-wider">Your Balance</span>
-        <button onClick={() => setShow(!show)} className="p-1 hover:bg-white/5">
-          {show ? <Eye className="w-4 h-4 text-[#888]" /> : <EyeOff className="w-4 h-4 text-[#888]" />}
-        </button>
+    <div className="bg-black/40 backdrop-blur border border-white/10 p-6">
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-xs text-[#888] uppercase tracking-wider">Balance on {CHAINS[chain].name}</span>
+        <div className="flex gap-2">
+          <button onClick={() => setShow(!show)} className="p-2 hover:bg-white/5">
+            {show ? <Eye className="w-4 h-4 text-[#888]" /> : <EyeOff className="w-4 h-4 text-[#888]" />}
+          </button>
+          <button onClick={refresh} className="p-2 hover:bg-white/5">
+            <RefreshCw className={`w-4 h-4 text-[#888] ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
       <div className="flex items-end gap-2">
-        <span className="font-heading text-4xl font-bold">
-          {show && balance ? parseFloat(balance.total_balance_eth).toFixed(4) : '••••'}
+        <span className="font-heading text-5xl font-bold text-white">
+          {show && balance ? balance.formatted : '••••••'}
         </span>
-        <span className="text-[#888] mb-1">ETH</span>
+        <span className="text-[#888] mb-2">ETH</span>
       </div>
+      {CHAINS[chain].contracts && (
+        <div className="mt-4 pt-4 border-t border-white/10">
+          <p className="text-xs text-[#00FF94]">✓ Contracts deployed on {CHAINS[chain].name}</p>
+        </div>
+      )}
     </div>
   );
 }
 
-// Transaction History
-function HistoryDisplay() {
-  const { address, chain } = useWallet();
-  const [txs, setTxs] = useState([]);
-
-  const fetch = useCallback(async () => {
-    if (!address) return;
-    try {
-      const res = await axios.get(`${API}/transactions/${address}?chain=${chain}`);
-      setTxs(res.data.transactions || []);
-    } catch {}
-  }, [address, chain]);
-
-  useEffect(() => { fetch(); }, [fetch]);
-
-  if (!address || txs.length === 0) return null;
-
-  return (
-    <div className="bg-black/30 backdrop-blur border border-white/5 p-6">
-      <h3 className="text-xs text-[#888] uppercase tracking-wider mb-4">Recent Activity</h3>
-      <div className="space-y-2">
-        {txs.slice(0, 3).map((tx, i) => (
-          <div key={i} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
-            <div className="flex items-center gap-2">
-              <ArrowUpRight className="w-4 h-4 text-[#00F0FF]" />
-              <span className="text-sm">{tx.tx_type}</span>
-            </div>
-            <span className="text-xs text-[#888] font-mono">{(parseFloat(tx.amount_wei) / 1e18).toFixed(4)} ETH</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Features Grid
-function Features() {
-  const features = [
-    { icon: Shield, title: "ZK Proofs", desc: "Zero-knowledge verification", color: "#00FF94" },
-    { icon: Globe, title: "Multi-Chain", desc: "Base, Arbitrum, Ethereum", color: "#00F0FF" },
-    { icon: Cpu, title: "Stealth Addresses", desc: "One-time receive addresses", color: "#00FF94" },
-    { icon: Database, title: "No Data Storage", desc: "Non-custodial & stateless", color: "#00F0FF" },
-    { icon: Code, title: "Open Source", desc: "Auditable smart contracts", color: "#00FF94" },
-    { icon: TrendingUp, title: "0.05% Fee", desc: "Industry-lowest privacy fee", color: "#00F0FF" },
+// Quick Actions
+function QuickActions({ onAction }) {
+  const actions = [
+    { id: 'receive', icon: Fingerprint, title: 'Private Receive', desc: 'Generate stealth address', color: '#00FF94' },
+    { id: 'send', icon: Zap, title: 'Private Send', desc: 'Send to any address', color: '#00F0FF' },
+    { id: 'swap', icon: RefreshCw, title: 'Private Swap', desc: 'Swap with privacy', color: '#00FF94' },
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-      {features.map((f, i) => (
-        <div key={i} className="bg-black/20 border border-white/5 p-4 text-center hover:border-white/10 transition-colors">
-          <f.icon className="w-6 h-6 mx-auto mb-2" style={{ color: f.color }} strokeWidth={1.5} />
-          <p className="text-sm font-medium">{f.title}</p>
-          <p className="text-xs text-[#888]">{f.desc}</p>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {actions.map((a) => (
+        <button key={a.id} onClick={() => onAction(a.id)} className="group bg-black/30 backdrop-blur border border-white/5 p-6 text-left hover:border-white/20 transition-all">
+          <a.icon className="w-8 h-8 mb-4" style={{ color: a.color }} strokeWidth={1.5} />
+          <h3 className="text-lg font-semibold mb-1">{a.title}</h3>
+          <p className="text-sm text-[#888]">{a.desc}</p>
+          <ArrowRight className="w-4 h-4 mt-4 text-[#888] group-hover:text-white group-hover:translate-x-1 transition-all" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Features
+function Features() {
+  const items = [
+    { icon: Shield, title: "ZK Ready", color: "#00FF94" },
+    { icon: Globe, title: "Multi-Chain", color: "#00F0FF" },
+    { icon: Lock, title: "Non-Custodial", color: "#00FF94" },
+    { icon: Database, title: "Stateless", color: "#00F0FF" },
+    { icon: Code, title: "Open Source", color: "#00FF94" },
+    { icon: TrendingUp, title: "0.05% Fee", color: "#00F0FF" },
+  ];
+
+  return (
+    <div className="flex flex-wrap justify-center gap-4">
+      {items.map((f, i) => (
+        <div key={i} className="flex items-center gap-2 px-4 py-2 bg-black/30 border border-white/5">
+          <f.icon className="w-4 h-4" style={{ color: f.color }} strokeWidth={1.5} />
+          <span className="text-sm">{f.title}</span>
         </div>
       ))}
     </div>
   );
 }
 
-// Landing Page
-function LandingPage() {
+// Landing
+function Landing() {
   const { connectWallet, isConnecting } = useWallet();
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-6 relative">
-      <div className="absolute inset-0 opacity-5" style={{
-        backgroundImage: `linear-gradient(rgba(0,255,148,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,148,0.3) 1px, transparent 1px)`,
-        backgroundSize: '80px 80px'
+    <div className="min-h-screen flex flex-col items-center justify-center px-6 relative overflow-hidden">
+      {/* Background Grid */}
+      <div className="absolute inset-0 opacity-[0.03]" style={{
+        backgroundImage: `linear-gradient(#00FF94 1px, transparent 1px), linear-gradient(90deg, #00FF94 1px, transparent 1px)`,
+        backgroundSize: '100px 100px'
       }} />
-      <div className="absolute top-1/3 left-1/3 w-[500px] h-[500px] bg-[#00FF94]/5 rounded-full blur-[150px]" />
       
-      <div className="relative z-10 text-center max-w-3xl">
-        <div className="mb-10">
-          <UPLLogo size={80} animated />
-        </div>
-        
-        <h1 className="font-heading text-6xl md:text-8xl font-bold tracking-tighter text-white mb-4 leading-[0.9]">
-          Universal<br />Privacy Layer
+      {/* Globe */}
+      <div className="absolute inset-0 flex items-center justify-center opacity-40 pointer-events-none">
+        <RotatingEarth width={700} height={700} />
+      </div>
+      
+      {/* Content */}
+      <div className="relative z-10 text-center max-w-4xl">
+        <h1 className="font-heading text-6xl md:text-8xl font-bold tracking-tighter text-white mb-6 leading-[0.85]">
+          Universal<br />Privacy<br />Layer
         </h1>
         
-        <p className="text-2xl text-[#00FF94] mb-4">The HTTPS of Web3</p>
+        <p className="text-2xl md:text-3xl text-[#00FF94] mb-4 font-medium">
+          The HTTPS of Web3
+        </p>
         
-        <p className="text-lg text-[#888] mb-12 max-w-xl mx-auto">
-          Real cryptographic privacy. Every transaction hidden. Every balance invisible.
+        <p className="text-lg text-[#888] mb-10 max-w-xl mx-auto">
+          Real cryptographic privacy on Base, Arbitrum & Ethereum.
+          Every transaction hidden. Every balance invisible.
         </p>
         
         <button
-          data-testid="landing-connect"
           onClick={connectWallet}
           disabled={isConnecting}
-          className="px-14 py-5 bg-[#00FF94] text-black font-bold uppercase tracking-widest text-lg hover:scale-105 transition-all flex items-center gap-3 mx-auto"
+          className="px-14 py-5 bg-[#00FF94] text-black font-bold uppercase tracking-widest text-lg hover:scale-105 hover:shadow-[0_0_40px_rgba(0,255,148,0.4)] transition-all flex items-center gap-3 mx-auto"
         >
           {isConnecting ? <Loader2 className="w-6 h-6 animate-spin" /> : <Hexagon className="w-6 h-6" />}
           Enter Privacy Layer
         </button>
         
+        {/* Stats */}
         <div className="mt-16 flex items-center justify-center gap-12">
           <div className="text-center">
-            <p className="font-heading text-3xl font-bold text-[#00FF94]">100%</p>
+            <p className="font-heading text-4xl font-bold text-[#00FF94]">100%</p>
             <p className="text-xs text-[#888] uppercase mt-1">Private</p>
           </div>
           <div className="text-center">
-            <p className="font-heading text-3xl font-bold text-[#00F0FF]">3</p>
+            <p className="font-heading text-4xl font-bold text-[#00F0FF]">3</p>
             <p className="text-xs text-[#888] uppercase mt-1">Mainnets</p>
           </div>
           <div className="text-center">
-            <p className="font-heading text-3xl font-bold text-white">0.05%</p>
-            <p className="text-xs text-[#888] uppercase mt-1">Fee</p>
+            <p className="font-heading text-4xl font-bold text-white">LIVE</p>
+            <p className="text-xs text-[#888] uppercase mt-1">On Base</p>
           </div>
+        </div>
+
+        {/* Contract Badge */}
+        <div className="mt-12">
+          <a 
+            href="https://basescan.org/address/0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-black/50 border border-[#00FF94]/30 text-sm text-[#00FF94] hover:bg-[#00FF94]/10 transition-colors"
+          >
+            <div className="w-2 h-2 rounded-full bg-[#00FF94] animate-pulse" />
+            Contracts Live on Base Mainnet
+            <ExternalLink className="w-4 h-4" />
+          </a>
         </div>
       </div>
     </div>
@@ -592,74 +457,37 @@ function LandingPage() {
 // Dashboard
 function Dashboard() {
   const { address } = useWallet();
-  const [activeModal, setActiveModal] = useState(null);
+  const [modal, setModal] = useState(null);
 
-  if (!address) return <LandingPage />;
+  if (!address) return <Landing />;
 
   return (
     <div className="min-h-screen pt-24 pb-16 px-6">
-      <div className="max-w-5xl mx-auto space-y-12">
+      <div className="max-w-4xl mx-auto space-y-10">
         {/* Header */}
-        <div className="flex items-center gap-4">
-          <UPLLogo size={40} />
-          <div>
-            <h1 className="font-heading text-2xl font-bold">Privacy Dashboard</h1>
-            <p className="text-sm text-[#888]">Manage your private transactions</p>
-          </div>
+        <div className="text-center">
+          <h1 className="font-heading text-3xl font-bold mb-2">Privacy Dashboard</h1>
+          <p className="text-[#888]">Manage your private transactions on mainnet</p>
         </div>
 
-        {/* Balance & History */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <BalanceDisplay />
-          <HistoryDisplay />
-        </div>
+        {/* Balance */}
+        <BalanceCard />
 
-        {/* Quick Actions */}
-        <div>
-          <h2 className="text-xs text-[#888] uppercase tracking-wider mb-4">Quick Actions</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <QuickAction
-              icon={Fingerprint}
-              title="Private Receive"
-              desc="Generate a stealth address"
-              color="#00FF94"
-              onClick={() => setActiveModal('stealth')}
-              testId="action-receive"
-            />
-            <QuickAction
-              icon={Zap}
-              title="Private Send"
-              desc="Send to any address privately"
-              color="#00F0FF"
-              onClick={() => setActiveModal('send')}
-              testId="action-send"
-            />
-            <QuickAction
-              icon={RefreshCw}
-              title="Private Swap"
-              desc="Swap tokens with privacy"
-              color="#00FF94"
-              onClick={() => setActiveModal('swap')}
-              testId="action-swap"
-            />
-          </div>
-        </div>
+        {/* Actions */}
+        <QuickActions onAction={setModal} />
 
         {/* Features */}
-        <div>
-          <h2 className="text-xs text-[#888] uppercase tracking-wider mb-4">Privacy Features</h2>
-          <Features />
-        </div>
+        <Features />
 
         {/* Modals */}
-        <Modal isOpen={activeModal === 'stealth'} onClose={() => setActiveModal(null)} title="Generate Stealth Address">
+        <Modal isOpen={modal === 'receive'} onClose={() => setModal(null)} title="Private Receive">
           <StealthContent />
         </Modal>
-        <Modal isOpen={activeModal === 'send'} onClose={() => setActiveModal(null)} title="Private Send">
+        <Modal isOpen={modal === 'send'} onClose={() => setModal(null)} title="Private Send">
           <SendContent />
         </Modal>
-        <Modal isOpen={activeModal === 'swap'} onClose={() => setActiveModal(null)} title="Private Swap">
-          <SwapContent />
+        <Modal isOpen={modal === 'swap'} onClose={() => setModal(null)} title="Private Swap">
+          <SendContent />
         </Modal>
       </div>
     </div>
@@ -670,8 +498,7 @@ function Dashboard() {
 function App() {
   return (
     <WalletProvider>
-      <div className="min-h-screen bg-[#050505]">
-        <div className="noise-overlay" />
+      <div className="min-h-screen bg-[#050505] text-white">
         <FloatingControls />
         <Dashboard />
         <Toaster position="bottom-right" toastOptions={{
