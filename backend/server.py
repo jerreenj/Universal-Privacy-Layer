@@ -74,7 +74,7 @@ UPL_CONTRACTS = {
     "base": {
         "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
         "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
-        "uniswap_wrapper": None,
+        "uniswap_wrapper": "0xD04f9cE68CfF7C0FD6d631794964784B99423943",
         "explorer": "https://basescan.org"
     },
     "arbitrum": {
@@ -88,6 +88,30 @@ UPL_CONTRACTS = {
         "stealth_registry": None,
         "uniswap_wrapper": None,
         "explorer": "https://etherscan.io"
+    }
+}
+
+# Token configurations per chain
+TOKENS = {
+    "base": {
+        "ETH": {"address": "native", "decimals": 18, "name": "Ethereum"},
+        "WETH": {"address": "0x4200000000000000000000000000000000000006", "decimals": 18, "name": "Wrapped ETH"},
+        "USDC": {"address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "decimals": 6, "name": "USD Coin"},
+        "DAI": {"address": "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", "decimals": 18, "name": "Dai Stablecoin"},
+        "USDbC": {"address": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA", "decimals": 6, "name": "USD Base Coin"},
+    },
+    "arbitrum": {
+        "ETH": {"address": "native", "decimals": 18, "name": "Ethereum"},
+        "WETH": {"address": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", "decimals": 18, "name": "Wrapped ETH"},
+        "USDC": {"address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", "decimals": 6, "name": "USD Coin"},
+        "DAI": {"address": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", "decimals": 18, "name": "Dai Stablecoin"},
+        "ARB": {"address": "0x912CE59144191C1204E64559FE8253a0e49E6548", "decimals": 18, "name": "Arbitrum"},
+    },
+    "ethereum": {
+        "ETH": {"address": "native", "decimals": 18, "name": "Ethereum"},
+        "WETH": {"address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "decimals": 18, "name": "Wrapped ETH"},
+        "USDC": {"address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "decimals": 6, "name": "USD Coin"},
+        "DAI": {"address": "0x6B175474E89094C44Da98b954EescdeCB5BE3830", "decimals": 18, "name": "Dai Stablecoin"},
     }
 }
 
