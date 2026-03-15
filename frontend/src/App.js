@@ -551,13 +551,13 @@ function SwapContent() {
 function ChainsStatus() {
   const vmGroups = Object.entries(VM_GROUPS).map(([vmKey, info]) => ({
     vmKey, ...info,
-    chains: Object.entries(CHAINS).filter(([, v]) => v.vm === vmKey && v.live),
+    chains: Object.entries(CHAINS).filter(([, v]) => v.vm === vmKey),
   }));
 
   const contractInfo = {
     [VM.EVM]:    `PrivacyRelayer: ${EVM_CONTRACTS.privacyRelayer.slice(0, 16)}...`,
-    [VM.SOLANA]: "Anchor program — deploy with: anchor deploy",
-    [VM.SUI]:    "Move package — deploy with: sui client publish",
+    [VM.SOLANA]: "Anchor program written — awaiting mainnet deployment",
+    [VM.SUI]:    "Move package written — awaiting mainnet deployment",
   };
 
   return (
@@ -583,11 +583,18 @@ function ChainsStatus() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1 text-xs text-green-400">
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                    Live
-                  </div>
-                  {v.explorer && vmKey === VM.EVM && (
+                  {v.live ? (
+                    <div className="flex items-center gap-1 text-xs text-green-400">
+                      <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                      Live
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 text-xs text-yellow-400">
+                      <div className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+                      Coming Soon
+                    </div>
+                  )}
+                  {v.explorer && v.live && vmKey === VM.EVM && (
                     <a href={`${v.explorer}/address/${EVM_CONTRACTS.privacyRelayer}`} target="_blank" rel="noopener noreferrer" className="text-white/30 hover:text-white">
                       <ExternalLink className="w-4 h-4" />
                     </a>
