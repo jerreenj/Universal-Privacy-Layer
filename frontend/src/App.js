@@ -201,28 +201,60 @@ function Landing() {
   const { connectWallet, isConnecting } = useWallet();
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center relative bg-black">
-      {/* Globe in center */}
-      <div className="absolute inset-0 flex items-center justify-center opacity-60">
-        <RotatingEarth width={550} height={550} />
-      </div>
-
-      {/* Content below globe */}
-      <div className="relative z-10 text-center mt-[280px]">
-        <h1 className="font-heading text-5xl md:text-7xl font-bold tracking-tighter text-white mb-4">
-          Universal Privacy Layer
-        </h1>
-        <p className="text-xl text-gray-400 mb-8">The HTTPS of Web3</p>
-        
-        <MagnetizeButton onClick={connectWallet} disabled={isConnecting} particleCount={16} className="px-8 py-3 text-lg">
+    <div className="min-h-screen relative bg-black overflow-hidden">
+      {/* Top Left - Connect Wallet */}
+      <div className="absolute top-6 left-6 z-50">
+        <MagnetizeButton onClick={connectWallet} disabled={isConnecting} particleCount={14} className="px-6 py-2.5">
           {isConnecting ? "Connecting..." : "Connect Wallet"}
         </MagnetizeButton>
+      </div>
 
-        <div className="mt-12 flex items-center justify-center gap-10 text-sm">
-          <div><span className="block text-2xl font-bold">100%</span><span className="text-gray-500">Private</span></div>
-          <div><span className="block text-2xl font-bold">3</span><span className="text-gray-500">Chains</span></div>
-          <div><span className="block text-2xl font-bold text-green-400">LIVE</span><span className="text-gray-500">Base</span></div>
+      {/* Top Right - Chain indicator */}
+      <div className="absolute top-6 right-6 z-50 flex items-center gap-2 px-4 py-2 border border-white/20 text-sm">
+        <div className="w-2 h-2 rounded-full bg-[#0052FF]" />
+        <span className="text-white/70">Base Mainnet</span>
+        <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse ml-2" />
+      </div>
+
+      {/* Globe - Centered and higher */}
+      <div className="absolute inset-0 flex items-center justify-center" style={{ marginTop: '-80px' }}>
+        <RotatingEarth width={480} height={480} />
+      </div>
+
+      {/* Title below globe */}
+      <div className="absolute bottom-[15%] left-0 right-0 text-center z-10">
+        <h1 className="font-heading text-5xl md:text-6xl font-bold tracking-tight text-white mb-3">
+          Universal Privacy Layer
+        </h1>
+        <p className="text-lg text-white/40 tracking-wide">The HTTPS of Web3</p>
+        
+        {/* Stats row */}
+        <div className="mt-8 flex items-center justify-center gap-12">
+          <div className="text-center">
+            <span className="block text-2xl font-bold text-white">100%</span>
+            <span className="text-xs text-white/40 uppercase tracking-wider">Private</span>
+          </div>
+          <div className="w-px h-8 bg-white/10" />
+          <div className="text-center">
+            <span className="block text-2xl font-bold text-white">3</span>
+            <span className="text-xs text-white/40 uppercase tracking-wider">Chains</span>
+          </div>
+          <div className="w-px h-8 bg-white/10" />
+          <div className="text-center">
+            <span className="block text-2xl font-bold text-green-400">LIVE</span>
+            <span className="text-xs text-white/40 uppercase tracking-wider">On Base</span>
+          </div>
         </div>
+
+        {/* Contract link */}
+        <a 
+          href="https://basescan.org/address/0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 mt-6 text-xs text-white/30 hover:text-white/60 transition-colors"
+        >
+          View contracts on BaseScan <ExternalLink className="w-3 h-3" />
+        </a>
       </div>
     </div>
   );
