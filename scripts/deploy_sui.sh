@@ -19,9 +19,18 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Config
-DEPLOYER_SEED="inside post tool solar phone biology render blade broken draw hockey senior check it out"
-SUI_ADDRESS="0xfde77f3867fd0ab7c76fcebc4f0190460d80dc9d1da016bda033e675cb99ff35"
+# Config - SECURITY: Use environment variables for sensitive data
+# Never hardcode seed phrases! Set these before running:
+# export DEPLOYER_SEED="your seed phrase here"
+# export SUI_ADDRESS="your sui address here"
+if [ -z "$DEPLOYER_SEED" ]; then
+    echo -e "${RED}ERROR: DEPLOYER_SEED environment variable is required!${NC}"
+    echo "Usage: export DEPLOYER_SEED='your twelve word seed phrase here'"
+    exit 1
+fi
+if [ -z "$SUI_ADDRESS" ]; then
+    echo -e "${YELLOW}WARNING: SUI_ADDRESS not set. Will use recovered address.${NC}"
+fi
 
 # Step 1: Install Sui CLI if not present
 install_sui() {
