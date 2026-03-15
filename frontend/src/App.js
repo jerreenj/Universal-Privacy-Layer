@@ -218,11 +218,11 @@ function Landing() {
 
       {/* Globe - Top section */}
       <div className="pt-16 flex justify-center">
-        <RotatingEarth width={420} height={420} />
+        <RotatingEarth width={400} height={400} />
       </div>
 
       {/* All content below globe */}
-      <div className="text-center px-6 -mt-4">
+      <div className="text-center px-6 mt-8">
         <h1 className="font-heading text-5xl md:text-6xl font-bold tracking-tight text-white mb-8">
           Universal Privacy Layer
         </h1>
