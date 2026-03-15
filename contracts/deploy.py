@@ -103,9 +103,23 @@ def deploy_contract(w3, account, compiled, constructor_args=None):
     return receipt.contractAddress
 
 def main():
-    # Load deployer account from seed phrase
+    # Load deployer account from environment variable ONLY
+    # SECURITY: Never hardcode seed phrases - always use environment variables
     Account.enable_unaudited_hdwallet_features()
-    mnemonic = os.environ.get("DEPLOYER_MNEMONIC", "inside post tool solar phone biology render blade broken draw hockey senior")
+    mnemonic = os.environ.get("DEPLOYER_MNEMONIC")
+    
+    if not mnemonic:
+        print("\n" + "="*60)
+        print("ERROR: DEPLOYER_MNEMONIC environment variable is required!")
+        print("="*60)
+        print("\nFor security, the seed phrase must be provided via environment variable.")
+        print("Never commit seed phrases to code or repositories.\n")
+        print("Usage:")
+        print("  export DEPLOYER_MNEMONIC='your twelve word seed phrase here'")
+        print("  python deploy.py")
+        print("="*60)
+        return
+    
     account = Account.from_mnemonic(mnemonic)
     
     print(f"Deployer: {account.address}")

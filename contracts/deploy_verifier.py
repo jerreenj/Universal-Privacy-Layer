@@ -117,8 +117,22 @@ def main():
     
     print("  ✓ Compiled successfully!")
     
-    # Load deployer wallet
-    seed_phrase = "inside post tool solar phone biology render blade broken draw hockey senior"
+    # Load deployer wallet from environment variable ONLY
+    # SECURITY: Never hardcode seed phrases - always use environment variables
+    seed_phrase = os.environ.get("DEPLOYER_MNEMONIC")
+    
+    if not seed_phrase:
+        print("\n" + "="*60)
+        print("ERROR: DEPLOYER_MNEMONIC environment variable is required!")
+        print("="*60)
+        print("\nFor security, the seed phrase must be provided via environment variable.")
+        print("Never commit seed phrases to code or repositories.\n")
+        print("Usage:")
+        print("  export DEPLOYER_MNEMONIC='your twelve word seed phrase here'")
+        print("  python deploy_verifier.py")
+        print("="*60)
+        return
+    
     Account.enable_unaudited_hdwallet_features()
     account = Account.from_mnemonic(seed_phrase)
     
