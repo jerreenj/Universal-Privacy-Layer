@@ -693,7 +693,7 @@ async def get_hidden_balance(address: str, chain: str = "ethereum_sepolia"):
             try:
                 bal = w3.eth.get_balance(Web3.to_checksum_address(sa["stealth_address"]))
                 stealth_balance += bal
-            except:
+            except Exception:
                 pass
         
         total_balance = main_balance + stealth_balance
@@ -751,7 +751,7 @@ async def get_full_hidden_balance(address: str):
                 # Main balance
                 try:
                     main_bal = w3.eth.get_balance(Web3.to_checksum_address(address))
-                except:
+                except Exception:
                     main_bal = 0
                 
                 # Stealth balances
