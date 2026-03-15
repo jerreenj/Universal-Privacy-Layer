@@ -2160,6 +2160,7 @@ function Dashboard() {
     split: { title: "Cross-Chain Split", component: <CrossChainSplit /> },
     messaging: { title: "Encrypted Messaging", component: <EncryptedMessaging /> },
     multisig: { title: "Multisig Privacy", component: <MultisigPrivacy /> },
+    developer: { title: "Developer API", component: <DeveloperAPI /> },
   };
 
   if (page !== "home" && pages[page]) {
