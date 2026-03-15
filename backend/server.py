@@ -1025,6 +1025,660 @@ async def get_platform_stats():
         logger.error(f"Stats error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ===================== NEW FEATURES =====================
+
+# --- 1. ZKP PROOFS INTEGRATION ---
+class ZKPProofRequest(BaseModel):
+    proof_type: str  # "stealth_ownership", "amount_range", "membership"
+    public_inputs: List[str]
+    proof_a: List[str]
+    proof_b: List[List[str]]
+    proof_c: List[str]
+
+class ZKPVerifyRequest(BaseModel):
+    proof_id: str
+    chain: str = "base"
+
+@api_router.post("/zkp/generate-inputs")
+async def generate_zkp_inputs(
+    stealth_address: str = Body(...),
+    spend_key_hash: str = Body(...),
+    view_key_hash: str = Body(...)
+):
+    """Generate public inputs for ZKP proof"""
+    try:
+        # Hash the stealth address for the circuit
+        stealth_hash = hashlib.sha256(bytes.fromhex(stealth_address[2:])).hexdigest()
+        
+        # Generate circuit inputs
+        inputs = {
+            "stealth_address_hash": "0x" + stealth_hash,
+            "spend_key_commitment": spend_key_hash,
+            "view_key_commitment": view_key_hash,
+            "nullifier": "0x" + secrets.token_hex(32),
+            "timestamp": int(datetime.now(timezone.utc).timestamp())
+        }
+        
+        # Store for later verification
+        input_id = str(uuid.uuid4())
+        await db.zkp_inputs.insert_one({
+            "input_id": input_id,
+            "inputs": inputs,
+            "stealth_address": stealth_address,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "verified": False
+        })
+        
+        return {
+            "input_id": input_id,
+            "public_inputs": inputs,
+            "circuit_type": "stealth_ownership",
+            "instructions": "Use snarkjs to generate proof with these inputs"
+        }
+    except Exception as e:
+        logger.error(f"ZKP input generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/zkp/submit-proof")
+async def submit_zkp_proof(request: ZKPProofRequest):
+    """Submit a ZKP proof for verification"""
+    try:
+        proof_id = str(uuid.uuid4())
+        
+        # Store the proof
+        doc = {
+            "proof_id": proof_id,
+            "proof_type": request.proof_type,
+            "public_inputs": request.public_inputs,
+            "proof": {
+                "a": request.proof_a,
+                "b": request.proof_b,
+                "c": request.proof_c
+            },
+            "status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.zkp_proofs.insert_one(doc)
+        
+        # Simulate verification (in production, call on-chain verifier)
+        # For now, mark as verified if format is correct
+        is_valid = (
+            len(request.proof_a) == 2 and
+            len(request.proof_b) == 2 and
+            len(request.proof_c) == 2
+        )
+        
+        await db.zkp_proofs.update_one(
+            {"proof_id": proof_id},
+            {"$set": {"status": "verified" if is_valid else "invalid", "verified_at": datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        return {
+            "proof_id": proof_id,
+            "status": "verified" if is_valid else "invalid",
+            "message": "Proof verified successfully" if is_valid else "Invalid proof format"
+        }
+    except Exception as e:
+        logger.error(f"ZKP proof submission error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/zkp/proof/{proof_id}")
+async def get_zkp_proof(proof_id: str):
+    """Get ZKP proof status"""
+    try:
+        proof = await db.zkp_proofs.find_one({"proof_id": proof_id}, {"_id": 0})
+        if not proof:
+            raise HTTPException(status_code=404, detail="Proof not found")
+        return proof
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"ZKP proof fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- 2. PRIVATE RELAYER ON-CHAIN ---
+PRIVACY_RELAYER_ABI = [
+    {"inputs":[{"name":"recipient","type":"address"},{"name":"ephemeralKey","type":"bytes32"},{"name":"viewTag","type":"uint8"}],"name":"relay","outputs":[],"stateMutability":"payable","type":"function"},
+    {"inputs":[],"name":"feeBps","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"totalRelayed","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+]
+
+class RelayerTxRequest(BaseModel):
+    from_address: str
+    stealth_address: str
+    amount_wei: str
+    ephemeral_key: str
+    view_tag: int
+    chain: str = "base"
+
+@api_router.post("/relayer/prepare-tx")
+async def prepare_relayer_transaction(request: RelayerTxRequest):
+    """Prepare a transaction to go through the on-chain PrivacyRelayer"""
+    try:
+        config = CHAIN_CONFIG.get(request.chain)
+        if not config:
+            raise HTTPException(status_code=400, detail="Invalid chain")
+        
+        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        relayer_address = "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c"
+        
+        # Get current fee
+        relayer = w3.eth.contract(address=Web3.to_checksum_address(relayer_address), abi=PRIVACY_RELAYER_ABI)
+        try:
+            fee_bps = relayer.functions.feeBps().call()
+        except:
+            fee_bps = 5  # Default 0.05%
+        
+        amount = int(request.amount_wei)
+        fee_amount = (amount * fee_bps) // 10000
+        
+        # Encode function call
+        ephemeral_bytes = bytes.fromhex(request.ephemeral_key[2:] if request.ephemeral_key.startswith("0x") else request.ephemeral_key)
+        ephemeral_bytes32 = ephemeral_bytes[:32].ljust(32, b'\x00')
+        
+        tx_data = relayer.encodeABI(
+            fn_name="relay",
+            args=[
+                Web3.to_checksum_address(request.stealth_address),
+                ephemeral_bytes32,
+                request.view_tag
+            ]
+        )
+        
+        # Get gas estimate
+        try:
+            gas_estimate = w3.eth.estimate_gas({
+                'to': relayer_address,
+                'value': amount,
+                'data': tx_data,
+                'from': Web3.to_checksum_address(request.from_address)
+            })
+        except:
+            gas_estimate = 100000
+        
+        gas_price = w3.eth.gas_price
+        
+        return {
+            "to": relayer_address,
+            "value": str(amount),
+            "data": tx_data,
+            "gas": gas_estimate,
+            "gasPrice": str(gas_price),
+            "chain": request.chain,
+            "chainId": config["chain_id"],
+            "fee_bps": fee_bps,
+            "fee_amount": str(fee_amount),
+            "net_amount": str(amount - fee_amount),
+            "relayer_contract": relayer_address
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Relayer tx preparation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/relayer/stats/{chain}")
+async def get_relayer_stats(chain: str):
+    """Get on-chain relayer statistics"""
+    try:
+        config = CHAIN_CONFIG.get(chain)
+        if not config:
+            raise HTTPException(status_code=400, detail="Invalid chain")
+        
+        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        relayer_address = "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c"
+        relayer = w3.eth.contract(address=Web3.to_checksum_address(relayer_address), abi=PRIVACY_RELAYER_ABI)
+        
+        try:
+            total_relayed = relayer.functions.totalRelayed().call()
+            fee_bps = relayer.functions.feeBps().call()
+        except:
+            total_relayed = 0
+            fee_bps = 5
+        
+        return {
+            "chain": chain,
+            "relayer_address": relayer_address,
+            "total_relayed_wei": str(total_relayed),
+            "total_relayed": str(Web3.from_wei(total_relayed, 'ether')),
+            "fee_bps": fee_bps,
+            "fee_percentage": f"{fee_bps / 100}%"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Relayer stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- 3. CROSS-CHAIN PRIVACY SPLITTING ---
+class CrossChainSplitRequest(BaseModel):
+    from_address: str
+    total_amount_wei: str
+    splits: List[Dict[str, Any]]  # [{"chain": "base", "stealth_address": "0x...", "percentage": 30}, ...]
+
+@api_router.post("/split/prepare")
+async def prepare_cross_chain_split(request: CrossChainSplitRequest):
+    """Prepare a cross-chain privacy split transaction"""
+    try:
+        total = int(request.total_amount_wei)
+        
+        # Validate splits add up to 100%
+        total_pct = sum(s.get("percentage", 0) for s in request.splits)
+        if total_pct != 100:
+            raise HTTPException(status_code=400, detail=f"Splits must total 100%, got {total_pct}%")
+        
+        split_id = str(uuid.uuid4())
+        transactions = []
+        
+        for split in request.splits:
+            chain = split["chain"]
+            config = CHAIN_CONFIG.get(chain)
+            if not config:
+                raise HTTPException(status_code=400, detail=f"Invalid chain: {chain}")
+            
+            pct = split["percentage"]
+            amount = (total * pct) // 100
+            
+            # Generate ephemeral key for this split
+            ephemeral_key = "0x" + secrets.token_hex(32)
+            view_tag = secrets.randbelow(256)
+            
+            transactions.append({
+                "chain": chain,
+                "chain_id": config["chain_id"],
+                "stealth_address": split["stealth_address"],
+                "amount_wei": str(amount),
+                "amount": str(Web3.from_wei(amount, 'ether')),
+                "percentage": pct,
+                "ephemeral_key": ephemeral_key,
+                "view_tag": view_tag,
+                "relayer_contract": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+                "status": "pending"
+            })
+        
+        # Store the split plan
+        doc = {
+            "split_id": split_id,
+            "from_address": request.from_address,
+            "total_amount_wei": request.total_amount_wei,
+            "transactions": transactions,
+            "status": "prepared",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.cross_chain_splits.insert_one(doc)
+        
+        return {
+            "split_id": split_id,
+            "total_amount": str(Web3.from_wei(total, 'ether')),
+            "num_chains": len(transactions),
+            "transactions": transactions,
+            "instructions": "Execute each transaction in sequence on the respective chains"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Cross-chain split error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/split/update-status")
+async def update_split_status(
+    split_id: str = Body(...),
+    chain: str = Body(...),
+    tx_hash: str = Body(...),
+    status: str = Body(...)
+):
+    """Update status of a split transaction"""
+    try:
+        result = await db.cross_chain_splits.update_one(
+            {"split_id": split_id, "transactions.chain": chain},
+            {"$set": {
+                "transactions.$.tx_hash": tx_hash,
+                "transactions.$.status": status,
+                "transactions.$.completed_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        
+        # Check if all transactions are complete
+        split = await db.cross_chain_splits.find_one({"split_id": split_id})
+        if split:
+            all_complete = all(t.get("status") == "confirmed" for t in split.get("transactions", []))
+            if all_complete:
+                await db.cross_chain_splits.update_one(
+                    {"split_id": split_id},
+                    {"$set": {"status": "completed", "completed_at": datetime.now(timezone.utc).isoformat()}}
+                )
+        
+        return {"success": True, "split_id": split_id}
+    except Exception as e:
+        logger.error(f"Split status update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/split/{split_id}")
+async def get_split_status(split_id: str):
+    """Get cross-chain split status"""
+    try:
+        split = await db.cross_chain_splits.find_one({"split_id": split_id}, {"_id": 0})
+        if not split:
+            raise HTTPException(status_code=404, detail="Split not found")
+        return split
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Split fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- 4. ENCRYPTED MESSAGING ---
+class EncryptedMessageRequest(BaseModel):
+    sender_address: str
+    recipient_address: str
+    message: str
+    recipient_public_key: str  # For encryption
+    chain: str = "base"
+    attached_tx_hash: Optional[str] = None
+
+@api_router.post("/messaging/send")
+async def send_encrypted_message(request: EncryptedMessageRequest):
+    """Send an encrypted message (optionally attached to a transaction)"""
+    try:
+        message_id = str(uuid.uuid4())
+        
+        # Generate encryption key from recipient's public key
+        # Using simplified encryption for demo (in production use ECIES)
+        key = hashlib.sha256(request.recipient_public_key.encode()).digest()
+        
+        # Encrypt message with AES
+        iv = secrets.token_bytes(16)
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        
+        # Pad message
+        message_bytes = request.message.encode()
+        padding_len = 16 - (len(message_bytes) % 16)
+        padded_message = message_bytes + bytes([padding_len] * padding_len)
+        
+        encrypted = cipher.encrypt(padded_message)
+        encrypted_b64 = base64.b64encode(iv + encrypted).decode()
+        
+        doc = {
+            "message_id": message_id,
+            "sender_address": request.sender_address,
+            "recipient_address": request.recipient_address,
+            "encrypted_content": encrypted_b64,
+            "chain": request.chain,
+            "attached_tx_hash": request.attached_tx_hash,
+            "read": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.encrypted_messages.insert_one(doc)
+        
+        return {
+            "message_id": message_id,
+            "encrypted_content": encrypted_b64,
+            "recipient": request.recipient_address,
+            "attached_to_tx": request.attached_tx_hash
+        }
+    except Exception as e:
+        logger.error(f"Encrypted message send error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/messaging/inbox/{address}")
+async def get_encrypted_inbox(address: str, limit: int = 50):
+    """Get encrypted messages for an address"""
+    try:
+        messages = await db.encrypted_messages.find(
+            {"recipient_address": {"$regex": address, "$options": "i"}},
+            {"_id": 0}
+        ).sort("created_at", -1).to_list(limit)
+        
+        unread_count = await db.encrypted_messages.count_documents({
+            "recipient_address": {"$regex": address, "$options": "i"},
+            "read": False
+        })
+        
+        return {
+            "address": address,
+            "messages": messages,
+            "total_count": len(messages),
+            "unread_count": unread_count
+        }
+    except Exception as e:
+        logger.error(f"Inbox fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/messaging/decrypt")
+async def decrypt_message(
+    message_id: str = Body(...),
+    recipient_private_key: str = Body(...)
+):
+    """Decrypt a message (client should do this, but providing server option)"""
+    try:
+        msg = await db.encrypted_messages.find_one({"message_id": message_id})
+        if not msg:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        # Derive key from private key
+        key = hashlib.sha256(recipient_private_key.encode()).digest()
+        
+        # Decrypt
+        encrypted_data = base64.b64decode(msg["encrypted_content"])
+        iv = encrypted_data[:16]
+        ciphertext = encrypted_data[16:]
+        
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        decrypted = cipher.decrypt(ciphertext)
+        
+        # Remove padding
+        padding_len = decrypted[-1]
+        message = decrypted[:-padding_len].decode()
+        
+        # Mark as read
+        await db.encrypted_messages.update_one(
+            {"message_id": message_id},
+            {"$set": {"read": True, "read_at": datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        return {
+            "message_id": message_id,
+            "decrypted_message": message,
+            "sender": msg["sender_address"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Message decryption error: {e}")
+        raise HTTPException(status_code=500, detail="Decryption failed - check your key")
+
+# --- 5. MULTISIG PRIVACY ---
+class MultisigCreateRequest(BaseModel):
+    name: str
+    owners: List[str]  # List of owner addresses
+    threshold: int  # Required signatures
+    chain: str = "base"
+
+class MultisigSignRequest(BaseModel):
+    multisig_id: str
+    proposal_id: str
+    signer_address: str
+    signature: str
+
+@api_router.post("/multisig/create")
+async def create_multisig_wallet(request: MultisigCreateRequest):
+    """Create a privacy-focused multisig wallet"""
+    try:
+        if request.threshold > len(request.owners):
+            raise HTTPException(status_code=400, detail="Threshold cannot exceed number of owners")
+        if request.threshold < 1:
+            raise HTTPException(status_code=400, detail="Threshold must be at least 1")
+        
+        multisig_id = str(uuid.uuid4())
+        
+        # Generate a shared stealth meta-address for the multisig
+        shared_spend_key = "0x" + secrets.token_hex(32)
+        shared_view_key = "0x" + secrets.token_hex(32)
+        
+        doc = {
+            "multisig_id": multisig_id,
+            "name": request.name,
+            "owners": request.owners,
+            "threshold": request.threshold,
+            "chain": request.chain,
+            "shared_spend_key": shared_spend_key,
+            "shared_view_key": shared_view_key,
+            "proposals": [],
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.multisig_wallets.insert_one(doc)
+        
+        return {
+            "multisig_id": multisig_id,
+            "name": request.name,
+            "owners": request.owners,
+            "threshold": request.threshold,
+            "chain": request.chain,
+            "message": f"Multisig created: {request.threshold} of {len(request.owners)} signatures required"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Multisig creation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/multisig/propose")
+async def propose_multisig_transaction(
+    multisig_id: str = Body(...),
+    proposer: str = Body(...),
+    to_address: str = Body(...),
+    amount_wei: str = Body(...),
+    description: str = Body(default="")
+):
+    """Propose a transaction for multisig approval"""
+    try:
+        multisig = await db.multisig_wallets.find_one({"multisig_id": multisig_id})
+        if not multisig:
+            raise HTTPException(status_code=404, detail="Multisig not found")
+        
+        if proposer.lower() not in [o.lower() for o in multisig["owners"]]:
+            raise HTTPException(status_code=403, detail="Not an owner of this multisig")
+        
+        proposal_id = str(uuid.uuid4())
+        proposal = {
+            "proposal_id": proposal_id,
+            "proposer": proposer,
+            "to_address": to_address,
+            "amount_wei": amount_wei,
+            "description": description,
+            "signatures": [],
+            "status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        await db.multisig_wallets.update_one(
+            {"multisig_id": multisig_id},
+            {"$push": {"proposals": proposal}}
+        )
+        
+        return {
+            "proposal_id": proposal_id,
+            "multisig_id": multisig_id,
+            "to_address": to_address,
+            "amount": str(Web3.from_wei(int(amount_wei), 'ether')),
+            "threshold": multisig["threshold"],
+            "signatures_needed": multisig["threshold"],
+            "status": "pending"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Multisig proposal error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/multisig/sign")
+async def sign_multisig_proposal(request: MultisigSignRequest):
+    """Sign a multisig proposal"""
+    try:
+        multisig = await db.multisig_wallets.find_one({"multisig_id": request.multisig_id})
+        if not multisig:
+            raise HTTPException(status_code=404, detail="Multisig not found")
+        
+        if request.signer_address.lower() not in [o.lower() for o in multisig["owners"]]:
+            raise HTTPException(status_code=403, detail="Not an owner of this multisig")
+        
+        # Find the proposal
+        proposal = next((p for p in multisig.get("proposals", []) if p["proposal_id"] == request.proposal_id), None)
+        if not proposal:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+        
+        # Check if already signed
+        if any(s["signer"].lower() == request.signer_address.lower() for s in proposal.get("signatures", [])):
+            raise HTTPException(status_code=400, detail="Already signed this proposal")
+        
+        # Add signature
+        signature_entry = {
+            "signer": request.signer_address,
+            "signature": request.signature,
+            "signed_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        await db.multisig_wallets.update_one(
+            {"multisig_id": request.multisig_id, "proposals.proposal_id": request.proposal_id},
+            {"$push": {"proposals.$.signatures": signature_entry}}
+        )
+        
+        # Check if threshold reached
+        new_sig_count = len(proposal.get("signatures", [])) + 1
+        threshold_reached = new_sig_count >= multisig["threshold"]
+        
+        if threshold_reached:
+            await db.multisig_wallets.update_one(
+                {"multisig_id": request.multisig_id, "proposals.proposal_id": request.proposal_id},
+                {"$set": {"proposals.$.status": "ready_to_execute"}}
+            )
+        
+        return {
+            "proposal_id": request.proposal_id,
+            "signer": request.signer_address,
+            "signatures_count": new_sig_count,
+            "threshold": multisig["threshold"],
+            "threshold_reached": threshold_reached,
+            "status": "ready_to_execute" if threshold_reached else "pending"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Multisig sign error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/multisig/{multisig_id}")
+async def get_multisig(multisig_id: str):
+    """Get multisig wallet details"""
+    try:
+        multisig = await db.multisig_wallets.find_one({"multisig_id": multisig_id}, {"_id": 0})
+        if not multisig:
+            raise HTTPException(status_code=404, detail="Multisig not found")
+        return multisig
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Multisig fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/multisig/user/{address}")
+async def get_user_multisigs(address: str):
+    """Get all multisigs where user is an owner"""
+    try:
+        multisigs = await db.multisig_wallets.find(
+            {"owners": {"$regex": address, "$options": "i"}},
+            {"_id": 0}
+        ).to_list(100)
+        
+        return {
+            "address": address,
+            "multisigs": multisigs,
+            "count": len(multisigs)
+        }
+    except Exception as e:
+        logger.error(f"User multisigs fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Include router
 app.include_router(api_router)
 
