@@ -13,7 +13,7 @@ const API = `${BACKEND_URL}/api`;
 
 const CHAINS = {
   base: { name: "Base", chainId: "0x2105", chainIdDec: 8453, rpcUrl: "https://mainnet.base.org", explorer: "https://basescan.org", symbol: "ETH", color: "#0052FF", contracts: { privacyRelayer: "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c", stealthRegistry: "0xf2E7A6734E58774A8417c176AaE3898667699Ff4", uniswapWrapper: "0xD04f9cE68CfF7C0FD6d631794964784B99423943" } },
-  arbitrum: { name: "Arbitrum", chainId: "0xa4b1", chainIdDec: 42161, rpcUrl: "https://arb1.arbitrum.io/rpc", explorer: "https://arbiscan.io", symbol: "ETH", color: "#28A0F0", contracts: null },
+  arbitrum: { name: "Arbitrum", chainId: "0xa4b1", chainIdDec: 42161, rpcUrl: "https://arb1.arbitrum.io/rpc", explorer: "https://arbiscan.io", symbol: "ETH", color: "#28A0F0", contracts: { privacyRelayer: "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c", stealthRegistry: "0xf2E7A6734E58774A8417c176AaE3898667699Ff4", uniswapWrapper: "0xD04f9cE68CfF7C0FD6d631794964784B99423943" } },
   ethereum: { name: "Ethereum", chainId: "0x1", chainIdDec: 1, rpcUrl: "https://eth.llamarpc.com", explorer: "https://etherscan.io", symbol: "ETH", color: "#627EEA", contracts: null }
 };
 
