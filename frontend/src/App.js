@@ -87,6 +87,17 @@ const CHAINS = {
     live: true,
     contracts: DEPLOYED_CONTRACTS,
   },
+  hyperliquid: {
+    name: "Hyperliquid",
+    chainId: "0x3e7",
+    chainIdDec: 999,
+    rpcUrl: "https://rpc.hyperliquid.xyz/evm",
+    explorer: "https://purrsec.com",
+    symbol: "HYPE",
+    color: "#00FF88",
+    live: true,
+    contracts: DEPLOYED_CONTRACTS,
+  },
 };
 
 // Non-EVM chains (informational only)
@@ -133,6 +144,9 @@ const TOKENS = {
     { symbol: "USDC", name: "USD Coin", decimals: 6, address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E" },
     { symbol: "USDT", name: "Tether", decimals: 6, address: "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7" },
     { symbol: "WAVAX", name: "Wrapped AVAX", decimals: 18, address: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7" },
+  ],
+  hyperliquid: [
+    { symbol: "HYPE", name: "Hyperliquid", decimals: 18, address: "native" },
   ],
 };
 

@@ -1,0 +1,9 @@
+{
+  "network": "hyperliquid",
+  "chain_id": 999,
+  "deployer": "0x77483a981724fDa225EF78D8d3CF3c57a30193da",
+  "contracts": {
+    "PrivacyRelayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+    "StealthAddressRegistry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4"
+  }
+}

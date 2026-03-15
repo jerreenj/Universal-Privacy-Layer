@@ -96,6 +96,16 @@ CHAIN_CONFIG = {
         "color": "#E84142",
         "weth": "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",
         "usdc": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"
+    },
+    "hyperliquid": {
+        "name": "Hyperliquid",
+        "chain_id": 999,
+        "rpc_url": "https://rpc.hyperliquid.xyz/evm",
+        "explorer": "https://purrsec.com",
+        "symbol": "HYPE",
+        "color": "#00FF88",
+        "weth": None,
+        "usdc": None
     }
 }
 
@@ -137,6 +147,12 @@ UPL_CONTRACTS = {
         "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
         "uniswap_wrapper": None,
         "explorer": "https://snowtrace.io"
+    },
+    "hyperliquid": {
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
+        "uniswap_wrapper": None,
+        "explorer": "https://purrsec.com"
     }
 }
 
@@ -179,6 +195,9 @@ TOKENS = {
         "WAVAX": {"address": "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7", "decimals": 18, "name": "Wrapped AVAX"},
         "USDC": {"address": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", "decimals": 6, "name": "USD Coin"},
         "USDT": {"address": "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7", "decimals": 6, "name": "Tether USD"},
+    },
+    "hyperliquid": {
+        "HYPE": {"address": "native", "decimals": 18, "name": "Hyperliquid"},
     }
 }
 
