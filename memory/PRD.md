@@ -26,6 +26,35 @@ Universal Privacy Layer provides private transactions across 7 EVM chains with Z
 
 ### Newly Implemented Features
 
+#### 0. DeFi Platform Integrations (Privacy-Routed) ✅ (December 2025)
+
+**Uniswap V3 Private Swaps**
+- Backend: `POST /api/uniswap/quote` - on-chain Uniswap V3 Quoter with fallback
+- Backend: `POST /api/uniswap/record-swap` - records privacy-routed swaps
+- Backend: `GET /api/uniswap/supported-chains` - Base, Arbitrum, Polygon, Optimism
+- Frontend: `UniswapPrivateSwap` component with token selectors, on-chain quotes, stealth recipient, fee tiers
+- Routing: wallet → stealth proxy → Uniswap V3 → stealth address
+
+**Hyperliquid Private Perp Trading**
+- Backend: `GET /api/hyperliquid/markets` - 229 live perpetual markets from Hyperliquid API
+- Backend: `GET /api/hyperliquid/price/{asset}` - live mark prices
+- Backend: `POST /api/hyperliquid/prepare-private-trade` - generates stealth proxy for margin routing
+- Backend: `POST /api/hyperliquid/record-trade` - records trades
+- Frontend: `HyperliquidPrivateTrading` component with LONG/SHORT, leverage, size, live prices
+- Routing: wallet → stealth proxy → Hyperliquid margin deposit
+
+**Polymarket Private Betting**
+- Backend: `GET /api/polymarket/markets` - live markets from Polymarket CLOB API (with demo fallback)
+- Backend: `POST /api/polymarket/prepare-private-bet` - generates stealth proxy for USDC routing
+- Backend: `POST /api/polymarket/record-bet` - records bets
+- Frontend: `PolymarketPrivateBetting` component with market browser, YES/NO, estimated payout
+- Routing: wallet → stealth proxy → Polymarket USDC bet
+
+**Dashboard DeFi Section**
+- New "Private DeFi" section with 3 tiles: Uniswap V3, Hyperliquid, Polymarket
+- Each tile has LIVE badge and distinct color theme
+- All routes wired into Dashboard pages object
+
 #### 1. Cross-Chain Privacy Splitting (Enhanced) ✅
 - Full frontend UI with execution tracking
 - Auto-generate stealth addresses for splits
