@@ -1749,10 +1749,30 @@ function Dashboard() {
               { id: "balance", icon: <TrendingUp className="w-5 h-5" />, title: "Hidden Balance", color: "text-green-400" },
               { id: "history", icon: <History className="w-5 h-5" />, title: "History", color: "text-blue-400" },
               { id: "wallet",  icon: <Key className="w-5 h-5" />, title: "Dual Seed", color: "text-purple-400" },
-              { id: "nft",     icon: <Image className="w-5 h-5" />, title: "NFT Privacy", color: "text-pink-400" },
+              { id: "relayer", icon: <Lock className="w-5 h-5" />, title: "On-Chain Relayer", color: "text-orange-400" },
+              { id: "zkp",     icon: <Fingerprint className="w-5 h-5" />, title: "ZKP Proofs", color: "text-indigo-400" },
+              { id: "split",   icon: <Globe className="w-5 h-5" />, title: "Cross-Chain Split", color: "text-teal-400" },
+              { id: "messaging", icon: <MessageSquare className="w-5 h-5" />, title: "Messaging", color: "text-pink-400" },
+              { id: "multisig", icon: <Users className="w-5 h-5" />, title: "Multisig", color: "text-amber-400" },
+            ].map(({ id, icon, title, color }) => (
+              <button key={id} onClick={() => setPage(id)}
+                className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
+                <div className={`mb-2 ${color}`}>{icon}</div>
+                <span className="text-sm font-medium">{title}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Extra Features */}
+          <div className="mb-4">
+            <h2 className="text-sm text-white/50 uppercase tracking-wider mb-3">More Tools</h2>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            {[
+              { id: "nft",     icon: <Image className="w-5 h-5" />, title: "NFT Privacy", color: "text-rose-400" },
               { id: "approval",icon: <Shield className="w-5 h-5" />, title: "Approvals", color: "text-yellow-400" },
               { id: "contract",icon: <FileCode className="w-5 h-5" />, title: "Contracts", color: "text-cyan-400" },
-              { id: "chains",  icon: <Globe className="w-5 h-5" />, title: "Chains", color: "text-white/50" },
+              { id: "chains",  icon: <Layers className="w-5 h-5" />, title: "Chains", color: "text-white/50" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
