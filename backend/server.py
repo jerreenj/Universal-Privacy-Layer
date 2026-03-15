@@ -1811,6 +1811,264 @@ async def get_user_multisigs(address: str):
         logger.error(f"User multisigs fetch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ─── Developer API: API Key Management ─────────────────────────────────────────
+
+class APIKeyCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    rate_limit: int = 100  # requests per minute
+    allowed_endpoints: List[str] = ["*"]
+
+class APIKeyResponse(BaseModel):
+    api_key: str
+    name: str
+    created_at: str
+    rate_limit: int
+
+# In-memory rate limiting (for production, use Redis)
+rate_limit_store: Dict[str, Dict[str, Any]] = {}
+
+async def check_rate_limit(api_key: str, limit: int = 100) -> bool:
+    """Check if request is within rate limit"""
+    now = datetime.now(timezone.utc)
+    minute_key = now.strftime("%Y-%m-%d-%H-%M")
+    
+    if api_key not in rate_limit_store:
+        rate_limit_store[api_key] = {}
+    
+    if minute_key not in rate_limit_store[api_key]:
+        rate_limit_store[api_key] = {minute_key: 1}
+        return True
+    
+    if rate_limit_store[api_key][minute_key] >= limit:
+        return False
+    
+    rate_limit_store[api_key][minute_key] += 1
+    return True
+
+@api_router.post("/developer/keys/create")
+async def create_api_key(request: APIKeyCreate, owner_address: str = Body(...)):
+    """Create a new API key for developer access"""
+    try:
+        # Generate secure API key
+        api_key = f"upl_{secrets.token_urlsafe(32)}"
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        
+        doc = {
+            "key_hash": key_hash,
+            "name": request.name,
+            "description": request.description,
+            "owner": owner_address.lower(),
+            "rate_limit": request.rate_limit,
+            "allowed_endpoints": request.allowed_endpoints,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "active": True,
+            "usage_count": 0,
+            "last_used": None
+        }
+        
+        await db.api_keys.insert_one(doc)
+        
+        return {
+            "api_key": api_key,  # Only returned once!
+            "name": request.name,
+            "rate_limit": request.rate_limit,
+            "message": "Save this API key securely - it won't be shown again!"
+        }
+    except Exception as e:
+        logger.error(f"API key creation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/developer/keys/{owner_address}")
+async def list_api_keys(owner_address: str):
+    """List all API keys for an address (without revealing the actual keys)"""
+    try:
+        keys = await db.api_keys.find(
+            {"owner": owner_address.lower()},
+            {"_id": 0, "key_hash": 0}
+        ).to_list(100)
+        
+        return {"keys": keys, "count": len(keys)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.delete("/developer/keys/{key_name}")
+async def revoke_api_key(key_name: str, owner_address: str = Body(...)):
+    """Revoke an API key"""
+    try:
+        result = await db.api_keys.update_one(
+            {"name": key_name, "owner": owner_address.lower()},
+            {"$set": {"active": False, "revoked_at": datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        if result.modified_count == 0:
+            raise HTTPException(status_code=404, detail="API key not found")
+        
+        return {"success": True, "message": f"API key '{key_name}' revoked"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/developer/usage/{owner_address}")
+async def get_api_usage(owner_address: str):
+    """Get API usage statistics"""
+    try:
+        keys = await db.api_keys.find(
+            {"owner": owner_address.lower()},
+            {"_id": 0}
+        ).to_list(100)
+        
+        total_usage = sum(k.get("usage_count", 0) for k in keys)
+        
+        return {
+            "total_requests": total_usage,
+            "keys": [{
+                "name": k["name"],
+                "usage_count": k.get("usage_count", 0),
+                "last_used": k.get("last_used"),
+                "rate_limit": k.get("rate_limit", 100),
+                "active": k.get("active", True)
+            } for k in keys]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Public API endpoints (for developers)
+@api_router.get("/v1/chains")
+async def public_get_chains(api_key: str = None):
+    """[Public API] Get list of supported chains"""
+    if api_key:
+        key_doc = await db.api_keys.find_one({"key_hash": hashlib.sha256(api_key.encode()).hexdigest()})
+        if key_doc and key_doc.get("active"):
+            if not await check_rate_limit(api_key, key_doc.get("rate_limit", 100)):
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+            await db.api_keys.update_one(
+                {"key_hash": hashlib.sha256(api_key.encode()).hexdigest()},
+                {"$inc": {"usage_count": 1}, "$set": {"last_used": datetime.now(timezone.utc).isoformat()}}
+            )
+    
+    return {
+        "chains": [
+            {"id": k, "name": v["name"], "chain_id": v["chain_id"], "live": True}
+            for k, v in CHAIN_CONFIG.items()
+        ],
+        "total": len(CHAIN_CONFIG)
+    }
+
+@api_router.post("/v1/stealth/generate")
+async def public_generate_stealth(
+    spending_key: str = Body(...),
+    viewing_key: str = Body(...),
+    api_key: str = Body(None)
+):
+    """[Public API] Generate stealth address"""
+    if api_key:
+        key_doc = await db.api_keys.find_one({"key_hash": hashlib.sha256(api_key.encode()).hexdigest()})
+        if key_doc and key_doc.get("active"):
+            if not await check_rate_limit(api_key, key_doc.get("rate_limit", 100)):
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+            await db.api_keys.update_one(
+                {"key_hash": hashlib.sha256(api_key.encode()).hexdigest()},
+                {"$inc": {"usage_count": 1}, "$set": {"last_used": datetime.now(timezone.utc).isoformat()}}
+            )
+    
+    try:
+        Account.enable_unaudited_hdwallet_features()
+        ephemeral = Account.create()
+        
+        combined = hashlib.sha256(
+            bytes.fromhex(ephemeral.key.hex()[2:]) + 
+            bytes.fromhex(spending_key[2:] if spending_key.startswith("0x") else spending_key)
+        ).digest()
+        
+        stealth_private = keys.PrivateKey(combined)
+        stealth_address = stealth_private.public_key.to_checksum_address()
+        
+        view_tag = hashlib.sha256(
+            bytes.fromhex(viewing_key[2:] if viewing_key.startswith("0x") else viewing_key) +
+            bytes.fromhex(ephemeral.key.hex()[2:])
+        ).hexdigest()[:8]
+        
+        return {
+            "stealth_address": stealth_address,
+            "ephemeral_public_key": ephemeral.address,
+            "view_tag": f"0x{view_tag}",
+            "metadata": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "algorithm": "secp256k1-sha256"
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@api_router.get("/v1/docs")
+async def get_api_documentation():
+    """Get API documentation"""
+    return {
+        "version": "1.0.0",
+        "base_url": "/api/v1",
+        "authentication": {
+            "type": "API Key",
+            "header": "X-API-Key or api_key body parameter",
+            "obtain": "POST /api/developer/keys/create"
+        },
+        "rate_limits": {
+            "default": "100 requests/minute",
+            "custom": "Set during key creation"
+        },
+        "endpoints": [
+            {
+                "method": "GET",
+                "path": "/v1/chains",
+                "description": "List all supported chains",
+                "auth_required": False
+            },
+            {
+                "method": "POST",
+                "path": "/v1/stealth/generate",
+                "description": "Generate a stealth address",
+                "auth_required": False,
+                "body": {
+                    "spending_key": "hex string - public spending key",
+                    "viewing_key": "hex string - public viewing key"
+                }
+            },
+            {
+                "method": "POST",
+                "path": "/v1/split/prepare",
+                "description": "Prepare cross-chain split transaction",
+                "auth_required": True,
+                "body": {
+                    "from_address": "sender address",
+                    "total_amount_wei": "total amount in wei",
+                    "splits": [{"chain": "base", "stealth_address": "0x...", "percentage": 50}]
+                }
+            },
+            {
+                "method": "POST",
+                "path": "/v1/receipt/create",
+                "description": "Create encrypted transaction receipt",
+                "auth_required": True
+            },
+            {
+                "method": "GET",
+                "path": "/v1/balance/{address}",
+                "description": "Get address balance across chains",
+                "auth_required": False
+            }
+        ],
+        "sdk": {
+            "javascript": "npm install @upl/sdk",
+            "python": "pip install upl-sdk",
+            "note": "SDKs coming soon"
+        },
+        "support": {
+            "docs": "https://docs.privacycloak.in",
+            "github": "https://github.com/upl-protocol"
+        }
+    }
+
 # Include router
 app.include_router(api_router)
 
