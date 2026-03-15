@@ -342,7 +342,7 @@ function Landing() {
       {/* Top Left - Chain indicator */}
       <div className="absolute top-4 md:top-6 left-4 md:left-6 z-50 flex items-center gap-2 px-3 md:px-4 py-2 border border-white/20 text-xs md:text-sm">
         <div className="w-2 h-2 rounded-full bg-[#0052FF]" />
-        <span className="text-white/70">Base Mainnet</span>
+        <span className="text-white/70">2 Chains Live</span>
         <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse ml-1 md:ml-2" />
       </div>
 
