@@ -1945,6 +1945,15 @@ function Landing() {
             </div>
           ))}
         </div>
+
+        {/* Footer Links */}
+        <div className="flex items-center justify-center gap-4 text-[10px] text-white/30">
+          <a href="/terms" className="hover:text-white/50 transition-colors">Terms of Service</a>
+          <span>·</span>
+          <a href="/privacy" className="hover:text-white/50 transition-colors">Privacy Policy</a>
+          <span>·</span>
+          <a href="/guide" className="hover:text-white/50 transition-colors">Getting Started</a>
+        </div>
       </div>
     </div>
   );
