@@ -11,7 +11,7 @@ from datetime import datetime
 from eth_account import Account
 
 class UPLAPITester:
-    def __init__(self, base_url="https://doc-to-deployment.preview.emergentagent.com"):
+    def __init__(self, base_url="https://stealth-swap-staging.preview.emergentagent.com"):
         self.base_url = base_url
         self.api_url = f"{base_url}/api"
         self.tests_run = 0
