@@ -303,3 +303,160 @@ class UPL:
             raise ValueError(f"Unknown chain: {chain}")
         
         return Web3(Web3.HTTPProvider(CHAINS[chain]["rpc"]))
+
+    # ─── Uniswap V3 Private Swap ─────────────────────────────────────────────
+
+    def get_uniswap_quote(
+        self,
+        chain: str,
+        token_in: str,
+        token_out: str,
+        amount_in: str,
+        stealth_recipient: str,
+        fee_tier: str = "medium"
+    ) -> Dict[str, Any]:
+        """
+        Get a Uniswap V3 quote routed through the privacy layer.
+        
+        Args:
+            chain: Chain key (base, arbitrum, polygon, optimism)
+            token_in: Input token symbol or address
+            token_out: Output token symbol or address
+            amount_in: Amount to swap (human readable, e.g. '0.1')
+            stealth_recipient: Stealth address to receive output
+            fee_tier: Fee tier (very_low, low, medium, high)
+            
+        Returns:
+            Quote data including amount_out_human, routing, privacy_fee_pct
+            
+        Example:
+            >>> quote = upl.get_uniswap_quote('base', 'ETH', 'USDC', '0.1', '0x...')
+            >>> print(quote['amount_out_human'])
+        """
+        return self._request("POST", "/uniswap/quote", json={
+            "chain": chain,
+            "token_in": token_in,
+            "token_out": token_out,
+            "amount_in": amount_in,
+            "stealth_recipient": stealth_recipient,
+            "fee_tier": fee_tier,
+        })
+
+    def get_uniswap_supported_chains(self) -> List[str]:
+        """Get chains where Uniswap V3 is available."""
+        data = self._request("GET", "/uniswap/supported-chains")
+        return data.get("chains", [])
+
+    # ─── Hyperliquid Private Trading ──────────────────────────────────────────
+
+    def get_hyperliquid_markets(self) -> List[Dict[str, Any]]:
+        """
+        Get available perpetual markets on Hyperliquid.
+        
+        Returns:
+            List of market objects with name and maxLeverage
+        """
+        data = self._request("GET", "/hyperliquid/markets")
+        return data.get("markets", [])
+
+    def get_hyperliquid_price(self, asset: str) -> Optional[float]:
+        """
+        Get live mark price for a Hyperliquid asset.
+        
+        Args:
+            asset: Asset symbol (e.g., 'ETH', 'BTC')
+            
+        Returns:
+            Current mark price or None if unavailable
+        """
+        data = self._request("GET", f"/hyperliquid/price/{asset}")
+        return data.get("price")
+
+    def prepare_hyperliquid_trade(
+        self,
+        trader_address: str,
+        asset: str,
+        is_buy: bool,
+        size_usd: float,
+        leverage: int = 1,
+        limit_price: Optional[float] = None,
+        chain: str = "arbitrum"
+    ) -> Dict[str, Any]:
+        """
+        Prepare a privacy-routed trade on Hyperliquid.
+        
+        Args:
+            trader_address: Your wallet address
+            asset: Asset to trade (e.g., 'ETH', 'BTC')
+            is_buy: True for LONG, False for SHORT
+            size_usd: Position size in USD
+            leverage: Leverage multiplier (1-50)
+            limit_price: Limit price (None for market order)
+            chain: Chain for margin routing (default: arbitrum)
+            
+        Returns:
+            Trade plan with proxy_address, trade_id, instructions
+            
+        Example:
+            >>> trade = upl.prepare_hyperliquid_trade('0x...', 'ETH', True, 100, leverage=5)
+            >>> print(trade['proxy_address'])  # Send margin here
+        """
+        return self._request("POST", "/hyperliquid/prepare-private-trade", json={
+            "trader_address": trader_address,
+            "asset": asset,
+            "is_buy": is_buy,
+            "size": size_usd,
+            "leverage": leverage,
+            "limit_price": limit_price,
+            "chain": chain,
+        })
+
+    # ─── Polymarket Private Betting ───────────────────────────────────────────
+
+    def get_polymarket_markets(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get active prediction markets from Polymarket.
+        
+        Args:
+            limit: Maximum number of markets to return
+            
+        Returns:
+            List of market objects
+        """
+        data = self._request("GET", f"/polymarket/markets?limit={limit}")
+        return data.get("markets", [])
+
+    def prepare_polymarket_bet(
+        self,
+        bettor_address: str,
+        condition_id: str,
+        token_id: str,
+        outcome: str,
+        amount_usdc: float
+    ) -> Dict[str, Any]:
+        """
+        Prepare a privacy-routed bet on Polymarket.
+        
+        Args:
+            bettor_address: Your wallet address
+            condition_id: Polymarket market condition ID
+            token_id: YES or NO token ID
+            outcome: 'YES' or 'NO'
+            amount_usdc: Amount to bet in USDC
+            
+        Returns:
+            Bet plan with proxy_address, bet_id, instructions
+            
+        Example:
+            >>> bet = upl.prepare_polymarket_bet('0x...', 'cond_123', '1', 'YES', 50.0)
+            >>> print(bet['proxy_address'])  # Send USDC here
+        """
+        return self._request("POST", "/polymarket/prepare-private-bet", json={
+            "bettor_address": bettor_address,
+            "condition_id": condition_id,
+            "token_id": token_id,
+            "outcome": outcome.upper(),
+            "amount_usdc": amount_usdc,
+            "chain": "polygon",
+        })
+

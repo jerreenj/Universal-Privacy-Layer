@@ -18,6 +18,7 @@ from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 import base64
 import json
+import httpx
 from web3 import Web3
 
 ROOT_DIR = Path(__file__).parent
@@ -2171,14 +2172,40 @@ async def uniswap_private_quote(request: UniswapPrivateSwapRequest):
             ).call()
             quote_source = "on_chain"
         except Exception as e:
-            logger.warning(f"Uniswap on-chain quote failed: {e}, using estimate")
-            # Fallback: estimate same amount in output token units (same decimals as input)
-            # This is just a rough 1:1 estimate; real price from on-chain is preferred
-            decimals_out_fallback = get_decimals(request.token_out)
-            # Convert amount_in_wei back to float, then to output token units
-            amount_in_float = float(request.amount_in)
-            amount_out = int(amount_in_float * (10 ** decimals_out_fallback))
-            quote_source = "estimated"
+            logger.warning(f"Uniswap on-chain quote failed: {e}, trying price oracle fallback")
+            # DeFiLlama price oracle fallback (free, no rate limits)
+            try:
+                # Common token addresses for price lookup
+                TOKEN_ADDRESSES = {
+                    "ETH": "ethereum:0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+                    "WETH": "ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "USDC": "ethereum:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "USDT": "ethereum:0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                    "DAI": "ethereum:0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                    "MATIC": "polygon:0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+                    "POL": "polygon:0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+                }
+                token_key_in = TOKEN_ADDRESSES.get(request.token_in.upper(), TOKEN_ADDRESSES["ETH"])
+                token_key_out = TOKEN_ADDRESSES.get(request.token_out.upper(), TOKEN_ADDRESSES["USDC"])
+                async with httpx.AsyncClient(timeout=6.0) as client:
+                    llama = await client.get(
+                        f"https://coins.llama.fi/prices/current/{token_key_in},{token_key_out}"
+                    )
+                    prices = llama.json().get("coins", {})
+                price_in = prices.get(token_key_in, {}).get("price", 1.0)
+                price_out = prices.get(token_key_out, {}).get("price", 1.0)
+                amount_in_float = float(request.amount_in)
+                amount_in_usd = amount_in_float * price_in
+                decimals_out_fb = get_decimals(request.token_out)
+                amount_out_float = (amount_in_usd / price_out) if price_out > 0 else amount_in_float
+                amount_out = int(amount_out_float * (10 ** decimals_out_fb))
+                quote_source = "defillama_oracle"
+            except Exception as oracle_err:
+                logger.warning(f"DeFiLlama fallback failed: {oracle_err}, using 1:1 estimate")
+                decimals_out_fallback = get_decimals(request.token_out)
+                amount_in_float = float(request.amount_in)
+                amount_out = int(amount_in_float * (10 ** decimals_out_fallback))
+                quote_source = "estimated_1to1"
 
         privacy_fee_wei = amount_out * 5 // 10000
         amount_out_after_fee = amount_out - privacy_fee_wei
@@ -2281,7 +2308,6 @@ class HyperliquidPrivateOrderRequest(BaseModel):
 @api_router.get("/hyperliquid/markets")
 async def get_hyperliquid_markets():
     """Get available perpetual markets on Hyperliquid"""
-    import httpx
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(HYPERLIQUID_API, json={"type": "meta"})
@@ -2307,7 +2333,6 @@ async def get_hyperliquid_markets():
 @api_router.get("/hyperliquid/price/{asset}")
 async def get_hyperliquid_price(asset: str):
     """Get current mark price for an asset on Hyperliquid"""
-    import httpx
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(HYPERLIQUID_API, json={"type": "allMids"})
@@ -2451,7 +2476,6 @@ class PolymarketPrivateBetRequest(BaseModel):
 @api_router.get("/polymarket/markets")
 async def get_polymarket_markets(limit: int = 10):
     """Get active prediction markets from Polymarket"""
-    import httpx
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(

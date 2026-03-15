@@ -22,7 +22,32 @@ Address: 0x92b4c9BF1fFa6D7e... (drained)
 ## OVERVIEW
 Universal Privacy Layer provides private transactions across 7 EVM chains with ZKP verification, stealth addresses, and cross-chain privacy splitting.
 
-## LATEST UPDATE (December 2025)
+## LATEST UPDATE (December 2025) - Session 2
+
+### Newly Implemented/Fixed Features
+
+#### 0a. Uniswap Quote Accuracy Fix ✅
+- Replaced broken CoinGecko (rate-limited) oracle with DeFiLlama price oracle
+- `httpx` moved to module-level import
+- Accurate real-market quotes: e.g. 1 ETH → 2094 USDC
+- Fallback chain: on-chain Quoter → DeFiLlama oracle → 1:1 estimate
+
+#### 0b. Frontend Refactoring (Partial) ✅
+- Extracted to `/src/components/features/`:
+  - `HiddenBalance.jsx`
+  - `UniswapPrivateSwap.jsx`
+  - `HyperliquidTrading.jsx`
+  - `PolymarketBetting.jsx`
+- Main App.js still contains remaining components (CrossChainSplit, DualSeedSetup, etc.)
+
+#### 0c. SDK Implementation ✅
+- **Python SDK** (`/app/sdk/python/src/upl_sdk/`) — 19 methods:
+  - Core: `create_privacy_wallet`, `generate_stealth_address`, `get_hidden_balance`, etc.
+  - DeFi: `get_uniswap_quote`, `prepare_hyperliquid_trade`, `prepare_polymarket_bet`
+  - Version bumped to 1.1.0
+- **JS SDK** (`/app/sdk/js/src/index.ts`) — 17 async methods:
+  - Same core + DeFi methods as Python SDK
+  - Full TypeScript types
 
 ### Newly Implemented Features
 
