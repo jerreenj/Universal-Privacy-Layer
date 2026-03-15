@@ -250,8 +250,17 @@ async def get_chains():
     """Get supported blockchain networks with Uniswap info"""
     return {
         "chains": CHAIN_CONFIG,
-        "contracts": UPL_CONTRACTS
+        "contracts": UPL_CONTRACTS,
+        "tokens": TOKENS
     }
+
+# Get tokens for a chain
+@api_router.get("/tokens/{chain}")
+async def get_tokens(chain: str):
+    """Get available tokens for a chain"""
+    if chain not in TOKENS:
+        raise HTTPException(status_code=400, detail="Unsupported chain")
+    return {"chain": chain, "tokens": TOKENS[chain]}
 
 # Swap Quote API
 class SwapQuoteRequest(BaseModel):
