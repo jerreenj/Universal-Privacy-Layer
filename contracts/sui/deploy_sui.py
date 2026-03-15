@@ -9,8 +9,9 @@ import json
 import os
 import sys
 
-MNEMONIC = "inside post tool solar phone biology render blade broken draw hockey senior"
-SUI_ADDRESS = "0xfde77f3867fd0ab7c76fcebc4f0190460d80dc9d1da016bda033e675cb99ff35"
+# SECURITY: Never hardcode seed phrases - use environment variable
+MNEMONIC = os.environ.get("DEPLOYER_MNEMONIC")
+SUI_ADDRESS = os.environ.get("SUI_ADDRESS", "")  # User must set this for their new wallet
 MOVE_PROJECT_DIR = "/app/contracts/sui/privacy_layer"
 
 

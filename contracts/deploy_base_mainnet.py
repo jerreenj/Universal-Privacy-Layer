@@ -11,8 +11,8 @@ import json
 BASE_RPC = "https://mainnet.base.org"
 CHAIN_ID = 8453
 
-# Deployer wallet
-MNEMONIC = "inside post tool solar phone biology render blade broken draw hockey senior"
+# SECURITY: Never hardcode seed phrases - use environment variable
+MNEMONIC = os.environ.get("DEPLOYER_MNEMONIC")
 
 # Contract ABIs and Bytecodes (simplified versions for deployment)
 # PrivacyRelayer - simplified version
