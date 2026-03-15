@@ -29,6 +29,12 @@ def deploy():
     print("UPL MAINNET DEPLOYMENT - OPTIMISM")
     print("=" * 60)
 
+    # SECURITY: Validate mnemonic is set
+    if not MNEMONIC:
+        print("\nERROR: DEPLOYER_MNEMONIC environment variable is required!")
+        print("Usage: export DEPLOYER_MNEMONIC='your seed phrase here'")
+        return {}
+
     # Connect
     w3 = Web3(Web3.HTTPProvider(OPTIMISM_RPC, request_kwargs={'timeout': 60}))
     if not w3.is_connected():

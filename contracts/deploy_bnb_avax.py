@@ -40,6 +40,12 @@ def deploy_to_chain(chain_key, chain_cfg):
     print(f"DEPLOYING TO {chain_cfg['name'].upper()}")
     print(f"{'='*55}")
 
+    # SECURITY: Validate mnemonic is set
+    if not MNEMONIC:
+        print(f"[{chain_cfg['name']}] ERROR: DEPLOYER_MNEMONIC environment variable is required!")
+        results[chain_key] = {"error": "DEPLOYER_MNEMONIC not set"}
+        return
+
     w3 = Web3(Web3.HTTPProvider(chain_cfg["rpc"], request_kwargs={"timeout": 60}))
     if not w3.is_connected():
         print(f"[{chain_cfg['name']}] ERROR: Cannot connect to RPC")
