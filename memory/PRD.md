@@ -1,6 +1,23 @@
 # Universal Privacy Layer (UPL) - PRD
 
-**Last Updated:** March 15, 2026
+**Last Updated:** December 2025
+
+## SECURITY UPDATE (December 2025)
+⚠️ **CRITICAL:** The old deployer wallet was compromised. All deployment scripts have been secured.
+
+### New Deployer Wallet
+```
+Address: 0x88993B262B8a89fe9888AD3bc0aF04b89932a9d4
+```
+**IMPORTANT:** The seed phrase is NEVER stored in code. Always use environment variables:
+```bash
+export DEPLOYER_MNEMONIC='your twelve word seed phrase here'
+```
+
+### Old Wallet (COMPROMISED - DO NOT USE)
+```
+Address: 0x92b4c9BF1fFa6D7e... (drained)
+```
 
 ## OVERVIEW
 Universal Privacy Layer provides private transactions across 7 EVM chains with ZKP verification, stealth addresses, and cross-chain privacy splitting.
