@@ -769,7 +769,7 @@ async def get_full_hidden_balance(address: str):
                                 "balance": str(Web3.from_wei(bal, 'ether'))
                             })
                         stealth_bal += bal
-                    except:
+                    except Exception:
                         pass
                 
                 total = main_bal + stealth_bal
