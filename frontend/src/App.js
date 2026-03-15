@@ -202,18 +202,18 @@ function Landing() {
 
   return (
     <div className="min-h-screen relative bg-black overflow-hidden">
-      {/* Top Left - Connect Wallet */}
-      <div className="absolute top-6 left-6 z-50">
-        <MagnetizeButton onClick={connectWallet} disabled={isConnecting} particleCount={14} className="px-6 py-2.5">
-          {isConnecting ? "Connecting..." : "Connect Wallet"}
-        </MagnetizeButton>
-      </div>
-
-      {/* Top Right - Chain indicator */}
-      <div className="absolute top-6 right-6 z-50 flex items-center gap-2 px-4 py-2 border border-white/20 text-sm">
+      {/* Top Left - Chain indicator */}
+      <div className="absolute top-6 left-6 z-50 flex items-center gap-2 px-4 py-2 border border-white/20 text-sm">
         <div className="w-2 h-2 rounded-full bg-[#0052FF]" />
         <span className="text-white/70">Base Mainnet</span>
         <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse ml-2" />
+      </div>
+
+      {/* Top Right - Connect Wallet */}
+      <div className="absolute top-6 right-6 z-50">
+        <MagnetizeButton onClick={connectWallet} disabled={isConnecting} particleCount={14} className="px-6 py-2.5">
+          {isConnecting ? "Connecting..." : "Connect Wallet"}
+        </MagnetizeButton>
       </div>
 
       {/* Globe - Top section */}
