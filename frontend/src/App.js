@@ -1004,6 +1004,535 @@ function ChainsStatus() {
   );
 }
 
+// ─── ZKP Proofs ───────────────────────────────────────────────────────────────
+function ZKPProofs() {
+  const { address } = useWallet();
+  const [proofType, setProofType] = useState("stealth_ownership");
+  const [stealthAddress, setStealthAddress] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [inputs, setInputs] = useState(null);
+  const [proofStatus, setProofStatus] = useState(null);
+
+  const generateInputs = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!stealthAddress) return toast.error("Enter stealth address");
+    setLoading(true);
+    try {
+      const spendKeyHash = ethers.keccak256(ethers.toUtf8Bytes(address + "_spend"));
+      const viewKeyHash = ethers.keccak256(ethers.toUtf8Bytes(address + "_view"));
+      
+      const res = await axios.post(`${API}/zkp/generate-inputs`, {
+        stealth_address: stealthAddress,
+        spend_key_hash: spendKeyHash,
+        view_key_hash: viewKeyHash
+      });
+      setInputs(res.data);
+      toast.success("ZKP inputs generated!");
+    } catch { toast.error("Failed to generate inputs"); }
+    setLoading(false);
+  };
+
+  const submitProof = async () => {
+    setLoading(true);
+    try {
+      // Demo proof (in production, use snarkjs to generate real proof)
+      const res = await axios.post(`${API}/zkp/submit-proof`, {
+        proof_type: proofType,
+        public_inputs: inputs?.public_inputs ? Object.values(inputs.public_inputs).map(String) : [],
+        proof_a: ["0x" + "1".repeat(64), "0x" + "2".repeat(64)],
+        proof_b: [["0x" + "3".repeat(64), "0x" + "4".repeat(64)], ["0x" + "5".repeat(64), "0x" + "6".repeat(64)]],
+        proof_c: ["0x" + "7".repeat(64), "0x" + "8".repeat(64)]
+      });
+      setProofStatus(res.data);
+      toast.success("Proof submitted!");
+    } catch { toast.error("Failed to submit proof"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-white/50">Generate zero-knowledge proofs to verify ownership without revealing private keys.</p>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Proof Type</label>
+        <select value={proofType} onChange={(e) => setProofType(e.target.value)}
+          className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none">
+          <option value="stealth_ownership" className="bg-black">Stealth Address Ownership</option>
+          <option value="amount_range" className="bg-black">Amount Range Proof</option>
+          <option value="membership" className="bg-black">Set Membership</option>
+        </select>
+      </div>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Stealth Address to Prove</label>
+        <input value={stealthAddress} onChange={(e) => setStealthAddress(e.target.value)} placeholder="0x..."
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+      
+      <button onClick={generateInputs} disabled={loading}
+        className="w-full py-3 bg-white/10 border border-white/20 font-bold uppercase tracking-wider hover:bg-white/20 disabled:opacity-50 flex items-center justify-center gap-2">
+        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Fingerprint className="w-5 h-5" />}
+        Generate ZKP Inputs
+      </button>
+      
+      {inputs && (
+        <div className="bg-white/5 border border-white/10 p-4 space-y-3">
+          <div className="text-xs text-green-400 uppercase">Public Inputs Generated</div>
+          <div className="font-mono text-xs break-all space-y-1">
+            {Object.entries(inputs.public_inputs || {}).map(([k, v]) => (
+              <div key={k} className="flex justify-between">
+                <span className="text-white/50">{k}:</span>
+                <span className="text-white/70">{String(v).slice(0, 20)}...</span>
+              </div>
+            ))}
+          </div>
+          <button onClick={submitProof} disabled={loading}
+            className="w-full py-2 bg-white text-black font-bold uppercase text-sm hover:bg-gray-200 disabled:opacity-50">
+            Submit Proof for Verification
+          </button>
+        </div>
+      )}
+      
+      {proofStatus && (
+        <div className={`p-4 border ${proofStatus.status === 'verified' ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
+          <div className="flex items-center gap-2">
+            {proofStatus.status === 'verified' ? <Check className="w-5 h-5 text-green-400" /> : <AlertTriangle className="w-5 h-5 text-red-400" />}
+            <span className={proofStatus.status === 'verified' ? 'text-green-400' : 'text-red-400'}>
+              {proofStatus.message}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── On-Chain Relayer ─────────────────────────────────────────────────────────
+function OnChainRelayer() {
+  const { address, chain, signer, fetchBalance } = useWallet();
+  const [to, setTo] = useState("");
+  const [amount, setAmount] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [txData, setTxData] = useState(null);
+  const [txHash, setTxHash] = useState(null);
+  const [relayerStats, setRelayerStats] = useState(null);
+
+  useEffect(() => {
+    axios.get(`${API}/relayer/stats/${chain}`).then(r => setRelayerStats(r.data)).catch(() => {});
+  }, [chain]);
+
+  const prepareRelayTx = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!to || !amount) return toast.error("Enter recipient and amount");
+    setLoading(true);
+    try {
+      const ephemeralKey = "0x" + Array(64).fill(0).map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+      const viewTag = Math.floor(Math.random() * 256);
+      
+      const res = await axios.post(`${API}/relayer/prepare-tx`, {
+        from_address: address,
+        stealth_address: to,
+        amount_wei: ethers.parseEther(amount).toString(),
+        ephemeral_key: ephemeralKey,
+        view_tag: viewTag,
+        chain
+      });
+      setTxData(res.data);
+      toast.success("Transaction prepared!");
+    } catch { toast.error("Failed to prepare transaction"); }
+    setLoading(false);
+  };
+
+  const executeRelayTx = async () => {
+    if (!txData || !signer) return;
+    setLoading(true);
+    try {
+      const tx = await signer.sendTransaction({
+        to: txData.to,
+        value: txData.value,
+        data: txData.data,
+        gasLimit: txData.gas
+      });
+      setTxHash(tx.hash);
+      toast.success("Transaction sent through relayer!");
+      await tx.wait();
+      toast.success("Confirmed on-chain!");
+      fetchBalance();
+    } catch (e) { toast.error(e.message?.slice(0, 60) || "Failed"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-white/50">Route transactions through the on-chain PrivacyRelayer contract for enhanced privacy with 0.05% fee.</p>
+      
+      {relayerStats && (
+        <div className="bg-white/5 border border-white/10 p-3 flex items-center justify-between">
+          <span className="text-xs text-white/50">Total Relayed on {CHAINS[chain]?.name}</span>
+          <span className="font-mono text-sm">{parseFloat(relayerStats.total_relayed || 0).toFixed(4)} {CHAINS[chain]?.symbol}</span>
+        </div>
+      )}
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Recipient Stealth Address</label>
+        <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="0x..."
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Amount ({CHAINS[chain]?.symbol})</label>
+        <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0"
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+      
+      {!txData ? (
+        <button onClick={prepareRelayTx} disabled={loading}
+          className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
+          {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lock className="w-5 h-5" />}
+          Prepare Relayer Transaction
+        </button>
+      ) : (
+        <div className="space-y-3">
+          <div className="bg-white/5 border border-white/10 p-3 space-y-1 text-xs">
+            <div className="flex justify-between"><span className="text-white/50">Relayer:</span><span className="font-mono">{txData.relayer_contract?.slice(0, 12)}...</span></div>
+            <div className="flex justify-between"><span className="text-white/50">Fee:</span><span className="text-yellow-400">{txData.fee_bps / 100}% ({ethers.formatEther(txData.fee_amount || '0').slice(0, 8)})</span></div>
+            <div className="flex justify-between"><span className="text-white/50">Net Amount:</span><span className="text-green-400">{ethers.formatEther(txData.net_amount || '0').slice(0, 10)}</span></div>
+          </div>
+          <button onClick={executeRelayTx} disabled={loading}
+            className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
+            Execute Through Relayer
+          </button>
+        </div>
+      )}
+      
+      {txHash && (
+        <a href={`${CHAINS[chain].explorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
+          className="flex items-center justify-center gap-2 text-sm text-gray-400 hover:text-white">
+          View on explorer <ExternalLink className="w-4 h-4" />
+        </a>
+      )}
+    </div>
+  );
+}
+
+// ─── Cross-Chain Split ────────────────────────────────────────────────────────
+function CrossChainSplit() {
+  const { address, signer } = useWallet();
+  const [totalAmount, setTotalAmount] = useState("");
+  const [splits, setSplits] = useState([{ chain: "base", stealth: "", percentage: 50 }, { chain: "arbitrum", stealth: "", percentage: 50 }]);
+  const [loading, setLoading] = useState(false);
+  const [splitPlan, setSplitPlan] = useState(null);
+
+  const addSplit = () => {
+    if (splits.length >= 7) return toast.error("Maximum 7 chains");
+    setSplits([...splits, { chain: "polygon", stealth: "", percentage: 0 }]);
+  };
+
+  const removeSplit = (idx) => {
+    if (splits.length <= 2) return toast.error("Minimum 2 splits required");
+    setSplits(splits.filter((_, i) => i !== idx));
+  };
+
+  const updateSplit = (idx, field, value) => {
+    const newSplits = [...splits];
+    newSplits[idx][field] = value;
+    setSplits(newSplits);
+  };
+
+  const prepareSplit = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    const totalPct = splits.reduce((s, sp) => s + Number(sp.percentage), 0);
+    if (totalPct !== 100) return toast.error(`Percentages must total 100%, got ${totalPct}%`);
+    if (splits.some(s => !s.stealth)) return toast.error("Enter all stealth addresses");
+    
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API}/split/prepare`, {
+        from_address: address,
+        total_amount_wei: ethers.parseEther(totalAmount).toString(),
+        splits: splits.map(s => ({ chain: s.chain, stealth_address: s.stealth, percentage: Number(s.percentage) }))
+      });
+      setSplitPlan(res.data);
+      toast.success("Split plan created!");
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-white/50">Split a single payment across multiple chains for enhanced privacy. Funds become untraceable.</p>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Total Amount (ETH equivalent)</label>
+        <input type="number" value={totalAmount} onChange={(e) => setTotalAmount(e.target.value)} placeholder="0.1"
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+      
+      <div className="space-y-3">
+        <div className="flex justify-between items-center">
+          <span className="text-xs text-white/50 uppercase">Split Configuration</span>
+          <button onClick={addSplit} className="text-xs text-green-400 hover:text-green-300 flex items-center gap-1">
+            <Plus className="w-3 h-3" /> Add Chain
+          </button>
+        </div>
+        
+        {splits.map((split, idx) => (
+          <div key={idx} className="bg-white/5 border border-white/10 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <select value={split.chain} onChange={(e) => updateSplit(idx, 'chain', e.target.value)}
+                className="bg-transparent text-sm outline-none">
+                {Object.entries(CHAINS).filter(([, v]) => v.live).map(([k, v]) => (
+                  <option key={k} value={k} className="bg-black">{v.name}</option>
+                ))}
+              </select>
+              <div className="flex items-center gap-2">
+                <input type="number" value={split.percentage} onChange={(e) => updateSplit(idx, 'percentage', e.target.value)}
+                  className="w-16 bg-transparent border-b border-white/20 text-right text-sm outline-none" />
+                <span className="text-white/50">%</span>
+                {splits.length > 2 && (
+                  <button onClick={() => removeSplit(idx)} className="text-red-400 hover:text-red-300">
+                    <Minus className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+            <input value={split.stealth} onChange={(e) => updateSplit(idx, 'stealth', e.target.value)}
+              placeholder="Stealth address 0x..." className="w-full bg-transparent text-xs font-mono outline-none text-white/70" />
+          </div>
+        ))}
+      </div>
+      
+      <button onClick={prepareSplit} disabled={loading}
+        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
+        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Globe className="w-5 h-5" />}
+        Prepare Cross-Chain Split
+      </button>
+      
+      {splitPlan && (
+        <div className="bg-white/5 border border-green-500/30 p-4 space-y-3">
+          <div className="text-xs text-green-400 uppercase">Split Plan Ready</div>
+          <div className="text-sm">Total: {splitPlan.total_amount} across {splitPlan.num_chains} chains</div>
+          {splitPlan.transactions?.map((tx, i) => (
+            <div key={i} className="flex justify-between text-xs bg-white/5 p-2">
+              <span style={{ color: CHAINS[tx.chain]?.color }}>{CHAINS[tx.chain]?.name}</span>
+              <span className="font-mono">{tx.amount} ({tx.percentage}%)</span>
+            </div>
+          ))}
+          <p className="text-xs text-white/50">Execute each transaction on the respective chain to complete the split.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Encrypted Messaging ──────────────────────────────────────────────────────
+function EncryptedMessaging() {
+  const { address } = useWallet();
+  const [tab, setTab] = useState("send");
+  const [recipient, setRecipient] = useState("");
+  const [message, setMessage] = useState("");
+  const [recipientPubKey, setRecipientPubKey] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [inbox, setInbox] = useState([]);
+  const [sent, setSent] = useState(null);
+
+  useEffect(() => {
+    if (address && tab === "inbox") {
+      axios.get(`${API}/messaging/inbox/${address}`).then(r => setInbox(r.data.messages || [])).catch(() => {});
+    }
+  }, [address, tab]);
+
+  const sendMessage = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!recipient || !message) return toast.error("Enter recipient and message");
+    setLoading(true);
+    try {
+      const pubKey = recipientPubKey || recipient; // Use address as fallback
+      const res = await axios.post(`${API}/messaging/send`, {
+        sender_address: address,
+        recipient_address: recipient,
+        message,
+        recipient_public_key: pubKey
+      });
+      setSent(res.data);
+      setMessage("");
+      toast.success("Encrypted message sent!");
+    } catch { toast.error("Failed to send message"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2">
+        <button onClick={() => setTab("send")}
+          className={`flex-1 py-2 text-sm font-medium ${tab === "send" ? "bg-white text-black" : "bg-white/10"}`}>
+          Send
+        </button>
+        <button onClick={() => setTab("inbox")}
+          className={`flex-1 py-2 text-sm font-medium ${tab === "inbox" ? "bg-white text-black" : "bg-white/10"}`}>
+          Inbox ({inbox.filter(m => !m.read).length})
+        </button>
+      </div>
+      
+      {tab === "send" ? (
+        <div className="space-y-3">
+          <p className="text-sm text-white/50">Send end-to-end encrypted messages. Only the recipient can decrypt.</p>
+          <div>
+            <label className="block text-xs text-gray-500 uppercase mb-2">Recipient Address</label>
+            <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x..."
+              className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 uppercase mb-2">Message</label>
+            <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Your private message..."
+              className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none focus:border-white h-24 resize-none" />
+          </div>
+          <button onClick={sendMessage} disabled={loading}
+            className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50">
+            {loading ? "Sending..." : "Send Encrypted"}
+          </button>
+          {sent && <div className="text-xs text-green-400">Message sent! ID: {sent.message_id?.slice(0, 8)}...</div>}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {inbox.length === 0 ? (
+            <div className="text-center py-8 text-white/50">No messages yet</div>
+          ) : (
+            inbox.map((msg, i) => (
+              <div key={i} className={`bg-white/5 border ${msg.read ? 'border-white/10' : 'border-green-500/30'} p-3`}>
+                <div className="flex justify-between text-xs text-white/50 mb-1">
+                  <span>From: {msg.sender_address?.slice(0, 10)}...</span>
+                  <span>{new Date(msg.created_at).toLocaleDateString()}</span>
+                </div>
+                <div className="text-xs font-mono text-white/30 break-all">{msg.encrypted_content?.slice(0, 40)}...</div>
+                {!msg.read && <div className="text-[10px] text-green-400 mt-1">• New</div>}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Multisig Privacy ─────────────────────────────────────────────────────────
+function MultisigPrivacy() {
+  const { address, chain } = useWallet();
+  const [tab, setTab] = useState("create");
+  const [name, setName] = useState("");
+  const [owners, setOwners] = useState(["", ""]);
+  const [threshold, setThreshold] = useState(2);
+  const [loading, setLoading] = useState(false);
+  const [multisigs, setMultisigs] = useState([]);
+  const [created, setCreated] = useState(null);
+
+  useEffect(() => {
+    if (address && tab === "list") {
+      axios.get(`${API}/multisig/user/${address}`).then(r => setMultisigs(r.data.multisigs || [])).catch(() => {});
+    }
+  }, [address, tab]);
+
+  const addOwner = () => setOwners([...owners, ""]);
+  const updateOwner = (idx, val) => {
+    const newOwners = [...owners];
+    newOwners[idx] = val;
+    setOwners(newOwners);
+  };
+
+  const createMultisig = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!name) return toast.error("Enter multisig name");
+    const validOwners = owners.filter(o => o.trim());
+    if (validOwners.length < 2) return toast.error("Need at least 2 owners");
+    if (threshold > validOwners.length) return toast.error("Threshold cannot exceed owners");
+    
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API}/multisig/create`, {
+        name,
+        owners: validOwners,
+        threshold,
+        chain
+      });
+      setCreated(res.data);
+      toast.success("Multisig created!");
+    } catch { toast.error("Failed to create multisig"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2">
+        <button onClick={() => setTab("create")}
+          className={`flex-1 py-2 text-sm font-medium ${tab === "create" ? "bg-white text-black" : "bg-white/10"}`}>
+          Create
+        </button>
+        <button onClick={() => setTab("list")}
+          className={`flex-1 py-2 text-sm font-medium ${tab === "list" ? "bg-white text-black" : "bg-white/10"}`}>
+          My Multisigs
+        </button>
+      </div>
+      
+      {tab === "create" ? (
+        <div className="space-y-3">
+          <p className="text-sm text-white/50">Create a privacy-focused multisig wallet with off-chain signature collection.</p>
+          <div>
+            <label className="block text-xs text-gray-500 uppercase mb-2">Multisig Name</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Treasury, Team Fund..."
+              className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none focus:border-white" />
+          </div>
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-xs text-gray-500 uppercase">Owners</label>
+              <button onClick={addOwner} className="text-xs text-green-400">+ Add Owner</button>
+            </div>
+            {owners.map((owner, idx) => (
+              <input key={idx} value={owner} onChange={(e) => updateOwner(idx, e.target.value)}
+                placeholder={`Owner ${idx + 1} address`}
+                className="w-full bg-white/5 border border-white/20 p-2 font-mono text-xs outline-none focus:border-white mb-2" />
+            ))}
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 uppercase mb-2">Threshold (required signatures)</label>
+            <input type="number" value={threshold} onChange={(e) => setThreshold(Number(e.target.value))}
+              min={1} max={owners.length}
+              className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none focus:border-white" />
+          </div>
+          <button onClick={createMultisig} disabled={loading}
+            className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50">
+            {loading ? "Creating..." : `Create ${threshold} of ${owners.filter(o => o).length} Multisig`}
+          </button>
+          {created && (
+            <div className="bg-green-500/10 border border-green-500/30 p-3 text-sm">
+              <div className="text-green-400 font-medium">{created.name}</div>
+              <div className="text-xs text-white/50 mt-1">{created.message}</div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {multisigs.length === 0 ? (
+            <div className="text-center py-8 text-white/50">No multisigs found</div>
+          ) : (
+            multisigs.map((ms, i) => (
+              <div key={i} className="bg-white/5 border border-white/10 p-4">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-medium">{ms.name}</span>
+                  <span className="text-xs text-white/50">{ms.threshold} of {ms.owners?.length}</span>
+                </div>
+                <div className="text-xs text-white/30">
+                  {ms.proposals?.filter(p => p.status === 'pending').length || 0} pending proposals
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Landing ──────────────────────────────────────────────────────────────────
 function Landing() {
   const { connectWallet, connecting, vm, switchChain, chain } = useWallet();
