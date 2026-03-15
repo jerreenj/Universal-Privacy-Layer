@@ -69,13 +69,12 @@ const CHAINS = {
     name: "BNB Chain",
     chainId: "0x38",
     chainIdDec: 56,
-    rpcUrl: "https://bsc-dataseed.binance.org/",
+    rpcUrl: "https://bsc-dataseed1.binance.org/",
     explorer: "https://bscscan.com",
     symbol: "BNB",
     color: "#F3BA2F",
-    live: false,
-    comingSoon: true,
-    contracts: null,
+    live: true,
+    contracts: DEPLOYED_CONTRACTS,
   },
   avalanche: {
     name: "Avalanche",
@@ -85,9 +84,8 @@ const CHAINS = {
     explorer: "https://snowtrace.io",
     symbol: "AVAX",
     color: "#E84142",
-    live: false,
-    comingSoon: true,
-    contracts: null,
+    live: true,
+    contracts: DEPLOYED_CONTRACTS,
   },
 };
 
@@ -123,6 +121,18 @@ const TOKENS = {
     { symbol: "USDC", name: "USD Coin", decimals: 6, address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" },
     { symbol: "OP", name: "Optimism", decimals: 18, address: "0x4200000000000000000000000000000000000042" },
     { symbol: "WETH", name: "Wrapped ETH", decimals: 18, address: "0x4200000000000000000000000000000000000006" },
+  ],
+  bnb: [
+    { symbol: "BNB", name: "BNB", decimals: 18, address: "native" },
+    { symbol: "USDC", name: "USD Coin", decimals: 18, address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" },
+    { symbol: "USDT", name: "Tether", decimals: 18, address: "0x55d398326f99059fF775485246999027B3197955" },
+    { symbol: "WBNB", name: "Wrapped BNB", decimals: 18, address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c" },
+  ],
+  avalanche: [
+    { symbol: "AVAX", name: "Avalanche", decimals: 18, address: "native" },
+    { symbol: "USDC", name: "USD Coin", decimals: 6, address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E" },
+    { symbol: "USDT", name: "Tether", decimals: 6, address: "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7" },
+    { symbol: "WAVAX", name: "Wrapped AVAX", decimals: 18, address: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7" },
   ],
 };
 
