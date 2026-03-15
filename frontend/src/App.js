@@ -380,7 +380,7 @@ function Landing() {
           <div className="w-px h-6 md:h-8 bg-white/10" />
           <div className="text-center">
             <span className="block text-xl md:text-2xl font-bold text-green-400">LIVE</span>
-            <span className="text-[10px] md:text-xs text-white/40 uppercase tracking-wider">On Base</span>
+            <span className="text-[10px] md:text-xs text-white/40 uppercase tracking-wider">Base + Arb</span>
           </div>
         </div>
 
