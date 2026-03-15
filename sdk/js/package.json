@@ -1,0 +1,44 @@
+{
+  "name": "@upl/sdk",
+  "version": "1.0.0",
+  "description": "Universal Privacy Layer SDK - Private transactions across 7 EVM chains",
+  "main": "dist/index.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "test": "jest",
+    "lint": "eslint src"
+  },
+  "keywords": [
+    "privacy",
+    "blockchain",
+    "ethereum",
+    "stealth-address",
+    "zkp",
+    "cross-chain"
+  ],
+  "author": "UPL Protocol",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/upl-protocol/sdk"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "ethers": "^6.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "jest": "^29.0.0",
+    "@types/jest": "^29.0.0"
+  },
+  "peerDependencies": {
+    "ethers": ">=6.0.0"
+  }
+}
