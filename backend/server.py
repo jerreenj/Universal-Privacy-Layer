@@ -35,6 +35,25 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# ZKP Verifier addresses (deployed on all chains)
+ZKP_VERIFIER_ADDRESSES = {
+    "base": "0x98940B431d829832d2Ad5eB0812824A3C40D1bF1",
+    "arbitrum": "0xbdFc25A62dcCFbc710072Ae2EaE5c3a57674bDad",
+    "optimism": "0xD04f9cE68CfF7C0FD6d631794964784B99423943",
+    "bnb": "0xD04f9cE68CfF7C0FD6d631794964784B99423943",
+    "avalanche": "0xD04f9cE68CfF7C0FD6d631794964784B99423943",
+    "hyperliquid": "0xD04f9cE68CfF7C0FD6d631794964784B99423943",
+    "polygon": "0xD04f9cE68CfF7C0FD6d631794964784B99423943"
+}
+
+# ZKP Verifier ABI
+ZKP_VERIFIER_ABI = [
+    {"inputs":[{"name":"a","type":"uint256[2]"},{"name":"b","type":"uint256[2][2]"},{"name":"c","type":"uint256[2]"},{"name":"input","type":"uint256[2]"}],"name":"verifyProof","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[{"name":"a","type":"uint256[2]"},{"name":"b","type":"uint256[2][2]"},{"name":"c","type":"uint256[2]"},{"name":"input","type":"uint256[2]"}],"name":"verifyProofView","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"nullifier","type":"bytes32"}],"name":"isNullifierUsed","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"getStats","outputs":[{"name":"","type":"uint256"},{"name":"","type":"uint256"},{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+]
+
 # Chain configurations - MAINNET
 CHAIN_CONFIG = {
     "base": {
