@@ -216,20 +216,19 @@ function Landing() {
         <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse ml-2" />
       </div>
 
-      {/* Globe - Centered and higher */}
-      <div className="absolute inset-0 flex items-center justify-center" style={{ marginTop: '-80px' }}>
-        <RotatingEarth width={480} height={480} />
+      {/* Globe - Top section */}
+      <div className="pt-16 flex justify-center">
+        <RotatingEarth width={420} height={420} />
       </div>
 
-      {/* Title below globe */}
-      <div className="absolute bottom-[15%] left-0 right-0 text-center z-10">
-        <h1 className="font-heading text-5xl md:text-6xl font-bold tracking-tight text-white mb-3">
+      {/* All content below globe */}
+      <div className="text-center px-6 -mt-4">
+        <h1 className="font-heading text-5xl md:text-6xl font-bold tracking-tight text-white mb-8">
           Universal Privacy Layer
         </h1>
-        <p className="text-lg text-white/40 tracking-wide">The HTTPS of Web3</p>
         
         {/* Stats row */}
-        <div className="mt-8 flex items-center justify-center gap-12">
+        <div className="flex items-center justify-center gap-12 mb-8">
           <div className="text-center">
             <span className="block text-2xl font-bold text-white">100%</span>
             <span className="text-xs text-white/40 uppercase tracking-wider">Private</span>
@@ -251,7 +250,7 @@ function Landing() {
           href="https://basescan.org/address/0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c" 
           target="_blank" 
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 mt-6 text-xs text-white/30 hover:text-white/60 transition-colors"
+          className="inline-flex items-center gap-2 text-xs text-white/30 hover:text-white/60 transition-colors"
         >
           View contracts on BaseScan <ExternalLink className="w-3 h-3" />
         </a>
