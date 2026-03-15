@@ -1098,6 +1098,13 @@ async def generate_zkp_inputs(
         logger.error(f"ZKP input generation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+class ZKPVerifyOnChainRequest(BaseModel):
+    proof_a: List[str]
+    proof_b: List[List[str]]
+    proof_c: List[str]
+    public_inputs: List[str]
+    chain: str = "base"
+
 @api_router.post("/zkp/submit-proof")
 async def submit_zkp_proof(request: ZKPProofRequest):
     """Submit a ZKP proof for verification"""
@@ -1119,26 +1126,132 @@ async def submit_zkp_proof(request: ZKPProofRequest):
         }
         await db.zkp_proofs.insert_one(doc)
         
-        # Simulate verification (in production, call on-chain verifier)
-        # For now, mark as verified if format is correct
-        is_valid = (
+        # Format check (basic validation)
+        is_valid_format = (
             len(request.proof_a) == 2 and
             len(request.proof_b) == 2 and
             len(request.proof_c) == 2
         )
         
+        if not is_valid_format:
+            await db.zkp_proofs.update_one(
+                {"proof_id": proof_id},
+                {"$set": {"status": "invalid", "error": "Invalid proof format"}}
+            )
+            return {"proof_id": proof_id, "status": "invalid", "message": "Invalid proof format"}
+        
+        # Mark as format_verified (actual on-chain verification requires calling verifyProofView)
         await db.zkp_proofs.update_one(
             {"proof_id": proof_id},
-            {"$set": {"status": "verified" if is_valid else "invalid", "verified_at": datetime.now(timezone.utc).isoformat()}}
+            {"$set": {"status": "format_verified", "verified_at": datetime.now(timezone.utc).isoformat()}}
         )
         
         return {
             "proof_id": proof_id,
-            "status": "verified" if is_valid else "invalid",
-            "message": "Proof verified successfully" if is_valid else "Invalid proof format"
+            "status": "format_verified",
+            "message": "Proof format valid. Call /zkp/verify-onchain to verify on-chain.",
+            "verifier_contracts": ZKP_VERIFIER_ADDRESSES
         }
     except Exception as e:
         logger.error(f"ZKP proof submission error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/zkp/verify-onchain")
+async def verify_proof_onchain(request: ZKPVerifyOnChainRequest):
+    """Verify a ZKP proof using the on-chain verifier contract"""
+    try:
+        chain = request.chain
+        if chain not in ZKP_VERIFIER_ADDRESSES:
+            raise HTTPException(status_code=400, detail=f"Chain {chain} not supported")
+        
+        config = CHAIN_CONFIG.get(chain)
+        if not config:
+            raise HTTPException(status_code=400, detail=f"Chain {chain} not configured")
+        
+        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        verifier_address = ZKP_VERIFIER_ADDRESSES[chain]
+        verifier = w3.eth.contract(
+            address=Web3.to_checksum_address(verifier_address),
+            abi=ZKP_VERIFIER_ABI
+        )
+        
+        # Convert proof to integers
+        a = [int(x, 16) if x.startswith('0x') else int(x) for x in request.proof_a]
+        b = [[int(x, 16) if x.startswith('0x') else int(x) for x in row] for row in request.proof_b]
+        c = [int(x, 16) if x.startswith('0x') else int(x) for x in request.proof_c]
+        inputs = [int(x, 16) if x.startswith('0x') else int(x) for x in request.public_inputs[:2]]
+        
+        # Pad inputs to 2 if needed
+        while len(inputs) < 2:
+            inputs.append(0)
+        
+        # Call view function to verify
+        try:
+            is_valid = verifier.functions.verifyProofView(a, b, c, inputs).call()
+        except Exception as e:
+            logger.warning(f"On-chain verification call failed: {e}")
+            is_valid = False
+        
+        # Get verifier stats
+        try:
+            total, successful, rate = verifier.functions.getStats().call()
+        except:
+            total, successful, rate = 0, 0, 0
+        
+        return {
+            "chain": chain,
+            "verifier_address": verifier_address,
+            "is_valid": is_valid,
+            "verification_type": "on-chain",
+            "verifier_stats": {
+                "total_verifications": total,
+                "successful_verifications": successful,
+                "success_rate": rate
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"On-chain verification error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/zkp/verifier-info/{chain}")
+async def get_verifier_info(chain: str):
+    """Get ZKP verifier contract info for a chain"""
+    try:
+        if chain not in ZKP_VERIFIER_ADDRESSES:
+            raise HTTPException(status_code=400, detail=f"Chain {chain} not supported")
+        
+        config = CHAIN_CONFIG.get(chain)
+        if not config:
+            raise HTTPException(status_code=400, detail=f"Chain {chain} not configured")
+        
+        verifier_address = ZKP_VERIFIER_ADDRESSES[chain]
+        
+        try:
+            w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+            verifier = w3.eth.contract(
+                address=Web3.to_checksum_address(verifier_address),
+                abi=ZKP_VERIFIER_ABI
+            )
+            total, successful, rate = verifier.functions.getStats().call()
+        except:
+            total, successful, rate = 0, 0, 0
+        
+        return {
+            "chain": chain,
+            "verifier_address": verifier_address,
+            "explorer_url": f"{config['explorer']}/address/{verifier_address}",
+            "stats": {
+                "total_verifications": total,
+                "successful_verifications": successful,
+                "success_rate": rate
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Verifier info error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/zkp/proof/{proof_id}")
