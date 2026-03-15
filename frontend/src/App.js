@@ -2265,6 +2265,7 @@ function Dashboard() {
               { id: "approval",icon: <Shield className="w-5 h-5" />, title: "Approvals", color: "text-yellow-400" },
               { id: "contract",icon: <FileCode className="w-5 h-5" />, title: "Contracts", color: "text-cyan-400" },
               { id: "chains",  icon: <Layers className="w-5 h-5" />, title: "Chains", color: "text-white/50" },
+              { id: "developer", icon: <FileCode className="w-5 h-5" />, title: "Developer API", color: "text-emerald-400" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
