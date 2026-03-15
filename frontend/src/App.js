@@ -59,6 +59,7 @@ const TOKENS = {
 };
 
 const LIVE_COUNT = Object.values(CHAINS).filter(c => c.live).length;
+const COMING_SOON_COUNT = Object.values(CHAINS).filter(c => c.comingSoon).length;
 
 // ─── Wallet Context ───────────────────────────────────────────────────────────
 const WalletContext = createContext();
