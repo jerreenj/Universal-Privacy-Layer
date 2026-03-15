@@ -1017,17 +1017,25 @@ function Landing() {
 
   return (
     <div className="min-h-screen relative bg-black overflow-hidden">
-      {/* Chain badge */}
-      <div className="absolute top-4 md:top-6 left-4 md:left-6 z-50 flex items-center gap-2 px-3 md:px-4 py-2 border border-white/20 text-xs md:text-sm cursor-pointer hover:border-white/40 transition-all"
-        onClick={() => setShowChains(!showChains)} data-testid="live-chain-badge">
-        <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-        <span className="text-white/70">{LIVE_COUNT} Chains Live</span>
-        <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${showChains ? "rotate-180" : ""}`} />
+      {/* Header - fixed positioning for mobile */}
+      <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-3 sm:px-4 md:px-6 py-3 bg-black/80 backdrop-blur-sm">
+        {/* Chain badge */}
+        <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border border-white/20 text-[10px] sm:text-xs cursor-pointer hover:border-white/40 transition-all"
+          onClick={() => setShowChains(!showChains)} data-testid="live-chain-badge">
+          <div className="w-1.5 sm:w-2 h-1.5 sm:h-2 rounded-full bg-green-400 animate-pulse" />
+          <span className="text-white/70">{LIVE_COUNT} Live</span>
+          <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${showChains ? "rotate-180" : ""}`} />
+        </div>
+
+        {/* Connect button */}
+        <MagnetizeButton onClick={connectWallet} disabled={connecting} particleCount={14} className="px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm">
+          {connecting ? "..." : `Connect`}
+        </MagnetizeButton>
       </div>
 
       {/* Chain dropdown */}
       {showChains && (
-        <div className="absolute top-14 md:top-16 left-4 md:left-6 z-50 bg-black border border-white/20 min-w-[260px] max-h-[80vh] overflow-y-auto">
+        <div className="fixed top-12 sm:top-14 left-3 sm:left-4 md:left-6 z-50 bg-black border border-white/20 min-w-[220px] sm:min-w-[260px] max-h-[70vh] overflow-y-auto">
           {vmGroups.map(({ vmKey, label, chains }) => (
             <div key={vmKey}>
               <div className="px-3 py-2 text-[10px] text-white/40 uppercase tracking-wider border-b border-white/10 bg-white/3 flex items-center gap-2">
@@ -1037,7 +1045,7 @@ function Landing() {
               </div>
               {chains.map(([k, v]) => (
                 <button key={k} onClick={() => { switchChain(k); setShowChains(false); }}
-                  className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-white/10 text-left text-sm ${!v.live ? 'opacity-50' : ''}`}
+                  className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-white/10 text-left text-xs sm:text-sm ${!v.live ? 'opacity-50' : ''}`}
                   disabled={!v.live}>
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
                   <span>{v.name}</span>
@@ -1050,12 +1058,6 @@ function Landing() {
           ))}
         </div>
       )}
-
-      <div className="absolute top-4 md:top-6 right-4 md:right-6 z-50">
-        <MagnetizeButton onClick={connectWallet} disabled={connecting} particleCount={14} className="px-4 md:px-6 py-2 md:py-2.5 text-sm">
-          {connecting ? "Connecting..." : `Connect ${walletLabel}`}
-        </MagnetizeButton>
-      </div>
 
       {/* Globe - smaller on mobile, positioned better */}
       <div className="pt-16 md:pt-20 flex justify-center">
