@@ -694,6 +694,337 @@ async def get_hidden_balance(address: str, chain: str = "ethereum_sepolia"):
         logger.error(f"Balance fetch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ===================== ENHANCED FEATURES =====================
+
+# --- Hidden Balance (Aggregated across all stealth addresses) ---
+@api_router.get("/balance/hidden/{address}")
+async def get_full_hidden_balance(address: str):
+    """Get aggregated balance across ALL chains and stealth addresses"""
+    try:
+        result = {
+            "address": address,
+            "chains": {},
+            "total_usd_value": "0",
+            "stealth_address_count": 0
+        }
+        
+        # Get all stealth addresses for this user across all chains
+        all_stealth = await db.stealth_addresses.find(
+            {"recipient_address": address},
+            {"_id": 0}
+        ).to_list(500)
+        
+        result["stealth_address_count"] = len(all_stealth)
+        
+        # Group by chain
+        stealth_by_chain = {}
+        for sa in all_stealth:
+            chain = sa.get("chain", "base")
+            if chain not in stealth_by_chain:
+                stealth_by_chain[chain] = []
+            stealth_by_chain[chain].append(sa["stealth_address"])
+        
+        # Fetch balances for each chain
+        for chain_key, config in CHAIN_CONFIG.items():
+            try:
+                w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+                
+                # Main balance
+                try:
+                    main_bal = w3.eth.get_balance(Web3.to_checksum_address(address))
+                except:
+                    main_bal = 0
+                
+                # Stealth balances
+                stealth_bal = 0
+                stealth_addrs = stealth_by_chain.get(chain_key, [])
+                stealth_with_balance = []
+                
+                for sa in stealth_addrs:
+                    try:
+                        bal = w3.eth.get_balance(Web3.to_checksum_address(sa))
+                        if bal > 0:
+                            stealth_with_balance.append({
+                                "address": sa,
+                                "balance_wei": str(bal),
+                                "balance": str(Web3.from_wei(bal, 'ether'))
+                            })
+                        stealth_bal += bal
+                    except:
+                        pass
+                
+                total = main_bal + stealth_bal
+                
+                result["chains"][chain_key] = {
+                    "name": config["name"],
+                    "symbol": config["symbol"],
+                    "main_balance_wei": str(main_bal),
+                    "main_balance": str(Web3.from_wei(main_bal, 'ether')),
+                    "stealth_balance_wei": str(stealth_bal),
+                    "stealth_balance": str(Web3.from_wei(stealth_bal, 'ether')),
+                    "total_balance_wei": str(total),
+                    "total_balance": str(Web3.from_wei(total, 'ether')),
+                    "stealth_addresses_with_balance": stealth_with_balance,
+                    "color": config["color"]
+                }
+            except Exception as e:
+                logger.warning(f"Failed to fetch balance for {chain_key}: {e}")
+                result["chains"][chain_key] = {
+                    "name": config["name"],
+                    "symbol": config["symbol"],
+                    "error": str(e)
+                }
+        
+        return result
+    except Exception as e:
+        logger.error(f"Hidden balance error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Transaction History (Enhanced) ---
+@api_router.get("/transactions/history/{address}")
+async def get_full_transaction_history(address: str, limit: int = 50):
+    """Get complete transaction history across all chains"""
+    try:
+        # Get transactions where user is sender or recipient
+        transactions = await db.transactions.find(
+            {"$or": [
+                {"from_address": {"$regex": address, "$options": "i"}},
+                {"to_address": {"$regex": address, "$options": "i"}},
+                {"recipient_stealth": {"$regex": address, "$options": "i"}}
+            ]},
+            {"_id": 0}
+        ).sort("created_at", -1).to_list(limit)
+        
+        # Get stealth addresses to check for incoming
+        stealth_addrs = await db.stealth_addresses.find(
+            {"recipient_address": address},
+            {"_id": 0, "stealth_address": 1, "chain": 1, "created_at": 1}
+        ).to_list(500)
+        
+        stealth_set = {sa["stealth_address"].lower() for sa in stealth_addrs}
+        
+        # Enrich transactions with direction
+        for tx in transactions:
+            from_addr = tx.get("from_address", "").lower()
+            to_addr = tx.get("to_address", "").lower()
+            recipient_stealth = tx.get("recipient_stealth", "").lower()
+            
+            if from_addr == address.lower():
+                tx["direction"] = "out"
+            elif to_addr == address.lower() or to_addr in stealth_set or recipient_stealth in stealth_set:
+                tx["direction"] = "in"
+            else:
+                tx["direction"] = "unknown"
+        
+        return {
+            "address": address,
+            "transactions": transactions,
+            "total_count": len(transactions),
+            "stealth_addresses_count": len(stealth_addrs)
+        }
+    except Exception as e:
+        logger.error(f"Transaction history error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Privacy Wallet Registration ---
+class PrivacyWalletRegister(BaseModel):
+    main_address: str
+    privacy_spend_key: str  # Public key for spending
+    privacy_view_key: str   # Public key for viewing
+    encrypted_private_data: Optional[str] = None
+
+@api_router.post("/wallet/register-privacy")
+async def register_privacy_wallet(request: PrivacyWalletRegister):
+    """Register privacy keys for an existing wallet"""
+    try:
+        doc = {
+            "id": str(uuid.uuid4()),
+            "main_address": request.main_address,
+            "privacy_spend_key": request.privacy_spend_key,
+            "privacy_view_key": request.privacy_view_key,
+            "encrypted_private_data": request.encrypted_private_data,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Upsert - update if exists, insert if not
+        await db.privacy_wallets.update_one(
+            {"main_address": request.main_address},
+            {"$set": doc},
+            upsert=True
+        )
+        
+        return {"success": True, "wallet_id": doc["id"]}
+    except Exception as e:
+        logger.error(f"Privacy wallet registration error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/wallet/privacy/{address}")
+async def get_privacy_wallet(address: str):
+    """Get privacy wallet info for an address"""
+    try:
+        wallet = await db.privacy_wallets.find_one(
+            {"main_address": address},
+            {"_id": 0}
+        )
+        if not wallet:
+            return {"registered": False}
+        return {"registered": True, "wallet": wallet}
+    except Exception as e:
+        logger.error(f"Privacy wallet fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- NFT Privacy Proxy ---
+class NFTProxyRequest(BaseModel):
+    user_address: str
+    nft_contract: str
+    token_id: str
+    action: str  # "buy", "sell", "transfer", "bid"
+    chain: str = "base"
+    price_wei: Optional[str] = None
+    recipient: Optional[str] = None
+
+@api_router.post("/nft/proxy")
+async def create_nft_proxy_transaction(request: NFTProxyRequest):
+    """Create a privacy-wrapped NFT transaction"""
+    try:
+        # Generate a proxy address for this NFT interaction
+        proxy_private_key = secrets.token_bytes(32)
+        proxy_account = Account.from_key(proxy_private_key)
+        
+        proxy_id = str(uuid.uuid4())
+        
+        doc = {
+            "proxy_id": proxy_id,
+            "user_address": request.user_address,
+            "proxy_address": proxy_account.address,
+            "nft_contract": request.nft_contract,
+            "token_id": request.token_id,
+            "action": request.action,
+            "chain": request.chain,
+            "price_wei": request.price_wei,
+            "recipient": request.recipient,
+            "status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.nft_proxies.insert_one(doc)
+        
+        return {
+            "proxy_id": proxy_id,
+            "proxy_address": proxy_account.address,
+            "instructions": f"Send funds to proxy address, then call execute endpoint",
+            "action": request.action
+        }
+    except Exception as e:
+        logger.error(f"NFT proxy error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Token Approval Privacy ---
+class TokenApprovalRequest(BaseModel):
+    user_address: str
+    token_address: str
+    spender_address: str
+    amount: str
+    chain: str = "base"
+
+@api_router.post("/approval/create-disposable")
+async def create_disposable_approval(request: TokenApprovalRequest):
+    """Create a disposable address for token approval"""
+    try:
+        # Generate disposable approval address
+        disposable_key = secrets.token_bytes(32)
+        disposable_account = Account.from_key(disposable_key)
+        
+        approval_id = str(uuid.uuid4())
+        
+        doc = {
+            "approval_id": approval_id,
+            "user_address": request.user_address,
+            "disposable_address": disposable_account.address,
+            "token_address": request.token_address,
+            "spender_address": request.spender_address,
+            "amount": request.amount,
+            "chain": request.chain,
+            "status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.disposable_approvals.insert_one(doc)
+        
+        return {
+            "approval_id": approval_id,
+            "disposable_address": disposable_account.address,
+            "instructions": "Transfer tokens to disposable address, approve from there, then sweep back"
+        }
+    except Exception as e:
+        logger.error(f"Disposable approval error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Smart Contract Privacy Proxy ---
+class ContractProxyRequest(BaseModel):
+    user_address: str
+    contract_address: str
+    function_name: str
+    function_args: List[Any]
+    chain: str = "base"
+    value_wei: str = "0"
+
+@api_router.post("/contract/proxy")
+async def create_contract_proxy(request: ContractProxyRequest):
+    """Create anonymous execution proxy for smart contract calls"""
+    try:
+        # Generate proxy address
+        proxy_key = secrets.token_bytes(32)
+        proxy_account = Account.from_key(proxy_key)
+        
+        proxy_id = str(uuid.uuid4())
+        
+        doc = {
+            "proxy_id": proxy_id,
+            "user_address": request.user_address,
+            "proxy_address": proxy_account.address,
+            "contract_address": request.contract_address,
+            "function_name": request.function_name,
+            "function_args": request.function_args,
+            "chain": request.chain,
+            "value_wei": request.value_wei,
+            "status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.contract_proxies.insert_one(doc)
+        
+        return {
+            "proxy_id": proxy_id,
+            "proxy_address": proxy_account.address,
+            "instructions": "Fund proxy address with gas + value, then execute contract call from proxy"
+        }
+    except Exception as e:
+        logger.error(f"Contract proxy error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Relayer Stats ---
+@api_router.get("/stats")
+async def get_platform_stats():
+    """Get platform statistics"""
+    try:
+        total_txs = await db.transactions.count_documents({})
+        total_stealth = await db.stealth_addresses.count_documents({})
+        total_wallets = await db.wallets.count_documents({})
+        total_receipts = await db.receipts.count_documents({})
+        
+        return {
+            "total_transactions": total_txs,
+            "total_stealth_addresses": total_stealth,
+            "total_wallets": total_wallets,
+            "total_receipts": total_receipts,
+            "live_chains": list(CHAIN_CONFIG.keys()),
+            "contracts": {
+                "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+                "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Include router
 app.include_router(api_router)
 
