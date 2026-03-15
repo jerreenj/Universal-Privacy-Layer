@@ -26,7 +26,7 @@ const EVM_CONTRACTS = {
 
 // ─── Chain registry ───────────────────────────────────────────────────────────
 const CHAINS = {
-  // EVM
+  // EVM - LIVE (7 chains deployed)
   base:         { vm: VM.EVM,    name: "Base",         chainId: "0x2105", chainIdDec: 8453,   rpcUrl: "https://mainnet.base.org",                  explorer: "https://basescan.org",                    symbol: "ETH",  color: "#0052FF", live: true,  contracts: EVM_CONTRACTS },
   arbitrum:     { vm: VM.EVM,    name: "Arbitrum",     chainId: "0xa4b1", chainIdDec: 42161,  rpcUrl: "https://arb1.arbitrum.io/rpc",              explorer: "https://arbiscan.io",                     symbol: "ETH",  color: "#28A0F0", live: true,  contracts: EVM_CONTRACTS },
   polygon:      { vm: VM.EVM,    name: "Polygon",      chainId: "0x89",   chainIdDec: 137,    rpcUrl: "https://rpc-mainnet.matic.quiknode.pro",    explorer: "https://polygonscan.com",                 symbol: "POL",  color: "#8247E5", live: true,  contracts: EVM_CONTRACTS },
@@ -34,10 +34,10 @@ const CHAINS = {
   bnb:          { vm: VM.EVM,    name: "BNB Chain",    chainId: "0x38",   chainIdDec: 56,     rpcUrl: "https://bsc-dataseed1.binance.org/",        explorer: "https://bscscan.com",                     symbol: "BNB",  color: "#F3BA2F", live: true,  contracts: EVM_CONTRACTS },
   avalanche:    { vm: VM.EVM,    name: "Avalanche",    chainId: "0xa86a", chainIdDec: 43114,  rpcUrl: "https://api.avax.network/ext/bc/C/rpc",     explorer: "https://snowtrace.io",                    symbol: "AVAX", color: "#E84142", live: true,  contracts: EVM_CONTRACTS },
   hyperliquid:  { vm: VM.EVM,    name: "Hyperliquid",  chainId: "0x3e7",  chainIdDec: 999,    rpcUrl: "https://rpc.hyperliquid.xyz/evm",           explorer: "https://purrsec.com",                     symbol: "HYPE", color: "#00FF88", live: true,  contracts: EVM_CONTRACTS },
-  // Solana
-  solana:       { vm: VM.SOLANA, name: "Solana",       chainId: null,     chainIdDec: null,   rpcUrl: clusterApiUrl("mainnet-beta"),                explorer: "https://solscan.io",                      symbol: "SOL",  color: "#9945FF", live: true,  contracts: { programId: "UPLreLaYer1111111111111111111111111111111111" } },
-  // Sui
-  sui:          { vm: VM.SUI,    name: "Sui",          chainId: null,     chainIdDec: null,   rpcUrl: "https://fullnode.mainnet.sui.io:443",       explorer: "https://suiexplorer.com",                 symbol: "SUI",  color: "#6FBCF0", live: true,  contracts: { packageId: null } },
+  // Solana - COMING SOON (Anchor program written, needs deployment)
+  solana:       { vm: VM.SOLANA, name: "Solana",       chainId: null,     chainIdDec: null,   rpcUrl: clusterApiUrl("mainnet-beta"),                explorer: "https://solscan.io",                      symbol: "SOL",  color: "#9945FF", live: false, comingSoon: true, contracts: { programId: null } },
+  // Sui - COMING SOON (Move package written, needs deployment)
+  sui:          { vm: VM.SUI,    name: "Sui",          chainId: null,     chainIdDec: null,   rpcUrl: "https://fullnode.mainnet.sui.io:443",       explorer: "https://suiexplorer.com",                 symbol: "SUI",  color: "#6FBCF0", live: false, comingSoon: true, contracts: { packageId: null } },
 };
 
 const VM_GROUPS = {
