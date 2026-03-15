@@ -53,12 +53,35 @@ Universal Privacy Layer provides private transactions across 7 EVM chains with Z
   - `POST /api/v1/stealth/generate` - Generate stealth addresses
 - **Rate limiting:** 100 req/min default, customizable per key
 
-#### 4. React Native Mobile App (Scaffolding) ✅
+#### 4. React Native Mobile App ✅
 - Complete project structure in `/app/mobile/`
-- Navigation setup with React Navigation
-- Home, Receive, Send, Swap, Split screens
-- Wallet context for state management
-- Styled components matching web theme
+- Full wallet integration with hooks
+- All screens: Home, Receive, Send, Split, History, Setup
+- API service layer for backend communication
+- Async storage for privacy wallet persistence
+- Chain selector and balance display
+
+#### 5. SDKs (@upl/sdk, upl-sdk) ✅
+**JavaScript/TypeScript SDK** (`/app/sdk/js/`):
+- `npm install @upl/sdk`
+- Full TypeScript support
+- Privacy wallet creation/import
+- Stealth address generation
+- Cross-chain split preparation
+- ZKP verification
+- Transaction history
+
+**Python SDK** (`/app/sdk/python/`):
+- `pip install upl-sdk`
+- Dataclass models for type safety
+- Web3.py integration
+- All API endpoints covered
+
+#### 6. Code Refactoring ✅
+- Extracted config to `/app/frontend/src/config/chains.js`
+- Extracted WalletContext to `/app/frontend/src/context/WalletContext.jsx`
+- Fixed all bare `except` statements in backend (10 lint warnings resolved)
+- App.js now imports from modular files
 
 ## DEPLOYED CONTRACTS
 
