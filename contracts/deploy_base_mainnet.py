@@ -6,6 +6,7 @@ UPL Contract Deployment to Base Mainnet
 from web3 import Web3
 from eth_account import Account
 import json
+import os
 
 # Base Mainnet Configuration
 BASE_RPC = "https://mainnet.base.org"
