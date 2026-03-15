@@ -69,22 +69,25 @@ CHAIN_CONFIG = {
     }
 }
 
-# UPL Contract addresses (to be updated after deployment)
+# UPL Contract addresses - DEPLOYED ON BASE MAINNET
 UPL_CONTRACTS = {
-    "ethereum_sepolia": {
-        "privacy_relayer": None,
-        "stealth_registry": None,
-        "uniswap_wrapper": None
+    "base": {
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
+        "uniswap_wrapper": None,
+        "explorer": "https://basescan.org"
     },
-    "arbitrum_sepolia": {
+    "arbitrum": {
         "privacy_relayer": None,
         "stealth_registry": None,
-        "uniswap_wrapper": None
+        "uniswap_wrapper": None,
+        "explorer": "https://arbiscan.io"
     },
-    "base_sepolia": {
+    "ethereum": {
         "privacy_relayer": None,
         "stealth_registry": None,
-        "uniswap_wrapper": None
+        "uniswap_wrapper": None,
+        "explorer": "https://etherscan.io"
     }
 }
 
