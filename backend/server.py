@@ -2069,6 +2069,26 @@ async def get_api_documentation():
         }
     }
 
+# ─── Error Monitoring Endpoint ─────────────────────────────────────────────────
+
+@api_router.post("/errors/log")
+async def log_frontend_error(error: Dict[str, Any] = Body(...)):
+    """Log frontend errors for monitoring"""
+    try:
+        await db.error_logs.insert_one({
+            **error,
+            "logged_at": datetime.now(timezone.utc).isoformat()
+        })
+        return {"logged": True}
+    except Exception:
+        return {"logged": False}
+
+@api_router.get("/errors/recent")
+async def get_recent_errors(limit: int = 50):
+    """Get recent errors (admin only in production)"""
+    errors = await db.error_logs.find({}, {"_id": 0}).sort("logged_at", -1).limit(limit).to_list(limit)
+    return {"errors": errors, "count": len(errors)}
+
 # Include router
 app.include_router(api_router)
 
