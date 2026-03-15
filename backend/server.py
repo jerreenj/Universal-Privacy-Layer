@@ -142,7 +142,7 @@ TOKENS = {
 
 class StealthAddressRequest(BaseModel):
     public_address: str
-    chain: str = "ethereum_sepolia"
+    chain: str = "base"
 
 class StealthAddressResponse(BaseModel):
     stealth_address: str
@@ -300,7 +300,7 @@ async def get_deployer_info():
 
 # Swap Quote API
 class SwapQuoteRequest(BaseModel):
-    chain: str = "base_sepolia"
+    chain: str = "base"
     token_in: str  # "ETH" or token address
     token_out: str  # "ETH" or token address
     amount_in: str  # Amount in wei/smallest unit
@@ -337,8 +337,8 @@ async def get_swap_quote(request: SwapQuoteRequest):
             "fee_percent": "0.05%",
             "amount_after_fee": str(amount_after_fee),
             "estimated_output": str(estimated_output),
-            "uniswap_router": config["uniswap_router"],
-            "weth": config["weth"],
+            "uniswap_router": config.get("uniswap_router"),
+            "weth": config.get("weth"),
             "note": "Actual output may vary based on pool liquidity and slippage"
         }
     except HTTPException:
@@ -387,30 +387,16 @@ async def get_swap_tokens(chain: str):
     """Get available tokens for swapping on a chain"""
     if chain not in CHAIN_CONFIG:
         raise HTTPException(status_code=400, detail="Unsupported chain")
-    
+
     config = CHAIN_CONFIG[chain]
-    
+    native_symbol = config.get("symbol", "ETH")
+
     tokens = [
-        {
-            "symbol": "ETH",
-            "name": "Ethereum",
-            "address": "native",
-            "decimals": 18
-        },
-        {
-            "symbol": "WETH",
-            "name": "Wrapped Ethereum",
-            "address": config["weth"],
-            "decimals": 18
-        },
-        {
-            "symbol": "USDC",
-            "name": "USD Coin",
-            "address": config["usdc"],
-            "decimals": 6
-        }
+        {"symbol": native_symbol, "name": config["name"] + " native", "address": "native", "decimals": 18},
+        {"symbol": "WETH", "name": "Wrapped Ethereum", "address": config.get("weth", ""), "decimals": 18},
+        {"symbol": "USDC", "name": "USD Coin", "address": config.get("usdc", ""), "decimals": 6}
     ]
-    
+
     return {"chain": chain, "tokens": tokens}
 
 # Wallet Management
