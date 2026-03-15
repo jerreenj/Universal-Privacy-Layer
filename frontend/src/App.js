@@ -8,7 +8,7 @@ import {
   ExternalLink, Eye, EyeOff, ChevronDown, Zap, Fingerprint,
   Loader2, ArrowDown, Menu, ArrowLeft, Globe, Layers, Lock,
   History, Shield, Key, Image, FileCode, Clock, TrendingUp,
-  Plus, Minus, Settings, AlertTriangle
+  Plus, Minus, Settings, AlertTriangle, MessageSquare, Users, Split
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import RotatingEarth from "@/components/ui/RotatingEarth";
