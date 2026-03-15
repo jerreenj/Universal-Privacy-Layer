@@ -1195,7 +1195,7 @@ async def verify_proof_onchain(request: ZKPVerifyOnChainRequest):
         # Get verifier stats
         try:
             total, successful, rate = verifier.functions.getStats().call()
-        except:
+        except Exception:
             total, successful, rate = 0, 0, 0
         
         return {
@@ -1235,7 +1235,7 @@ async def get_verifier_info(chain: str):
                 abi=ZKP_VERIFIER_ABI
             )
             total, successful, rate = verifier.functions.getStats().call()
-        except:
+        except Exception:
             total, successful, rate = 0, 0, 0
         
         return {
@@ -1298,7 +1298,7 @@ async def prepare_relayer_transaction(request: RelayerTxRequest):
         relayer = w3.eth.contract(address=Web3.to_checksum_address(relayer_address), abi=PRIVACY_RELAYER_ABI)
         try:
             fee_bps = relayer.functions.feeBps().call()
-        except:
+        except Exception:
             fee_bps = 5  # Default 0.05%
         
         amount = int(request.amount_wei)
@@ -1325,7 +1325,7 @@ async def prepare_relayer_transaction(request: RelayerTxRequest):
                 'data': tx_data,
                 'from': Web3.to_checksum_address(request.from_address)
             })
-        except:
+        except Exception:
             gas_estimate = 100000
         
         gas_price = w3.eth.gas_price
@@ -1364,7 +1364,7 @@ async def get_relayer_stats(chain: str):
         try:
             total_relayed = relayer.functions.totalRelayed().call()
             fee_bps = relayer.functions.feeBps().call()
-        except:
+        except Exception:
             total_relayed = 0
             fee_bps = 5
         
