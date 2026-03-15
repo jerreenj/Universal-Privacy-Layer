@@ -6,7 +6,9 @@ import { Connection, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL, cl
 import {
   Wallet, ArrowUpRight, ArrowDownLeft, RefreshCw, Copy, Check,
   ExternalLink, Eye, EyeOff, ChevronDown, Zap, Fingerprint,
-  Loader2, ArrowDown, Menu, ArrowLeft, Globe, Layers, Lock
+  Loader2, ArrowDown, Menu, ArrowLeft, Globe, Layers, Lock,
+  History, Shield, Key, Image, FileCode, Clock, TrendingUp,
+  Plus, Minus, Settings, AlertTriangle
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import RotatingEarth from "@/components/ui/RotatingEarth";
@@ -26,7 +28,6 @@ const EVM_CONTRACTS = {
 
 // ─── Chain registry ───────────────────────────────────────────────────────────
 const CHAINS = {
-  // EVM - LIVE (7 chains deployed)
   base:         { vm: VM.EVM,    name: "Base",         chainId: "0x2105", chainIdDec: 8453,   rpcUrl: "https://mainnet.base.org",                  explorer: "https://basescan.org",                    symbol: "ETH",  color: "#0052FF", live: true,  contracts: EVM_CONTRACTS },
   arbitrum:     { vm: VM.EVM,    name: "Arbitrum",     chainId: "0xa4b1", chainIdDec: 42161,  rpcUrl: "https://arb1.arbitrum.io/rpc",              explorer: "https://arbiscan.io",                     symbol: "ETH",  color: "#28A0F0", live: true,  contracts: EVM_CONTRACTS },
   polygon:      { vm: VM.EVM,    name: "Polygon",      chainId: "0x89",   chainIdDec: 137,    rpcUrl: "https://rpc-mainnet.matic.quiknode.pro",    explorer: "https://polygonscan.com",                 symbol: "POL",  color: "#8247E5", live: true,  contracts: EVM_CONTRACTS },
@@ -34,9 +35,7 @@ const CHAINS = {
   bnb:          { vm: VM.EVM,    name: "BNB Chain",    chainId: "0x38",   chainIdDec: 56,     rpcUrl: "https://bsc-dataseed1.binance.org/",        explorer: "https://bscscan.com",                     symbol: "BNB",  color: "#F3BA2F", live: true,  contracts: EVM_CONTRACTS },
   avalanche:    { vm: VM.EVM,    name: "Avalanche",    chainId: "0xa86a", chainIdDec: 43114,  rpcUrl: "https://api.avax.network/ext/bc/C/rpc",     explorer: "https://snowtrace.io",                    symbol: "AVAX", color: "#E84142", live: true,  contracts: EVM_CONTRACTS },
   hyperliquid:  { vm: VM.EVM,    name: "Hyperliquid",  chainId: "0x3e7",  chainIdDec: 999,    rpcUrl: "https://rpc.hyperliquid.xyz/evm",           explorer: "https://purrsec.com",                     symbol: "HYPE", color: "#00FF88", live: true,  contracts: EVM_CONTRACTS },
-  // Solana - COMING SOON (Anchor program written, needs deployment)
   solana:       { vm: VM.SOLANA, name: "Solana",       chainId: null,     chainIdDec: null,   rpcUrl: clusterApiUrl("mainnet-beta"),                explorer: "https://solscan.io",                      symbol: "SOL",  color: "#9945FF", live: false, comingSoon: true, contracts: { programId: null } },
-  // Sui - COMING SOON (Move package written, needs deployment)
   sui:          { vm: VM.SUI,    name: "Sui",          chainId: null,     chainIdDec: null,   rpcUrl: "https://fullnode.mainnet.sui.io:443",       explorer: "https://suiexplorer.com",                 symbol: "SUI",  color: "#6FBCF0", live: false, comingSoon: true, contracts: { packageId: null } },
 };
 
@@ -47,11 +46,11 @@ const VM_GROUPS = {
 };
 
 const TOKENS = {
-  base:        [{ symbol: "ETH",  decimals: 18, address: "native" }, { symbol: "USDC", decimals: 6,  address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }, { symbol: "DAI",  decimals: 18, address: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb" }],
-  arbitrum:    [{ symbol: "ETH",  decimals: 18, address: "native" }, { symbol: "USDC", decimals: 6,  address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" }, { symbol: "ARB",  decimals: 18, address: "0x912CE59144191C1204E64559FE8253a0e49E6548" }],
-  polygon:     [{ symbol: "POL",  decimals: 18, address: "native" }, { symbol: "USDC", decimals: 6,  address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" }, { symbol: "USDT", decimals: 6,  address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F" }],
-  optimism:    [{ symbol: "ETH",  decimals: 18, address: "native" }, { symbol: "USDC", decimals: 6,  address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" }, { symbol: "OP",   decimals: 18, address: "0x4200000000000000000000000000000000000042" }],
-  bnb:         [{ symbol: "BNB",  decimals: 18, address: "native" }, { symbol: "USDC", decimals: 18, address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" }, { symbol: "USDT", decimals: 18, address: "0x55d398326f99059fF775485246999027B3197955" }],
+  base:        [{ symbol: "ETH",  decimals: 18, address: "native" }, { symbol: "USDC", decimals: 6,  address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }],
+  arbitrum:    [{ symbol: "ETH",  decimals: 18, address: "native" }, { symbol: "USDC", decimals: 6,  address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" }],
+  polygon:     [{ symbol: "POL",  decimals: 18, address: "native" }, { symbol: "USDC", decimals: 6,  address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" }],
+  optimism:    [{ symbol: "ETH",  decimals: 18, address: "native" }, { symbol: "USDC", decimals: 6,  address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" }],
+  bnb:         [{ symbol: "BNB",  decimals: 18, address: "native" }, { symbol: "USDC", decimals: 18, address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" }],
   avalanche:   [{ symbol: "AVAX", decimals: 18, address: "native" }, { symbol: "USDC", decimals: 6,  address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E" }],
   hyperliquid: [{ symbol: "HYPE", decimals: 18, address: "native" }],
   solana:      [{ symbol: "SOL",  decimals: 9,  address: "native" }],
@@ -59,23 +58,23 @@ const TOKENS = {
 };
 
 const LIVE_COUNT = Object.values(CHAINS).filter(c => c.live).length;
-const COMING_SOON_COUNT = Object.values(CHAINS).filter(c => c.comingSoon).length;
 
 // ─── Wallet Context ───────────────────────────────────────────────────────────
 const WalletContext = createContext();
 export const useWallet = () => useContext(WalletContext);
 
 function WalletProvider({ children }) {
-  const [chain, setChain]       = useState("base");
-  const [address, setAddress]   = useState(null);
-  const [balance, setBalance]   = useState(null);
-  const [signer, setSigner]     = useState(null);
-  const [solConn, setSolConn]   = useState(null);
+  const [chain, setChain] = useState("base");
+  const [address, setAddress] = useState(null);
+  const [balance, setBalance] = useState(null);
+  const [hiddenBalance, setHiddenBalance] = useState(null);
+  const [signer, setSigner] = useState(null);
+  const [solConn, setSolConn] = useState(null);
   const [connecting, setConnecting] = useState(false);
+  const [privacyWallet, setPrivacyWallet] = useState(null);
 
   const vm = CHAINS[chain].vm;
 
-  // ── EVM connect ────────────────────────────────────────────────────────────
   const connectEVM = useCallback(async () => {
     if (!window.ethereum) return toast.error("MetaMask not found — install it first");
     setConnecting(true);
@@ -89,27 +88,23 @@ function WalletProvider({ children }) {
     setConnecting(false);
   }, []);
 
-  // ── Solana connect (Phantom) ────────────────────────────────────────────────
   const connectSolana = useCallback(async () => {
     const phantom = window.phantom?.solana ?? window.solana;
-    if (!phantom?.isPhantom) return toast.error("Phantom wallet not found — install it first");
+    if (!phantom?.isPhantom) return toast.error("Phantom wallet not found");
     setConnecting(true);
     try {
       const resp = await phantom.connect();
-      const pubkey = resp.publicKey.toBase58();
-      setAddress(pubkey);
+      setAddress(resp.publicKey.toBase58());
       setSigner(phantom);
-      const conn = new Connection(CHAINS.solana.rpcUrl, "confirmed");
-      setSolConn(conn);
+      setSolConn(new Connection(CHAINS.solana.rpcUrl, "confirmed"));
       toast.success("Phantom connected");
     } catch { toast.error("Phantom connection failed"); }
     setConnecting(false);
   }, []);
 
-  // ── Sui connect ─────────────────────────────────────────────────────────────
   const connectSui = useCallback(async () => {
     const suiWallet = window.suiWallet ?? window.sui;
-    if (!suiWallet) return toast.error("Sui Wallet not found — install it from Chrome store");
+    if (!suiWallet) return toast.error("Sui Wallet not found");
     setConnecting(true);
     try {
       await suiWallet.requestPermissions();
@@ -123,27 +118,28 @@ function WalletProvider({ children }) {
   }, []);
 
   const connectWallet = useCallback(() => {
-    if (vm === VM.EVM)    return connectEVM();
+    if (vm === VM.EVM) return connectEVM();
     if (vm === VM.SOLANA) return connectSolana();
-    if (vm === VM.SUI)    return connectSui();
+    if (vm === VM.SUI) return connectSui();
   }, [vm, connectEVM, connectSolana, connectSui]);
 
-  const disconnect = () => { setAddress(null); setSigner(null); setBalance(null); };
+  const disconnect = () => {
+    setAddress(null);
+    setSigner(null);
+    setBalance(null);
+    setHiddenBalance(null);
+    setPrivacyWallet(null);
+  };
 
-  // ── Switch chain ─────────────────────────────────────────────────────────────
   const switchChain = useCallback(async (k) => {
     const next = CHAINS[k];
     setChain(k);
     setBalance(null);
-
-    // If switching to different VM, clear current address
     if (next.vm !== vm) {
       setAddress(null);
       setSigner(null);
       return;
     }
-
-    // EVM → ask MetaMask to switch
     if (next.vm === VM.EVM && window.ethereum && address) {
       try {
         await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: next.chainId }] });
@@ -158,7 +154,6 @@ function WalletProvider({ children }) {
     }
   }, [vm, address]);
 
-  // ── Fetch balance ─────────────────────────────────────────────────────────────
   const fetchBalance = useCallback(async () => {
     if (!address) return;
     try {
@@ -182,7 +177,17 @@ function WalletProvider({ children }) {
     } catch {}
   }, [address, chain, vm, solConn]);
 
-  useEffect(() => { if (address) fetchBalance(); }, [address, chain, fetchBalance]);
+  const fetchHiddenBalance = useCallback(async () => {
+    if (!address) return;
+    try {
+      const res = await axios.get(`${API}/balance/hidden/${address}`);
+      setHiddenBalance(res.data);
+    } catch (e) {
+      console.error("Hidden balance fetch error:", e);
+    }
+  }, [address]);
+
+  useEffect(() => { if (address) { fetchBalance(); fetchHiddenBalance(); } }, [address, chain, fetchBalance, fetchHiddenBalance]);
   useEffect(() => {
     if (window.ethereum) {
       window.ethereum.on("accountsChanged", (a) => a.length > 0 ? setAddress(a[0]) : disconnect());
@@ -190,13 +195,13 @@ function WalletProvider({ children }) {
   }, []);
 
   return (
-    <WalletContext.Provider value={{ chain, address, balance, signer, solConn, vm, connecting, connectWallet, disconnect, switchChain, fetchBalance }}>
+    <WalletContext.Provider value={{ chain, address, balance, hiddenBalance, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, connectWallet, disconnect, switchChain, fetchBalance, fetchHiddenBalance }}>
       {children}
     </WalletContext.Provider>
   );
 }
 
-// ─── Back Button ─────────────────────────────────────────────────────────────
+// ─── Utility Components ───────────────────────────────────────────────────────
 function BackButton({ onClick }) {
   return (
     <button onClick={onClick} data-testid="back-button"
@@ -207,15 +212,23 @@ function BackButton({ onClick }) {
   );
 }
 
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+      {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-gray-500 hover:text-white" />}
+    </button>
+  );
+}
+
 // ─── Navbar ───────────────────────────────────────────────────────────────────
 function Navbar() {
   const { address, chain, switchChain, disconnect, vm } = useWallet();
   const [showChains, setShowChains] = useState(false);
-  const [mobileMenu, setMobileMenu] = useState(false);
 
   const vmGroups = Object.entries(VM_GROUPS).map(([vmKey, info]) => ({
     vmKey, ...info,
-    chains: Object.entries(CHAINS).filter(([, v]) => v.vm === vmKey && v.live),
+    chains: Object.entries(CHAINS).filter(([, v]) => v.vm === vmKey),
   }));
 
   return (
@@ -226,13 +239,9 @@ function Navbar() {
             <div className="w-3 h-3 md:w-4 md:h-4 bg-black rounded-full" />
           </div>
           <span className="font-heading text-lg md:text-xl font-bold tracking-tight">UPL</span>
-          <span className="hidden md:inline text-xs text-white/30 border border-white/10 px-2 py-0.5">
-            {VM_GROUPS[vm]?.label}
-          </span>
         </div>
 
-        {/* Desktop */}
-        <div className="hidden md:flex items-center gap-3">
+        <div className="flex items-center gap-3">
           <div className="relative">
             <button data-testid="chain-selector" onClick={() => setShowChains(!showChains)}
               className="flex items-center gap-2 px-3 py-2 border border-white/20 hover:border-white/40 transition-all text-sm">
@@ -245,15 +254,15 @@ function Navbar() {
               <div className="absolute top-full mt-2 right-0 bg-black border border-white/20 min-w-[200px] z-50">
                 {vmGroups.map(({ vmKey, label, chains }) => (
                   <div key={vmKey}>
-                    <div className="px-3 py-1.5 text-[10px] text-white/30 uppercase tracking-widest border-b border-white/5 bg-white/3">
-                      {label}
-                    </div>
+                    <div className="px-3 py-1.5 text-[10px] text-white/30 uppercase tracking-widest border-b border-white/5 bg-white/3">{label}</div>
                     {chains.map(([k, v]) => (
                       <button key={k} onClick={() => { switchChain(k); setShowChains(false); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/10 text-left text-sm">
+                        className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-white/10 text-left text-sm ${!v.live ? 'opacity-50' : ''}`}
+                        disabled={!v.live}>
                         <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
                         {v.name}
-                        {chain === k && <div className="w-2 h-2 rounded-full bg-green-400 ml-auto" />}
+                        {!v.live && <span className="text-[10px] text-yellow-400 ml-auto">Soon</span>}
+                        {chain === k && v.live && <div className="w-2 h-2 rounded-full bg-green-400 ml-auto" />}
                       </button>
                     ))}
                   </div>
@@ -263,51 +272,298 @@ function Navbar() {
           </div>
 
           {address && (
-            <button onClick={disconnect}
-              className="px-3 py-2 border border-white/20 hover:bg-white hover:text-black transition-all text-sm font-mono">
-              {address.length > 20 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address.slice(0, 10) + "..."}
+            <button onClick={disconnect} className="px-3 py-2 border border-white/20 hover:bg-white hover:text-black transition-all text-sm font-mono">
+              {address.slice(0, 6)}...{address.slice(-4)}
             </button>
           )}
         </div>
-
-        <button className="md:hidden p-2" onClick={() => setMobileMenu(!mobileMenu)}>
-          <Menu className="w-5 h-5" />
-        </button>
       </div>
-
-      {mobileMenu && (
-        <div className="md:hidden border-t border-white/10 bg-black p-4 space-y-3">
-          {vmGroups.map(({ vmKey, label, chains }) => (
-            <div key={vmKey}>
-              <div className="text-xs text-white/30 uppercase tracking-widest mb-1">{label}</div>
-              {chains.map(([k, v]) => (
-                <button key={k} onClick={() => { switchChain(k); setMobileMenu(false); }}
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${chain === k ? "bg-white/10" : ""}`}>
-                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
-                  {v.name}
-                  {chain === k && <div className="w-2 h-2 rounded-full bg-green-400 ml-auto" />}
-                </button>
-              ))}
-            </div>
-          ))}
-          {address && (
-            <button onClick={() => { disconnect(); setMobileMenu(false); }}
-              className="w-full py-2 border border-white/20 text-sm font-mono">
-              Disconnect {address.slice(0, 8)}...
-            </button>
-          )}
-        </div>
-      )}
     </nav>
   );
 }
 
-// ─── Receive (Stealth) ────────────────────────────────────────────────────────
+// ─── Hidden Balance Dashboard ─────────────────────────────────────────────────
+function HiddenBalanceDashboard() {
+  const { address, hiddenBalance, fetchHiddenBalance } = useWallet();
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(null);
+
+  const refresh = async () => {
+    setLoading(true);
+    await fetchHiddenBalance();
+    setLoading(false);
+  };
+
+  if (!hiddenBalance) return (
+    <div className="text-center py-8">
+      <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-white/50" />
+      <p className="text-white/50">Loading hidden balances...</p>
+    </div>
+  );
+
+  const chainsWithBalance = Object.entries(hiddenBalance.chains || {}).filter(
+    ([, data]) => data.total_balance && parseFloat(data.total_balance) > 0
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold">Hidden Balance</h2>
+          <p className="text-sm text-white/50">Aggregated across {hiddenBalance.stealth_address_count || 0} stealth addresses</p>
+        </div>
+        <button onClick={refresh} className="p-2 hover:bg-white/10 rounded" disabled={loading}>
+          <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {Object.entries(hiddenBalance.chains || {}).slice(0, 4).map(([chainKey, data]) => (
+          <div key={chainKey} className="bg-white/5 border border-white/10 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: CHAINS[chainKey]?.color || '#666' }} />
+              <span className="text-xs text-white/50">{data.name}</span>
+            </div>
+            <div className="text-lg font-bold">{parseFloat(data.total_balance || 0).toFixed(4)}</div>
+            <div className="text-xs text-white/30">{data.symbol}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Detailed Breakdown */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-white/70 uppercase tracking-wider">All Chains</h3>
+        {Object.entries(hiddenBalance.chains || {}).map(([chainKey, data]) => (
+          <div key={chainKey} className="bg-white/5 border border-white/10">
+            <button
+              onClick={() => setExpanded(expanded === chainKey ? null : chainKey)}
+              className="w-full flex items-center justify-between p-4 hover:bg-white/5"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: CHAINS[chainKey]?.color || '#666' }} />
+                <span className="font-medium">{data.name}</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <div className="font-mono">{parseFloat(data.total_balance || 0).toFixed(6)} {data.symbol}</div>
+                  <div className="text-xs text-white/30">
+                    Main: {parseFloat(data.main_balance || 0).toFixed(4)} | Stealth: {parseFloat(data.stealth_balance || 0).toFixed(4)}
+                  </div>
+                </div>
+                <ChevronDown className={`w-4 h-4 transition-transform ${expanded === chainKey ? 'rotate-180' : ''}`} />
+              </div>
+            </button>
+            
+            {expanded === chainKey && data.stealth_addresses_with_balance?.length > 0 && (
+              <div className="border-t border-white/10 p-4 space-y-2">
+                <div className="text-xs text-white/50 uppercase tracking-wider mb-2">Stealth Addresses with Balance</div>
+                {data.stealth_addresses_with_balance.map((sa, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm bg-white/5 p-2">
+                    <span className="font-mono text-xs">{sa.address.slice(0, 10)}...{sa.address.slice(-8)}</span>
+                    <span className="font-mono">{parseFloat(sa.balance).toFixed(6)} {data.symbol}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Transaction History ──────────────────────────────────────────────────────
+function TransactionHistory() {
+  const { address } = useWallet();
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (address) {
+      axios.get(`${API}/transactions/history/${address}`)
+        .then(res => setTransactions(res.data.transactions || []))
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }
+  }, [address]);
+
+  if (loading) return (
+    <div className="text-center py-8">
+      <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-white/50" />
+      <p className="text-white/50">Loading transactions...</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-xl font-bold">Transaction History</h2>
+      
+      {transactions.length === 0 ? (
+        <div className="text-center py-12 bg-white/5 border border-white/10">
+          <History className="w-12 h-12 mx-auto mb-4 text-white/20" />
+          <p className="text-white/50">No transactions yet</p>
+          <p className="text-sm text-white/30">Your private transactions will appear here</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {transactions.map((tx, i) => (
+            <div key={i} className="bg-white/5 border border-white/10 p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${tx.direction === 'out' ? 'bg-red-500/20' : 'bg-green-500/20'}`}>
+                  {tx.direction === 'out' ? <ArrowUpRight className="w-4 h-4 text-red-400" /> : <ArrowDownLeft className="w-4 h-4 text-green-400" />}
+                </div>
+                <div>
+                  <div className="font-medium text-sm">{tx.tx_type?.replace('_', ' ').toUpperCase() || 'Transfer'}</div>
+                  <div className="text-xs text-white/50">{new Date(tx.created_at).toLocaleDateString()}</div>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="font-mono text-sm">
+                  {tx.direction === 'out' ? '-' : '+'}{ethers.formatEther(tx.amount_wei || '0').slice(0, 8)}
+                </div>
+                <div className="text-xs text-white/30">{tx.chain}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Dual Seed Wallet Setup ───────────────────────────────────────────────────
+function DualSeedSetup() {
+  const { address, privacyWallet, setPrivacyWallet } = useWallet();
+  const [step, setStep] = useState(1);
+  const [mainSeed, setMainSeed] = useState('');
+  const [privacySeed, setPrivacySeed] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [created, setCreated] = useState(null);
+
+  const generateWallet = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API}/wallet/create`, { password: 'temp_' + Date.now() });
+      setCreated(res.data);
+      setMainSeed(res.data.main_seed_phrase);
+      setPrivacySeed(res.data.privacy_seed_phrase);
+      setStep(2);
+      toast.success("Dual wallet created!");
+    } catch (e) {
+      toast.error("Failed to create wallet");
+    }
+    setLoading(false);
+  };
+
+  const registerPrivacyKeys = async () => {
+    if (!address) return toast.error("Connect main wallet first");
+    setLoading(true);
+    try {
+      // Generate privacy keys from the privacy seed
+      const spendKey = ethers.keccak256(ethers.toUtf8Bytes(privacySeed + "_spend"));
+      const viewKey = ethers.keccak256(ethers.toUtf8Bytes(privacySeed + "_view"));
+      
+      await axios.post(`${API}/wallet/register-privacy`, {
+        main_address: address,
+        privacy_spend_key: spendKey,
+        privacy_view_key: viewKey
+      });
+      
+      setPrivacyWallet({ spendKey, viewKey, registered: true });
+      setStep(3);
+      toast.success("Privacy keys registered!");
+    } catch (e) {
+      toast.error("Failed to register privacy keys");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4 mb-6">
+        {[1, 2, 3].map(s => (
+          <div key={s} className={`flex items-center gap-2 ${step >= s ? 'text-white' : 'text-white/30'}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= s ? 'bg-white text-black' : 'bg-white/10'}`}>
+              {step > s ? <Check className="w-4 h-4" /> : s}
+            </div>
+            <span className="text-sm hidden md:inline">{s === 1 ? 'Generate' : s === 2 ? 'Backup' : 'Complete'}</span>
+          </div>
+        ))}
+      </div>
+
+      {step === 1 && (
+        <div className="space-y-4">
+          <div className="bg-yellow-500/10 border border-yellow-500/30 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-yellow-400">Dual Seed Phrase System</p>
+                <p className="text-xs text-white/60 mt-1">
+                  UPL uses two separate seed phrases: one for your main wallet (funds) and one for your privacy envelope.
+                  This provides maximum security and privacy.
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <button onClick={generateWallet} disabled={loading}
+            className="w-full py-4 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Key className="w-5 h-5" />}
+            Generate Dual Wallet
+          </button>
+        </div>
+      )}
+
+      {step === 2 && created && (
+        <div className="space-y-4">
+          <div className="bg-white/5 border border-white/10 p-4">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs text-white/50 uppercase tracking-wider">Main Seed Phrase (Funds)</span>
+              <CopyButton text={mainSeed} />
+            </div>
+            <p className="font-mono text-sm bg-black/50 p-3 break-all">{mainSeed}</p>
+            <p className="text-xs text-white/30 mt-2">Main Address: {created.main_address}</p>
+          </div>
+          
+          <div className="bg-white/5 border border-green-500/30 p-4">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs text-green-400 uppercase tracking-wider">Privacy Seed Phrase (Privacy Envelope)</span>
+              <CopyButton text={privacySeed} />
+            </div>
+            <p className="font-mono text-sm bg-black/50 p-3 break-all">{privacySeed}</p>
+            <p className="text-xs text-white/30 mt-2">Privacy Address: {created.privacy_address}</p>
+          </div>
+
+          <div className="bg-red-500/10 border border-red-500/30 p-4">
+            <p className="text-sm text-red-400">Write down BOTH seed phrases and store them securely. Never share them!</p>
+          </div>
+
+          <button onClick={registerPrivacyKeys} disabled={loading || !address}
+            className="w-full py-4 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50">
+            {!address ? 'Connect Main Wallet First' : loading ? 'Registering...' : 'Register Privacy Keys'}
+          </button>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="text-center py-8">
+          <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Check className="w-8 h-8 text-green-400" />
+          </div>
+          <h3 className="text-xl font-bold mb-2">Dual Wallet Setup Complete!</h3>
+          <p className="text-white/50">Your privacy envelope is now active. All transactions will be privacy-wrapped.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Private Receive (Stealth) ────────────────────────────────────────────────
 function StealthContent() {
   const { address, chain, vm } = useWallet();
   const [stealth, setStealth] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const generate = async () => {
     if (!address) return toast.error("Connect wallet first");
@@ -320,24 +576,17 @@ function StealthContent() {
     setLoading(false);
   };
 
-  const vmNote = {
-    [VM.EVM]:    "On-chain privacy contracts live — stealth addresses fully supported",
-    [VM.SOLANA]: "Stealth address computed off-chain, signed by Phantom",
-    [VM.SUI]:    "Stealth address computed off-chain, signed by Sui Wallet",
-  };
-
   return (
     <div className="space-y-6">
       <p className="text-gray-400 text-sm">Generate a one-time stealth address. Share it with senders — funds arrive untraceable.</p>
-      <div className="bg-white/5 border border-white/10 p-4 space-y-2">
+      <div className="bg-white/5 border border-white/10 p-4">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-          <span className="text-xs text-white/50">{vmNote[vm]}</span>
+          <span className="text-xs text-white/50">Chain: {CHAINS[chain]?.name}</span>
         </div>
-        <div className="text-xs text-white/30">Chain: {CHAINS[chain]?.name} ({VM_GROUPS[vm]?.label})</div>
       </div>
       <button data-testid="generate-stealth-btn" onClick={generate} disabled={loading}
-        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
         {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Fingerprint className="w-5 h-5" />}
         Generate Stealth Address
       </button>
@@ -345,9 +594,7 @@ function StealthContent() {
         <div className="bg-white/5 border border-white/20 p-4 space-y-3">
           <div className="flex justify-between items-center">
             <span className="text-xs text-gray-500 uppercase tracking-wider">Your Stealth Address</span>
-            <button onClick={() => { navigator.clipboard.writeText(stealth.stealth_address); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
-              {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-gray-500 hover:text-white" />}
-            </button>
+            <CopyButton text={stealth.stealth_address} />
           </div>
           <p className="font-mono text-xs md:text-sm break-all text-white">{stealth.stealth_address}</p>
           <div className="flex items-center gap-2 text-xs text-green-400">
@@ -360,117 +607,77 @@ function StealthContent() {
   );
 }
 
-// ─── Send ─────────────────────────────────────────────────────────────────────
+// ─── Private Send ─────────────────────────────────────────────────────────────
 function SendContent() {
-  const { address, chain, signer, solConn, vm, fetchBalance } = useWallet();
+  const { address, chain, signer, fetchBalance } = useWallet();
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [sending, setSending] = useState(false);
   const [txHash, setTxHash] = useState(null);
 
-  const sendEVM = async () => {
-    if (!ethers.isAddress(to)) return toast.error("Invalid EVM address");
-    const tx = await signer.sendTransaction({ to, value: ethers.parseEther(amount) });
-    setTxHash(tx.hash);
-    toast.success("Transaction sent!");
-    await tx.wait();
-    toast.success("Confirmed on-chain");
-    fetchBalance();
-  };
-
-  const sendSolana = async () => {
-    const phantom = signer;
-    if (!phantom) return toast.error("Connect Phantom first");
-    let toPubkey;
-    try { toPubkey = new PublicKey(to); } catch { return toast.error("Invalid Solana address"); }
-    const conn = solConn || new Connection(CHAINS.solana.rpcUrl, "confirmed");
-    const { blockhash } = await conn.getLatestBlockhash();
-    const tx = new Transaction({ recentBlockhash: blockhash, feePayer: new PublicKey(address) });
-    tx.add(SystemProgram.transfer({
-      fromPubkey: new PublicKey(address),
-      toPubkey,
-      lamports: Math.floor(parseFloat(amount) * LAMPORTS_PER_SOL),
-    }));
-    const signed = await phantom.signTransaction(tx);
-    const txid = await conn.sendRawTransaction(signed.serialize());
-    setTxHash(txid);
-    toast.success("Sent on Solana!");
-    await conn.confirmTransaction(txid);
-    toast.success("Confirmed!");
-    fetchBalance();
-  };
-
-  const sendSui = async () => {
-    if (!signer) return toast.error("Connect Sui Wallet first");
-    const mist = Math.floor(parseFloat(amount) * 1e9);
-    const txBlock = {
-      kind: "moveCall",
-      data: {
-        packageObjectId: "0x2",
-        module: "pay",
-        function: "transfer",
-        typeArguments: ["0x2::sui::SUI"],
-        arguments: [mist.toString(), to],
-        gasBudget: 10000000,
-      }
-    };
-    try {
-      const result = await signer.signAndExecuteTransaction({ transaction: txBlock });
-      setTxHash(result.digest);
-      toast.success("Sent on Sui!");
-      fetchBalance();
-    } catch (e) { throw new Error(e.message); }
-  };
-
   const send = async () => {
     if (!address) return toast.error("Connect wallet first");
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
+    if (!ethers.isAddress(to)) return toast.error("Invalid address");
     setSending(true);
     try {
-      if (vm === VM.EVM)    await sendEVM();
-      if (vm === VM.SOLANA) await sendSolana();
-      if (vm === VM.SUI)    await sendSui();
+      const tx = await signer.sendTransaction({ to, value: ethers.parseEther(amount) });
+      setTxHash(tx.hash);
+      
+      // Record transaction
+      await axios.post(`${API}/transactions/record`, {
+        tx_hash: tx.hash,
+        from_address: address,
+        to_address: to,
+        amount_wei: ethers.parseEther(amount).toString(),
+        chain,
+        tx_type: "private_send",
+        status: "pending"
+      });
+      
+      toast.success("Transaction sent!");
+      await tx.wait();
+      toast.success("Confirmed on-chain");
+      fetchBalance();
       setTo(""); setAmount("");
     } catch (e) { toast.error(e.message?.slice(0, 80) || "Failed"); }
     setSending(false);
   };
 
-  const placeholder = vm === VM.SOLANA ? "Solana address (Base58)..." : vm === VM.SUI ? "0x Sui address..." : "0x EVM address...";
-
   return (
-    <div className="space-y-4 md:space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center gap-2 text-xs text-white/40 bg-white/5 border border-white/10 px-3 py-2">
         <Lock className="w-3 h-3" />
-        Signing with <span className="text-white/60">{VM_GROUPS[vm]?.walletName}</span> on {CHAINS[chain]?.name}
+        Signing with MetaMask on {CHAINS[chain]?.name}
       </div>
       <div>
         <label className="block text-xs text-gray-500 uppercase mb-2">Recipient (stealth address)</label>
-        <input data-testid="send-to-input" value={to} onChange={(e) => setTo(e.target.value)} placeholder={placeholder}
-          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white transition-colors" />
+        <input data-testid="send-to-input" value={to} onChange={(e) => setTo(e.target.value)} placeholder="0x..."
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
       </div>
       <div>
         <label className="block text-xs text-gray-500 uppercase mb-2">Amount ({CHAINS[chain]?.symbol})</label>
         <input data-testid="send-amount-input" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0"
-          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white transition-colors" />
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
       </div>
       <button data-testid="send-btn" onClick={send} disabled={sending}
-        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
         {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
         Send Privately
       </button>
       {txHash && (
         <a href={`${CHAINS[chain].explorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
           className="flex items-center justify-center gap-2 text-sm text-gray-400 hover:text-white">
-          View on {CHAINS[chain].name} explorer <ExternalLink className="w-4 h-4" />
+          View on explorer <ExternalLink className="w-4 h-4" />
         </a>
       )}
     </div>
   );
 }
 
-// ─── Swap ─────────────────────────────────────────────────────────────────────
+// ─── Private Swap ─────────────────────────────────────────────────────────────
 function SwapContent() {
-  const { address, chain, signer, vm, fetchBalance } = useWallet();
+  const { address, chain, signer, fetchBalance } = useWallet();
   const [tokenIn, setTokenIn] = useState(TOKENS[chain]?.[0]?.symbol || "ETH");
   const [amountIn, setAmountIn] = useState("");
   const [recipient, setRecipient] = useState("");
@@ -481,13 +688,24 @@ function SwapContent() {
 
   const swap = async () => {
     if (!address) return toast.error("Connect wallet first");
-    if (!recipient) return toast.error("Enter a stealth address");
-    if (!amountIn || parseFloat(amountIn) <= 0) return toast.error("Enter an amount");
-    if (vm !== VM.EVM) return toast.info(`Native swaps on ${CHAINS[chain].name} — sending ${CHAINS[chain].symbol} to stealth address`);
+    if (!recipient) return toast.error("Enter stealth address");
+    if (!amountIn || parseFloat(amountIn) <= 0) return toast.error("Enter amount");
     setSwapping(true);
     try {
       const tx = await signer.sendTransaction({ to: recipient, value: ethers.parseEther(amountIn) });
       setTxHash(tx.hash);
+      
+      await axios.post(`${API}/swap/record`, {
+        tx_hash: tx.hash,
+        from_address: address,
+        token_in: tokenIn,
+        token_out: CHAINS[chain].symbol,
+        amount_in: ethers.parseEther(amountIn).toString(),
+        amount_out: ethers.parseEther(amountIn).toString(),
+        chain,
+        recipient_stealth: recipient
+      });
+      
       toast.success("Private swap initiated");
       await tx.wait();
       toast.success("Confirmed!");
@@ -499,10 +717,6 @@ function SwapContent() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-xs text-white/40 bg-white/5 border border-white/10 px-3 py-2">
-        <Lock className="w-3 h-3" />
-        {vm === VM.EVM ? `Contracts live on ${CHAINS[chain]?.name}` : `${CHAINS[chain]?.name} — native ${CHAINS[chain]?.symbol} swap`}
-      </div>
       <div className="bg-white/5 border border-white/20 p-4">
         <div className="flex justify-between mb-2">
           <span className="text-xs text-gray-500 uppercase">You Pay</span>
@@ -519,9 +733,7 @@ function SwapContent() {
         </div>
       </div>
       <div className="bg-white/5 border border-white/20 p-4">
-        <div className="flex justify-between mb-2">
-          <span className="text-xs text-gray-500 uppercase">Stealth Address Receives</span>
-        </div>
+        <span className="text-xs text-gray-500 uppercase">Stealth Address Receives</span>
         <div className="text-2xl font-mono text-white/50">~{amountIn || "0.0"} {CHAINS[chain]?.symbol}</div>
       </div>
       <div className="flex justify-between text-xs text-gray-500">
@@ -530,11 +742,11 @@ function SwapContent() {
       </div>
       <div>
         <label className="block text-xs text-gray-500 uppercase mb-2">Recipient Stealth Address</label>
-        <input data-testid="swap-recipient-input" value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="Stealth address..."
+        <input data-testid="swap-recipient-input" value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x..."
           className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
       </div>
       <button data-testid="swap-btn" onClick={swap} disabled={swapping || !address}
-        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
         {swapping ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCw className="w-5 h-5" />}
         Private Swap
       </button>
@@ -548,18 +760,209 @@ function SwapContent() {
   );
 }
 
+// ─── NFT Privacy ──────────────────────────────────────────────────────────────
+function NFTPrivacy() {
+  const { address, chain } = useWallet();
+  const [nftContract, setNftContract] = useState("");
+  const [tokenId, setTokenId] = useState("");
+  const [action, setAction] = useState("buy");
+  const [loading, setLoading] = useState(false);
+  const [proxy, setProxy] = useState(null);
+
+  const createProxy = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!nftContract || !tokenId) return toast.error("Enter NFT details");
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API}/nft/proxy`, {
+        user_address: address,
+        nft_contract: nftContract,
+        token_id: tokenId,
+        action,
+        chain
+      });
+      setProxy(res.data);
+      toast.success("NFT proxy created!");
+    } catch { toast.error("Failed to create proxy"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-white/50">Create a privacy proxy for NFT transactions. Your wallet won't be linked to the NFT purchase.</p>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">NFT Contract Address</label>
+        <input value={nftContract} onChange={(e) => setNftContract(e.target.value)} placeholder="0x..."
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Token ID</label>
+        <input value={tokenId} onChange={(e) => setTokenId(e.target.value)} placeholder="1234"
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Action</label>
+        <select value={action} onChange={(e) => setAction(e.target.value)}
+          className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none">
+          <option value="buy" className="bg-black">Buy</option>
+          <option value="sell" className="bg-black">Sell</option>
+          <option value="transfer" className="bg-black">Transfer</option>
+          <option value="bid" className="bg-black">Bid</option>
+        </select>
+      </div>
+      
+      <button onClick={createProxy} disabled={loading}
+        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
+        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Image className="w-5 h-5" />}
+        Create NFT Proxy
+      </button>
+      
+      {proxy && (
+        <div className="bg-white/5 border border-green-500/30 p-4 space-y-2">
+          <div className="flex justify-between items-center">
+            <span className="text-xs text-green-400 uppercase">Proxy Address</span>
+            <CopyButton text={proxy.proxy_address} />
+          </div>
+          <p className="font-mono text-sm break-all">{proxy.proxy_address}</p>
+          <p className="text-xs text-white/50">Send funds to this address, then complete your NFT transaction from here.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Token Approval Privacy ───────────────────────────────────────────────────
+function TokenApprovalPrivacy() {
+  const { address, chain } = useWallet();
+  const [tokenAddress, setTokenAddress] = useState("");
+  const [spenderAddress, setSpenderAddress] = useState("");
+  const [amount, setAmount] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [disposal, setDisposal] = useState(null);
+
+  const createDisposable = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API}/approval/create-disposable`, {
+        user_address: address,
+        token_address: tokenAddress,
+        spender_address: spenderAddress,
+        amount: amount || "unlimited",
+        chain
+      });
+      setDisposal(res.data);
+      toast.success("Disposable approval address created!");
+    } catch { toast.error("Failed to create"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-white/50">Create a disposable address for token approvals. Prevents wallet-protocol fingerprinting.</p>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Token Contract</label>
+        <input value={tokenAddress} onChange={(e) => setTokenAddress(e.target.value)} placeholder="0x..."
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Spender (Protocol)</label>
+        <input value={spenderAddress} onChange={(e) => setSpenderAddress(e.target.value)} placeholder="0x..."
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+      
+      <button onClick={createDisposable} disabled={loading}
+        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
+        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Shield className="w-5 h-5" />}
+        Create Disposable Approval
+      </button>
+      
+      {disposal && (
+        <div className="bg-white/5 border border-green-500/30 p-4 space-y-2">
+          <div className="flex justify-between items-center">
+            <span className="text-xs text-green-400 uppercase">Disposable Address</span>
+            <CopyButton text={disposal.disposable_address} />
+          </div>
+          <p className="font-mono text-sm break-all">{disposal.disposable_address}</p>
+          <p className="text-xs text-white/50">{disposal.instructions}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Smart Contract Privacy ───────────────────────────────────────────────────
+function ContractPrivacy() {
+  const { address, chain } = useWallet();
+  const [contractAddress, setContractAddress] = useState("");
+  const [functionName, setFunctionName] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [proxy, setProxy] = useState(null);
+
+  const createProxy = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API}/contract/proxy`, {
+        user_address: address,
+        contract_address: contractAddress,
+        function_name: functionName,
+        function_args: [],
+        chain
+      });
+      setProxy(res.data);
+      toast.success("Contract proxy created!");
+    } catch { toast.error("Failed to create"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-white/50">Execute smart contract calls through an anonymous proxy. Your wallet won't be linked to the interaction.</p>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Contract Address</label>
+        <input value={contractAddress} onChange={(e) => setContractAddress(e.target.value)} placeholder="0x..."
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+      
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-2">Function Name</label>
+        <input value={functionName} onChange={(e) => setFunctionName(e.target.value)} placeholder="stake, swap, mint..."
+          className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+      </div>
+      
+      <button onClick={createProxy} disabled={loading}
+        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
+        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileCode className="w-5 h-5" />}
+        Create Anonymous Proxy
+      </button>
+      
+      {proxy && (
+        <div className="bg-white/5 border border-green-500/30 p-4 space-y-2">
+          <div className="flex justify-between items-center">
+            <span className="text-xs text-green-400 uppercase">Proxy Address</span>
+            <CopyButton text={proxy.proxy_address} />
+          </div>
+          <p className="font-mono text-sm break-all">{proxy.proxy_address}</p>
+          <p className="text-xs text-white/50">{proxy.instructions}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Chain Status ─────────────────────────────────────────────────────────────
 function ChainsStatus() {
   const vmGroups = Object.entries(VM_GROUPS).map(([vmKey, info]) => ({
     vmKey, ...info,
     chains: Object.entries(CHAINS).filter(([, v]) => v.vm === vmKey),
   }));
-
-  const contractInfo = {
-    [VM.EVM]:    `PrivacyRelayer: ${EVM_CONTRACTS.privacyRelayer.slice(0, 16)}...`,
-    [VM.SOLANA]: "Anchor program written — awaiting mainnet deployment",
-    [VM.SUI]:    "Move package written — awaiting mainnet deployment",
-  };
 
   return (
     <div className="space-y-6">
@@ -568,11 +971,7 @@ function ChainsStatus() {
           <div className="flex items-center gap-2 mb-3">
             <Layers className="w-4 h-4 text-white/50" />
             <h2 className="text-base font-semibold">{label}</h2>
-            <span className="text-xs text-white/30 border border-white/10 px-2 py-0.5">
-              {vmKey === VM.EVM ? "Solidity" : vmKey === VM.SOLANA ? "Rust/Anchor" : "Move"}
-            </span>
           </div>
-          <div className="text-xs text-white/30 font-mono mb-2 px-1">{contractInfo[vmKey]}</div>
           <div className="space-y-2">
             {chains.map(([k, v]) => (
               <div key={k} className="flex items-center justify-between bg-white/5 border border-white/10 p-4">
@@ -580,25 +979,20 @@ function ChainsStatus() {
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: v.color }} />
                   <div>
                     <div className="font-medium text-sm">{v.name}</div>
-                    <div className="text-xs text-white/30">{v.symbol} · Chain {v.chainIdDec || "mainnet"}</div>
+                    <div className="text-xs text-white/30">{v.symbol}</div>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1 text-xs">
                   {v.live ? (
-                    <div className="flex items-center gap-1 text-xs text-green-400">
+                    <>
                       <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                      Live
-                    </div>
+                      <span className="text-green-400">Live</span>
+                    </>
                   ) : (
-                    <div className="flex items-center gap-1 text-xs text-yellow-400">
+                    <>
                       <div className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
-                      Coming Soon
-                    </div>
-                  )}
-                  {v.explorer && v.live && vmKey === VM.EVM && (
-                    <a href={`${v.explorer}/address/${EVM_CONTRACTS.privacyRelayer}`} target="_blank" rel="noopener noreferrer" className="text-white/30 hover:text-white">
-                      <ExternalLink className="w-4 h-4" />
-                    </a>
+                      <span className="text-yellow-400">Coming Soon</span>
+                    </>
                   )}
                 </div>
               </div>
@@ -612,103 +1006,41 @@ function ChainsStatus() {
 
 // ─── Landing ──────────────────────────────────────────────────────────────────
 function Landing() {
-  const { connectWallet, connecting, vm, chain, switchChain } = useWallet();
-  const [showChains, setShowChains] = useState(false);
-
-  const vmGroups = Object.entries(VM_GROUPS).map(([vmKey, info]) => ({
-    vmKey, ...info,
-    chains: Object.entries(CHAINS).filter(([, v]) => v.vm === vmKey && v.live),
-  }));
-
+  const { connectWallet, connecting, vm } = useWallet();
   const walletLabel = VM_GROUPS[vm]?.walletName || "Wallet";
 
   return (
     <div className="min-h-screen relative bg-black overflow-hidden">
-      {/* Chain badge */}
-      <div className="absolute top-4 md:top-6 left-4 md:left-6 z-50 flex items-center gap-2 px-3 md:px-4 py-2 border border-white/20 text-xs md:text-sm cursor-pointer hover:border-white/40 transition-all"
-        onClick={() => setShowChains(!showChains)} data-testid="live-chain-badge">
+      <div className="absolute top-4 md:top-6 left-4 md:left-6 z-50 flex items-center gap-2 px-3 py-2 border border-white/20 text-xs">
         <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
         <span className="text-white/70">{LIVE_COUNT} Chains Live</span>
-        <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${showChains ? "rotate-180" : ""}`} />
       </div>
 
-      {/* Chain dropdown */}
-      {showChains && (
-        <div className="absolute top-14 md:top-16 left-4 md:left-6 z-50 bg-black border border-white/20 min-w-[260px] max-h-[80vh] overflow-y-auto">
-          {vmGroups.map(({ vmKey, label, chains }) => (
-            <div key={vmKey}>
-              <div className="px-3 py-2 text-[10px] text-white/40 uppercase tracking-wider border-b border-white/10 bg-white/3 flex items-center gap-2">
-                <span>{label}</span>
-                <span className="text-white/20">·</span>
-                <span className="text-white/20">{vmKey === VM.EVM ? "Solidity" : vmKey === VM.SOLANA ? "Rust" : "Move"}</span>
-              </div>
-              {chains.map(([k, v]) => (
-                <button key={k} onClick={() => { switchChain(k); setShowChains(false); }}
-                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/10 text-left text-sm">
-                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
-                  <span>{v.name}</span>
-                  <span className="text-white/30 text-xs ml-auto">{v.symbol}</span>
-                  {chain === k && <div className="w-2 h-2 rounded-full bg-green-400" />}
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Connect */}
       <div className="absolute top-4 md:top-6 right-4 md:right-6 z-50">
-        <MagnetizeButton onClick={connectWallet} disabled={connecting} particleCount={14}
-          className="px-4 md:px-6 py-2 md:py-2.5 text-sm" data-testid="landing-connect">
+        <MagnetizeButton onClick={connectWallet} disabled={connecting} particleCount={14} className="px-4 md:px-6 py-2 md:py-2.5 text-sm">
           {connecting ? "Connecting..." : `Connect ${walletLabel}`}
         </MagnetizeButton>
       </div>
 
-      {/* Globe */}
       <div className="pt-14 md:pt-16 flex justify-center">
         <div className="w-[280px] h-[280px] md:w-[400px] md:h-[400px]">
           <RotatingEarth width={400} height={400} />
         </div>
       </div>
 
-      {/* Content */}
       <div className="text-center px-4 md:px-6 mt-4 md:mt-8">
         <h1 className="font-heading text-3xl md:text-6xl font-bold tracking-tight text-white mb-4 md:mb-6">
           Universal Privacy Layer
         </h1>
         <p className="text-white/40 text-sm md:text-base mb-6 md:mb-8 max-w-md mx-auto">
-          Private transactions across every chain — EVM, Solana, and Sui. One interface, all networks.
+          Private transactions across every chain. One interface, all networks.
         </p>
 
-        {/* Stats */}
         <div className="flex items-center justify-center gap-6 md:gap-12 mb-8">
-          {[["100%", "Private"], [LIVE_COUNT.toString(), "Chains"], ["3", "VM Types"]].map(([val, lbl]) => (
+          {[["100%", "Private"], [LIVE_COUNT.toString(), "Chains"], ["10", "Privacy Pillars"]].map(([val, lbl]) => (
             <div key={lbl} className="text-center">
               <span className="block text-xl md:text-2xl font-bold text-white">{val}</span>
               <span className="text-[10px] md:text-xs text-white/40 uppercase tracking-wider">{lbl}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* VM type badges */}
-        <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
-          {Object.entries(VM_GROUPS).map(([vmKey, info]) => (
-            <div key={vmKey} className="flex items-center gap-2 px-4 py-2 border border-white/10 text-xs">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-              <span className="text-white/60">{info.label}</span>
-              <span className="text-white/20">·</span>
-              <span className="text-white/30">{vmKey === VM.EVM ? "Solidity" : vmKey === VM.SOLANA ? "Rust/Anchor" : "Move"}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Chain pills */}
-        <div className="flex flex-wrap items-center justify-center gap-2 mb-8">
-          {Object.entries(CHAINS).map(([k, v]) => (
-            <div key={k} className="flex items-center gap-1.5 px-3 py-1.5 border border-white/10 text-xs cursor-pointer hover:border-white/30 transition-all"
-              onClick={() => { switchChain(k); setShowChains(false); }}>
-              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: v.color }} />
-              <span className="text-white/60">{v.name}</span>
             </div>
           ))}
         </div>
@@ -719,7 +1051,7 @@ function Landing() {
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard() {
-  const { address, balance, chain, vm, fetchBalance } = useWallet();
+  const { address, balance, chain, vm, fetchBalance, hiddenBalance } = useWallet();
   const [page, setPage] = useState("home");
   const [showBal, setShowBal] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -728,21 +1060,27 @@ function Dashboard() {
 
   const refresh = async () => { setRefreshing(true); await fetchBalance(); setRefreshing(false); };
 
-  if (page !== "home") {
-    const titles = { receive: "Private Receive", send: "Private Send", swap: "Private Swap", chains: "Chain Status" };
+  const pages = {
+    receive: { title: "Private Receive", component: <StealthContent /> },
+    send: { title: "Private Send", component: <SendContent /> },
+    swap: { title: "Private Swap", component: <SwapContent /> },
+    balance: { title: "Hidden Balance", component: <HiddenBalanceDashboard /> },
+    history: { title: "Transaction History", component: <TransactionHistory /> },
+    wallet: { title: "Dual Seed Setup", component: <DualSeedSetup /> },
+    nft: { title: "NFT Privacy", component: <NFTPrivacy /> },
+    approval: { title: "Token Approval Privacy", component: <TokenApprovalPrivacy /> },
+    contract: { title: "Contract Privacy", component: <ContractPrivacy /> },
+    chains: { title: "Chain Status", component: <ChainsStatus /> },
+  };
+
+  if (page !== "home" && pages[page]) {
     return (
       <div className="min-h-screen bg-black pt-16 md:pt-20 px-4 md:px-6">
         <Navbar />
         <div className="max-w-2xl mx-auto py-6 md:py-10">
           <BackButton onClick={() => setPage("home")} />
-          <div className="flex items-center gap-3 mb-4 md:mb-6">
-            <h1 className="text-2xl md:text-3xl font-bold">{titles[page]}</h1>
-            <span className="text-xs border border-white/20 px-2 py-1 text-white/40">{VM_GROUPS[vm]?.label}</span>
-          </div>
-          {page === "receive" && <StealthContent />}
-          {page === "send"    && <SendContent />}
-          {page === "swap"    && <SwapContent />}
-          {page === "chains"  && <ChainsStatus />}
+          <h1 className="text-2xl md:text-3xl font-bold mb-6">{pages[page].title}</h1>
+          {pages[page].component}
         </div>
       </div>
     );
@@ -754,15 +1092,14 @@ function Dashboard() {
       <div className="pt-20 md:pt-24 pb-12 md:pb-16 px-4 md:px-6">
         <div className="max-w-4xl mx-auto">
           {/* Balance card */}
-          <div className="bg-white/5 border border-white/10 p-5 md:p-8 mb-6 md:mb-8">
-            <div className="flex items-center justify-between mb-3 md:mb-4">
+          <div className="bg-white/5 border border-white/10 p-5 md:p-8 mb-6">
+            <div className="flex items-center justify-between mb-3">
               <div>
-                <span className="text-xs md:text-sm text-gray-500 uppercase tracking-wider">
+                <span className="text-xs text-gray-500 uppercase tracking-wider">
                   Balance on <span style={{ color: CHAINS[chain].color }}>{CHAINS[chain].name}</span>
                 </span>
-                <div className="text-xs text-white/30 mt-0.5">{VM_GROUPS[vm]?.walletName} · {VM_GROUPS[vm]?.label}</div>
               </div>
-              <div className="flex gap-1 md:gap-2">
+              <div className="flex gap-1">
                 <button onClick={() => setShowBal(!showBal)} className="p-2 hover:bg-white/10">
                   {showBal ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                 </button>
@@ -771,47 +1108,70 @@ function Dashboard() {
                 </button>
               </div>
             </div>
-            <div className="flex items-end gap-2 md:gap-3">
-              <span className="text-3xl md:text-5xl font-bold" data-testid="balance-display">
+            <div className="flex items-end gap-2">
+              <span className="text-3xl md:text-5xl font-bold">
                 {showBal && balance ? balance.formatted : "••••••"}
               </span>
               <span className="text-gray-500 mb-1">{CHAINS[chain].symbol}</span>
             </div>
+            {hiddenBalance && (
+              <div className="mt-4 pt-4 border-t border-white/10">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-white/50">Hidden (Stealth) Balance</span>
+                  <span className="text-sm font-mono text-green-400">
+                    {parseFloat(hiddenBalance.chains?.[chain]?.stealth_balance || 0).toFixed(6)} {CHAINS[chain].symbol}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Action cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-6 md:mb-8">
+          {/* Core Actions */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
             {[
-              { id: "receive", icon: <Fingerprint className="w-6 md:w-8 h-6 md:h-8 mb-3 md:mb-4" />, title: "Private Receive", desc: "Generate stealth address" },
-              { id: "send",    icon: <Zap         className="w-6 md:w-8 h-6 md:h-8 mb-3 md:mb-4" />, title: "Private Send",    desc: "Send to any address" },
-              { id: "swap",    icon: <RefreshCw   className="w-6 md:w-8 h-6 md:h-8 mb-3 md:mb-4" />, title: "Private Swap",   desc: "Swap with privacy" },
+              { id: "receive", icon: <Fingerprint className="w-6 h-6 mb-3" />, title: "Private Receive", desc: "Generate stealth address" },
+              { id: "send",    icon: <Zap className="w-6 h-6 mb-3" />, title: "Private Send", desc: "Send to any address" },
+              { id: "swap",    icon: <RefreshCw className="w-6 h-6 mb-3" />, title: "Private Swap", desc: "Swap with privacy" },
             ].map(({ id, icon, title, desc }) => (
               <button key={id} data-testid={`nav-${id}`} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 md:p-6 text-left hover:border-white/30 transition-all">
                 {icon}
-                <h3 className="text-base md:text-lg font-semibold mb-1">{title}</h3>
-                <p className="text-xs md:text-sm text-gray-500">{desc}</p>
+                <h3 className="text-base font-semibold mb-1">{title}</h3>
+                <p className="text-xs text-gray-500">{desc}</p>
               </button>
             ))}
           </div>
 
-          {/* Chain status row */}
-          <div className="bg-white/5 border border-white/10 p-4 cursor-pointer hover:border-white/20 transition-all"
-            onClick={() => setPage("chains")} data-testid="chain-status-card">
+          {/* Advanced Features */}
+          <div className="mb-4">
+            <h2 className="text-sm text-white/50 uppercase tracking-wider mb-3">Advanced Privacy</h2>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            {[
+              { id: "balance", icon: <TrendingUp className="w-5 h-5" />, title: "Hidden Balance", color: "text-green-400" },
+              { id: "history", icon: <History className="w-5 h-5" />, title: "History", color: "text-blue-400" },
+              { id: "wallet",  icon: <Key className="w-5 h-5" />, title: "Dual Seed", color: "text-purple-400" },
+              { id: "nft",     icon: <Image className="w-5 h-5" />, title: "NFT Privacy", color: "text-pink-400" },
+              { id: "approval",icon: <Shield className="w-5 h-5" />, title: "Approvals", color: "text-yellow-400" },
+              { id: "contract",icon: <FileCode className="w-5 h-5" />, title: "Contracts", color: "text-cyan-400" },
+              { id: "chains",  icon: <Globe className="w-5 h-5" />, title: "Chains", color: "text-white/50" },
+            ].map(({ id, icon, title, color }) => (
+              <button key={id} onClick={() => setPage(id)}
+                className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
+                <div className={`mb-2 ${color}`}>{icon}</div>
+                <span className="text-sm font-medium">{title}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Stats */}
+          <div className="bg-white/5 border border-white/10 p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <Globe className="w-5 h-5 text-white/50" />
                 <span className="text-sm text-white/70">{LIVE_COUNT} chains live</span>
-                <div className="flex gap-1.5">
-                  {Object.entries(CHAINS).map(([k, v]) => (
-                    <div key={k} className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} title={v.name} />
-                  ))}
-                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-white/30">Solidity · Rust · Move</span>
-                <ExternalLink className="w-4 h-4 text-white/30" />
-              </div>
+              <span className="text-xs text-white/30">Contracts: 0x0A81...fB5c</span>
             </div>
           </div>
         </div>
