@@ -96,7 +96,7 @@ def deploy_contract(w3, account, compiled):
     
     # Sign and send
     signed = account.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
     
     print(f"  Tx: {tx_hash.hex()}")
     
