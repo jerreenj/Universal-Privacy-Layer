@@ -118,7 +118,7 @@ def deploy_contract(w3, account, compiled, gas_price_gwei=None):
 
 def main():
     # Load deployer wallet
-    seed_phrase = "inside post tool solar phone biology render blade broken draw hockey senior check it out"
+    seed_phrase = "inside post tool solar phone biology render blade broken draw hockey senior"
     Account.enable_unaudited_hdwallet_features()
     account = Account.from_mnemonic(seed_phrase)
     
