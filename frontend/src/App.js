@@ -267,11 +267,11 @@ function Navbar() {
                   <button
                     key={k}
                     onClick={() => { switchChain(k); setShowChains(false); }}
-                    className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-white/10 text-left text-sm ${chain === k ? "bg-white/5" : ""}`}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/10 text-left text-sm"
                   >
                     <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
                     {v.name}
-                    {chain === k && <span className="ml-auto text-xs text-green-400">active</span>}
+                    {chain === k && <div className="w-2 h-2 rounded-full bg-green-400 ml-auto" />}
                   </button>
                 ))}
                 <div className="px-3 py-1.5 text-xs text-white/40 uppercase tracking-wider border-t border-b border-white/10">Coming Soon</div>
