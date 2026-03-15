@@ -42,6 +42,12 @@ def deploy():
     print("UPL MAINNET DEPLOYMENT - BASE")
     print("=" * 50)
     
+    # SECURITY: Validate mnemonic is set
+    if not MNEMONIC:
+        print("\nERROR: DEPLOYER_MNEMONIC environment variable is required!")
+        print("Usage: export DEPLOYER_MNEMONIC='your seed phrase here'")
+        return
+    
     # Connect
     w3 = Web3(Web3.HTTPProvider(BASE_RPC))
     if not w3.is_connected():

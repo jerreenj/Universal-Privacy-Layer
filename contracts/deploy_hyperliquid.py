@@ -20,6 +20,12 @@ def deploy():
     print("UPL DEPLOYMENT — HYPERLIQUID HyperEVM (Chain 999)")
     print("=" * 55)
 
+    # SECURITY: Validate mnemonic is set
+    if not MNEMONIC:
+        print("\nERROR: DEPLOYER_MNEMONIC environment variable is required!")
+        print("Usage: export DEPLOYER_MNEMONIC='your seed phrase here'")
+        return {}
+
     w3 = Web3(Web3.HTTPProvider(RPC, request_kwargs={"timeout": 60}))
     print(f"Connected: {w3.is_connected()}")
 
