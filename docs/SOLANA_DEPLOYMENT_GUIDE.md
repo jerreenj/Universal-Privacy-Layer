@@ -29,10 +29,14 @@ anchor --version
 
 ### 3. Configure Wallet
 ```bash
-# Import existing wallet (from UPL deployer)
-echo "inside post tool solar phone biology render blade broken draw hockey senior check it out" > /tmp/seed.txt
-solana-keygen recover --outfile ~/.config/solana/upl-deployer.json < /tmp/seed.txt
-rm /tmp/seed.txt
+# SECURITY: Never write seed phrases to files or commit them to repositories!
+# Generate a new wallet OR import existing using Solana CLI interactively:
+
+# Option 1: Create new wallet
+solana-keygen new --outfile ~/.config/solana/upl-deployer.json
+
+# Option 2: Import existing wallet (interactive - will prompt for seed phrase)
+solana-keygen recover --outfile ~/.config/solana/upl-deployer.json
 
 # Set as default
 solana config set --keypair ~/.config/solana/upl-deployer.json
