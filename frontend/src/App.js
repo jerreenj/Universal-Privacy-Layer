@@ -1664,6 +1664,11 @@ function Dashboard() {
     approval: { title: "Token Approval Privacy", component: <TokenApprovalPrivacy /> },
     contract: { title: "Contract Privacy", component: <ContractPrivacy /> },
     chains: { title: "Chain Status", component: <ChainsStatus /> },
+    zkp: { title: "ZKP Proofs", component: <ZKPProofs /> },
+    relayer: { title: "On-Chain Relayer", component: <OnChainRelayer /> },
+    split: { title: "Cross-Chain Split", component: <CrossChainSplit /> },
+    messaging: { title: "Encrypted Messaging", component: <EncryptedMessaging /> },
+    multisig: { title: "Multisig Privacy", component: <MultisigPrivacy /> },
   };
 
   if (page !== "home" && pages[page]) {
