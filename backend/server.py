@@ -36,6 +36,22 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# ── Security Headers Middleware ───────────────────────────────────────────────
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
 # ZKP Verifier addresses (deployed on all chains)
 ZKP_VERIFIER_ADDRESSES = {
     "base": "0x98940B431d829832d2Ad5eB0812824A3C40D1bF1",
@@ -323,21 +339,23 @@ def decrypt_receipt(encrypted_data: str, password: str) -> dict:
     return json.loads(plaintext.decode())
 
 def create_dual_wallet() -> dict:
-    """Create a wallet with dual seed phrases"""
+    """
+    Create a wallet with dual seed phrases.
+    Returns addresses and mnemonics ONLY — private keys never leave this function.
+    """
     Account.enable_unaudited_hdwallet_features()
-    
+
     # Main wallet
     main_account, main_mnemonic = Account.create_with_mnemonic()
-    
+
     # Privacy wallet (separate seed)
     privacy_account, privacy_mnemonic = Account.create_with_mnemonic()
-    
+
+    # SECURITY: Never include private keys in the returned dict
     return {
         "main_address": main_account.address,
-        "main_private_key": main_account.key.hex(),
         "main_mnemonic": main_mnemonic,
         "privacy_address": privacy_account.address,
-        "privacy_private_key": privacy_account.key.hex(),
         "privacy_mnemonic": privacy_mnemonic
     }
 
@@ -485,31 +503,24 @@ async def get_swap_tokens(chain: str):
 # Wallet Management
 @api_router.post("/wallet/create", response_model=WalletCreateResponse)
 async def create_wallet(request: WalletCreateRequest):
-    """Create a new dual-key wallet (Main + Privacy)"""
+    """
+    Create a new dual-key wallet (Main + Privacy).
+    SECURITY: Private keys and seed phrases are generated here and returned ONCE.
+    They are NEVER stored server-side. Store them securely on the client only.
+    """
     try:
         wallet_data = create_dual_wallet()
         wallet_id = str(uuid.uuid4())
-        
-        # Store encrypted wallet data
-        encrypted_main = encrypt_receipt(
-            {"private_key": wallet_data["main_private_key"]},
-            request.password
-        )
-        encrypted_privacy = encrypt_receipt(
-            {"private_key": wallet_data["privacy_private_key"]},
-            request.password
-        )
-        
+
+        # Store ONLY public addresses — NEVER store private keys or mnemonics
         doc = {
             "wallet_id": wallet_id,
             "main_address": wallet_data["main_address"],
             "privacy_address": wallet_data["privacy_address"],
-            "encrypted_main": encrypted_main,
-            "encrypted_privacy": encrypted_privacy,
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         await db.wallets.insert_one(doc)
-        
+
         return WalletCreateResponse(
             wallet_id=wallet_id,
             main_address=wallet_data["main_address"],
@@ -1580,39 +1591,29 @@ async def get_encrypted_inbox(address: str, limit: int = 50):
 @api_router.post("/messaging/decrypt")
 async def decrypt_message(
     message_id: str = Body(...),
-    recipient_private_key: str = Body(...)
+    recipient_address: str = Body(...)
 ):
-    """Decrypt a message (client should do this, but providing server option)"""
+    """
+    Return encrypted message data for CLIENT-SIDE decryption only.
+    Private keys must NEVER be sent to the server.
+    Decryption must be performed entirely in the browser.
+    """
     try:
-        msg = await db.encrypted_messages.find_one({"message_id": message_id})
+        msg = await db.encrypted_messages.find_one({"message_id": message_id}, {"_id": 0})
         if not msg:
             raise HTTPException(status_code=404, detail="Message not found")
-        
-        # Derive key from private key
-        key = hashlib.sha256(recipient_private_key.encode()).digest()
-        
-        # Decrypt
-        encrypted_data = base64.b64decode(msg["encrypted_content"])
-        iv = encrypted_data[:16]
-        ciphertext = encrypted_data[16:]
-        
-        cipher = AES.new(key, AES.MODE_CBC, iv)
-        decrypted = cipher.decrypt(ciphertext)
-        
-        # Remove padding
-        padding_len = decrypted[-1]
-        message = decrypted[:-padding_len].decode()
-        
-        # Mark as read
+
+        # Only return the encrypted blob — client decrypts locally with their own key
         await db.encrypted_messages.update_one(
             {"message_id": message_id},
             {"$set": {"read": True, "read_at": datetime.now(timezone.utc).isoformat()}}
         )
-        
+
         return {
             "message_id": message_id,
-            "decrypted_message": message,
-            "sender": msg["sender_address"]
+            "encrypted_content": msg["encrypted_content"],
+            "sender": msg["sender_address"],
+            "note": "Decrypt locally using your private key — never send private keys to servers"
         }
     except HTTPException:
         raise
