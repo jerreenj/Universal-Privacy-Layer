@@ -1,4 +1,6 @@
 import { useState, useEffect, createContext, useContext, useCallback } from "react";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import FounderMode from "@/pages/FounderMode";
 import "@/App.css";
 import axios from "axios";
 import { ethers } from "ethers";
@@ -2773,7 +2775,7 @@ function Dashboard() {
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
-function App() {
+function PublicApp() {
   const [granted, setGranted] = useState(() => {
     const tok = sessionStorage.getItem("_upl_tok");
     if (tok) { axios.defaults.headers.common["Authorization"] = `Bearer ${tok}`; return true; }
@@ -2788,6 +2790,17 @@ function App() {
       <Toaster position="bottom-right"
         toastOptions={{ style: { background: "#000", border: "1px solid #333", color: "#fff" } }} />
     </WalletProvider>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/founder" element={<FounderMode />} />
+        <Route path="/*" element={<PublicApp />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 

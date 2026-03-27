@@ -72,7 +72,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: StarletteRequest, call_next):
         # ── Auth gate — block all /api/* except public paths ──────────────────
         path = request.url.path
-        if path.startswith("/api/") and path not in self.PUBLIC_PATHS:
+        # Founder routes use their own X-Founder-Token header — skip session check
+        if path.startswith("/api/founder/"):
+            pass
+        elif path.startswith("/api/") and path not in self.PUBLIC_PATHS:
             auth = request.headers.get("Authorization", "")
             if not auth.startswith("Bearer "):
                 return JSONResponse({"detail": "Authorization required"}, status_code=401)
@@ -2760,7 +2763,204 @@ async def get_recent_errors(limit: int = 50, token: str = ""):
     errors = await db.error_logs.find({}, {"_id": 0}).sort("logged_at", -1).limit(min(limit, 100)).to_list(min(limit, 100))
     return {"errors": errors, "count": len(errors)}
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# FOUNDER MODE — completely isolated router, separate token, zero overlap
+# Route prefix: /api/founder  |  Auth: X-Founder-Token header (env: ADMIN_TOKEN)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+founder_router = APIRouter(prefix="/api/founder")
+
+def require_founder(request: StarletteRequest):
+    """Validates the founder token — completely separate from user sessions."""
+    token = request.headers.get("X-Founder-Token", "")
+    expected = os.environ.get("ADMIN_TOKEN", "")
+    if not expected or not token or token != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return token
+
+
+@founder_router.get("/metrics", dependencies=[Depends(require_founder)])
+async def founder_metrics():
+    """Real-time platform metrics — all from live MongoDB collections."""
+    try:
+        # Transaction data
+        total_txs = await db.transactions.count_documents({})
+        pending_txs = await db.transactions.count_documents({"status": "pending"})
+        completed_txs = await db.transactions.count_documents({"status": {"$in": ["completed", "confirmed"]}})
+
+        # Volume — sum amount_wei from transactions
+        pipeline_vol = [
+            {"$match": {"status": {"$in": ["completed", "confirmed"]}}},
+            {"$group": {"_id": None, "total_wei": {"$sum": "$amount_wei"}}}
+        ]
+        vol_result = await db.transactions.aggregate(pipeline_vol).to_list(1)
+        total_volume_wei = vol_result[0]["total_wei"] if vol_result else 0
+
+        # Per-chain tx counts
+        chain_pipeline = [
+            {"$group": {"_id": "$chain", "count": {"$sum": 1}, "volume_wei": {"$sum": "$amount_wei"}}}
+        ]
+        chain_data = await db.transactions.aggregate(chain_pipeline).to_list(20)
+        chains_breakdown = {c["_id"]: {"txs": c["count"], "volume_wei": c.get("volume_wei", 0)} for c in chain_data if c["_id"]}
+
+        # Stealth addresses
+        total_stealth = await db.stealth_addresses.count_documents({})
+        used_stealth = await db.stealth_addresses.count_documents({"used": True})
+        stealth_by_chain = await db.stealth_addresses.aggregate([
+            {"$group": {"_id": "$chain", "count": {"$sum": 1}}}
+        ]).to_list(20)
+
+        # Wallets
+        total_wallets = await db.wallets.count_documents({})
+        privacy_wallets = await db.privacy_wallets.count_documents({})
+
+        # DeFi trades
+        total_trades = await db.defi_trades.count_documents({})
+        platform_breakdown = await db.defi_trades.aggregate([
+            {"$group": {"_id": "$platform", "count": {"$sum": 1}, "volume_usd": {"$sum": "$size_usd"}}}
+        ]).to_list(10)
+
+        # Encrypted messages
+        total_messages = await db.encrypted_messages.count_documents({})
+        unread_messages = await db.encrypted_messages.count_documents({"read": False})
+
+        # ZKP proofs
+        total_proofs = await db.zkp_proofs.count_documents({})
+        verified_proofs = await db.zkp_proofs.count_documents({"status": "verified"})
+
+        # Cross-chain splits
+        total_splits = await db.cross_chain_splits.count_documents({})
+
+        # Errors in last 24h
+        from datetime import timedelta
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        recent_errors = await db.error_logs.count_documents({"logged_at": {"$gte": since}}) if "error_logs" in await db.list_collection_names() else 0
+
+        # Multisig wallets
+        total_multisig = await db.multisig_wallets.count_documents({})
+
+        # Recent activity (last 10 transactions, sanitized)
+        recent_txs_raw = await db.transactions.find(
+            {}, {"_id": 0, "from_address": 1, "to_address": 1, "amount_wei": 1, "chain": 1, "tx_type": 1, "status": 1, "created_at": 1}
+        ).sort("created_at", -1).limit(10).to_list(10)
+
+        return {
+            "transactions": {
+                "total": total_txs,
+                "pending": pending_txs,
+                "completed": completed_txs,
+                "total_volume_wei": str(total_volume_wei),
+                "by_chain": chains_breakdown,
+            },
+            "stealth": {
+                "total_generated": total_stealth,
+                "used": used_stealth,
+                "unused": total_stealth - used_stealth,
+                "by_chain": {c["_id"]: c["count"] for c in stealth_by_chain if c["_id"]},
+            },
+            "wallets": {
+                "standard": total_wallets,
+                "privacy": privacy_wallets,
+                "multisig": total_multisig,
+            },
+            "defi": {
+                "total_trades": total_trades,
+                "by_platform": {p["_id"]: {"count": p["count"], "volume_usd": p.get("volume_usd", 0)} for p in platform_breakdown if p["_id"]},
+            },
+            "messaging": {
+                "total": total_messages,
+                "unread": unread_messages,
+            },
+            "zkp": {
+                "total_proofs": total_proofs,
+                "verified": verified_proofs,
+            },
+            "splits": total_splits,
+            "errors_24h": recent_errors,
+            "recent_activity": recent_txs_raw,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Founder metrics error: {e}")
+        raise HTTPException(status_code=500, detail="Metrics unavailable")
+
+
+@founder_router.get("/chains/health", dependencies=[Depends(require_founder)])
+async def founder_chain_health():
+    """Ping all 7 chain RPCs and return live status."""
+    import asyncio
+
+    rpc_map = {
+        "base":        "https://rpc.ankr.com/base",
+        "arbitrum":    "https://rpc.ankr.com/arbitrum",
+        "polygon":     "https://rpc.ankr.com/polygon",
+        "optimism":    "https://rpc.ankr.com/optimism",
+        "bnb":         "https://rpc.ankr.com/bsc",
+        "avalanche":   "https://rpc.ankr.com/avalanche",
+        "hyperliquid": "https://rpc.hyperliquid.xyz/evm",
+    }
+
+    async def ping_chain(name: str, url: str):
+        payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                r = await client.post(url, json=payload)
+                data = r.json()
+                block_hex = data.get("result", "0x0")
+                block_num = int(block_hex, 16)
+                return {"chain": name, "status": "online", "block": block_num, "latency_ms": round(r.elapsed.total_seconds() * 1000)}
+        except Exception as e:
+            return {"chain": name, "status": "offline", "error": str(e)[:80]}
+
+    tasks = [ping_chain(n, u) for n, u in rpc_map.items()]
+    results = await asyncio.gather(*tasks)
+    online = sum(1 for r in results if r["status"] == "online")
+    return {"chains": results, "online": online, "total": len(results), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@founder_router.get("/activity", dependencies=[Depends(require_founder)])
+async def founder_activity(limit: int = 50):
+    """Recent activity across all collections — real data only."""
+    txs = await db.transactions.find({}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
+    stealth = await db.stealth_addresses.find({}, {"_id": 0}).sort("created_at", -1).limit(20).to_list(20)
+    trades = await db.defi_trades.find({}, {"_id": 0}).sort("created_at", -1).limit(20).to_list(20)
+    messages = await db.encrypted_messages.find({}, {"_id": 0, "encrypted_content": 0}).sort("created_at", -1).limit(10).to_list(10)
+    splits = await db.cross_chain_splits.find({}, {"_id": 0}).sort("created_at", -1).limit(10).to_list(10)
+    return {
+        "transactions": txs,
+        "stealth_addresses": stealth,
+        "defi_trades": trades,
+        "messages": messages,
+        "splits": splits,
+    }
+
+
+@founder_router.get("/system", dependencies=[Depends(require_founder)])
+async def founder_system():
+    """System info — backend health, DB status, session count."""
+    import sys
+    col_names = await db.list_collection_names()
+    col_counts = {}
+    for col in col_names:
+        col_counts[col] = await db[col].count_documents({})
+
+    return {
+        "backend": "online",
+        "python_version": sys.version,
+        "active_sessions": len(_sessions),
+        "database": {
+            "status": "connected",
+            "name": os.environ.get("DB_NAME"),
+            "collections": col_counts,
+        },
+        "deployer_wallet": "0x88993B262B8a89fe9888AD3bc0aF04b89932a9d4",
+        "contracts_deployed": False,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # Include router
+app.include_router(founder_router)
 app.include_router(api_router)
 
 app.add_middleware(
