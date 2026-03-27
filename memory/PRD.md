@@ -13,6 +13,7 @@ Build a production-ready "Universal Privacy Layer" for cryptocurrency transactio
 frontend/src/
 ├── App.js                           # Thin router (~55 lines)
 ├── lib/session.js                   # Session token mgmt + 401 interceptor
+├── lib/messageCrypto.js             # ECDH + AES-GCM E2E encryption
 ├── config/chains.js                 # Chain registry, API constants
 ├── context/WalletContext.jsx         # Wallet state provider
 ├── components/
@@ -61,7 +62,7 @@ backend/
   - Meta-address generation
   - Stealth sending
   - Stealth scanning/receiving
-- [x] Encrypted P2P Messaging
+- [x] Encrypted P2P Messaging — **True E2E** (ECDH secp256k1 + AES-256-GCM, server never sees plaintext)
 - [x] Private DeFi integrations (Uniswap V3, Hyperliquid, Polymarket)
 - [x] Cross-Chain Split payments
 - [x] ZKP Proof system
@@ -77,7 +78,6 @@ backend/
 - [ ] Migrate stealth announcements on-chain (BLOCKED: deployer wallet unfunded)
 
 ### P2
-- [ ] True Wallet-to-Wallet Message Encryption (derive keys from wallet signature)
 - [ ] Fixed Denomination Privacy Pools (Tornado Cash model)
 - [ ] ZK Proofs with Commitments (arbitrary amounts)
 
