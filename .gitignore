@@ -46,3 +46,7 @@ backend_test.py
 .emergent/
 frontend/node_modules/.cache/default-development/9.pack
 frontend/node_modules/.cache/default-development/5.pack
+-e 
+# Environment files
+*.env
+*.env.*
