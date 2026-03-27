@@ -1380,81 +1380,170 @@ function EncryptedMessaging() {
   const [tab, setTab] = useState("send");
   const [recipient, setRecipient] = useState("");
   const [message, setMessage] = useState("");
-  const [recipientPubKey, setRecipientPubKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [inbox, setInbox] = useState([]);
   const [sent, setSent] = useState(null);
+  const [decrypted, setDecrypted] = useState({});
+  const [copied, setCopied] = useState(false);
+
+  // Derive AES key from address (same logic as backend: sha256 of address)
+  const deriveKey = async (addr) => {
+    const enc = new TextEncoder().encode(addr);
+    const hash = await crypto.subtle.digest("SHA-256", enc);
+    return crypto.subtle.importKey("raw", hash, { name: "AES-CBC" }, false, ["decrypt"]);
+  };
+
+  const decryptMsg = async (encrypted_b64, recipientAddr) => {
+    try {
+      const key = await deriveKey(recipientAddr);
+      const raw = Uint8Array.from(atob(encrypted_b64), c => c.charCodeAt(0));
+      const iv = raw.slice(0, 16);
+      const ciphertext = raw.slice(16);
+      const plain = await crypto.subtle.decrypt({ name: "AES-CBC", iv }, key, ciphertext);
+      const text = new TextDecoder().decode(plain);
+      // Remove PKCS7 padding
+      const padLen = text.charCodeAt(text.length - 1);
+      return text.slice(0, text.length - padLen);
+    } catch { return null; }
+  };
+
+  const loadInbox = async () => {
+    if (!address) return;
+    try {
+      const r = await axios.get(`${API}/messaging/inbox/${address}`);
+      const msgs = r.data.messages || [];
+      setInbox(msgs);
+      // Auto-decrypt all using own address as key
+      const dec = {};
+      for (const m of msgs) {
+        const plain = await decryptMsg(m.encrypted_content, address);
+        if (plain) dec[m.message_id] = plain;
+      }
+      setDecrypted(dec);
+    } catch {}
+  };
 
   useEffect(() => {
-    if (address && tab === "inbox") {
-      axios.get(`${API}/messaging/inbox/${address}`).then(r => setInbox(r.data.messages || [])).catch(() => {});
-    }
+    if (address && tab === "inbox") loadInbox();
   }, [address, tab]);
 
   const sendMessage = async () => {
     if (!address) return toast.error("Connect wallet first");
-    if (!recipient || !message) return toast.error("Enter recipient and message");
+    if (!recipient || !message) return toast.error("Fill in recipient and message");
     setLoading(true);
     try {
-      const pubKey = recipientPubKey || recipient; // Use address as fallback
-      const res = await axios.post(`${API}/messaging/send`, {
+      await axios.post(`${API}/messaging/send`, {
         sender_address: address,
-        recipient_address: recipient,
+        recipient_address: recipient.trim(),
         message,
-        recipient_public_key: pubKey
+        recipient_public_key: recipient.trim(),
       });
-      setSent(res.data);
+      setSent(true);
       setMessage("");
-      toast.success("Encrypted message sent!");
-    } catch { toast.error("Failed to send message"); }
+      toast.success("Message sent — recipient can decrypt with their wallet address");
+    } catch { toast.error("Send failed"); }
     setLoading(false);
   };
 
+  const copyLink = () => {
+    navigator.clipboard.writeText(`${window.location.origin}?msg=${address}`);
+    setCopied(true);
+    toast.success("Contact link copied — share it so anyone can message you");
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Pre-fill recipient if someone arrived via ?msg= link
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const msg = params.get("msg");
+    if (msg) { setRecipient(msg); setTab("send"); }
+  }, []);
+
   return (
     <div className="space-y-4">
+      {/* Tabs */}
       <div className="flex gap-2">
-        <button onClick={() => setTab("send")}
-          className={`flex-1 py-2 text-sm font-medium ${tab === "send" ? "bg-white text-black" : "bg-white/10"}`}>
-          Send
-        </button>
-        <button onClick={() => setTab("inbox")}
-          className={`flex-1 py-2 text-sm font-medium ${tab === "inbox" ? "bg-white text-black" : "bg-white/10"}`}>
-          Inbox ({inbox.filter(m => !m.read).length})
-        </button>
+        {["send","inbox"].map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`flex-1 py-2 text-sm font-medium capitalize ${tab === t ? "bg-white text-black" : "bg-white/10"}`}>
+            {t === "inbox" ? `Inbox (${inbox.filter(m => !m.read).length})` : "Send"}
+          </button>
+        ))}
       </div>
-      
-      {tab === "send" ? (
+
+      {/* SEND */}
+      {tab === "send" && (
         <div className="space-y-3">
-          <p className="text-sm text-white/50">Send end-to-end encrypted messages. Only the recipient can decrypt.</p>
+          {/* Share contact link */}
+          {address && (
+            <button onClick={copyLink}
+              className="w-full py-2 border border-white/20 hover:border-white/50 text-xs text-white/50 hover:text-white flex items-center justify-center gap-2 transition-colors">
+              {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+              {copied ? "Link copied!" : "Copy your contact link — share so people can message you"}
+            </button>
+          )}
+          <p className="text-xs text-white/30">Messages are encrypted. Only the recipient can read them.</p>
           <div>
-            <label className="block text-xs text-gray-500 uppercase mb-2">Recipient Address</label>
-            <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x..."
+            <label className="block text-xs text-gray-500 uppercase mb-2">Recipient wallet address</label>
+            <input value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="0x..."
+              data-testid="msg-recipient-input"
               className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
           </div>
           <div>
             <label className="block text-xs text-gray-500 uppercase mb-2">Message</label>
-            <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Your private message..."
+            <textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Your private message..."
+              data-testid="msg-body-input"
               className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none focus:border-white h-24 resize-none" />
           </div>
-          <button onClick={sendMessage} disabled={loading}
-            className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50">
-            {loading ? "Sending..." : "Send Encrypted"}
+          <button onClick={sendMessage} disabled={loading} data-testid="msg-send-btn"
+            className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+            {loading ? "Encrypting & Sending…" : "Send Encrypted"}
           </button>
-          {sent && <div className="text-xs text-green-400">Message sent! ID: {sent.message_id?.slice(0, 8)}...</div>}
+          {sent && (
+            <div className="bg-green-400/10 border border-green-400/30 p-3 text-xs text-green-300">
+              Sent. Recipient opens their inbox and sees the decrypted message automatically.
+            </div>
+          )}
         </div>
-      ) : (
+      )}
+
+      {/* INBOX */}
+      {tab === "inbox" && (
         <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-white/30">Messages sent to your wallet address</p>
+            <button onClick={loadInbox} className="text-xs text-white/40 hover:text-white transition-colors">Refresh</button>
+          </div>
           {inbox.length === 0 ? (
-            <div className="text-center py-8 text-white/50">No messages yet</div>
+            <div className="text-center py-10 text-white/30 space-y-2">
+              <MessageSquare className="w-8 h-8 mx-auto opacity-30" />
+              <p className="text-sm">No messages yet</p>
+              <p className="text-xs">Share your contact link so people can message you privately</p>
+              {address && (
+                <button onClick={copyLink}
+                  className="mt-2 px-4 py-2 border border-white/20 hover:border-white/50 text-xs text-white/50 hover:text-white transition-colors">
+                  Copy contact link
+                </button>
+              )}
+            </div>
           ) : (
             inbox.map((msg, i) => (
-              <div key={i} className={`bg-white/5 border ${msg.read ? 'border-white/10' : 'border-green-500/30'} p-3`}>
-                <div className="flex justify-between text-xs text-white/50 mb-1">
-                  <span>From: {msg.sender_address?.slice(0, 10)}...</span>
-                  <span>{new Date(msg.created_at).toLocaleDateString()}</span>
+              <div key={i} className={`border p-4 space-y-2 ${msg.read ? "border-white/10 bg-white/3" : "border-green-500/30 bg-green-400/5"}`}>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-mono text-white/50">
+                    From: {msg.sender_address?.slice(0,10)}…{msg.sender_address?.slice(-4)}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {!msg.read && <span className="text-[10px] text-green-400 font-semibold">NEW</span>}
+                    <span className="text-xs text-white/30">{msg.created_at ? new Date(msg.created_at).toLocaleDateString() : ""}</span>
+                  </div>
                 </div>
-                <div className="text-xs font-mono text-white/30 break-all">{msg.encrypted_content?.slice(0, 40)}...</div>
-                {!msg.read && <div className="text-[10px] text-green-400 mt-1">• New</div>}
+                {decrypted[msg.message_id] ? (
+                  <p className="text-sm text-white leading-relaxed">{decrypted[msg.message_id]}</p>
+                ) : (
+                  <p className="text-xs text-white/20 font-mono italic">Unable to decrypt — message not addressed to your current wallet</p>
+                )}
               </div>
             ))
           )}
