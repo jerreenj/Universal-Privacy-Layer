@@ -72,7 +72,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: StarletteRequest, call_next):
         # ── Auth gate — block all /api/* except public paths ──────────────────
         path = request.url.path
-        # Founder routes use their own X-Founder-Token header — skip session check
+        # Founder routes use their own session auth — skip user session check
         if path.startswith("/api/founder/"):
             pass
         elif path.startswith("/api/") and path not in self.PUBLIC_PATHS:
@@ -2765,18 +2765,39 @@ async def get_recent_errors(limit: int = 50, token: str = ""):
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FOUNDER MODE — completely isolated router, separate token, zero overlap
-# Route prefix: /api/founder  |  Auth: X-Founder-Token header (env: ADMIN_TOKEN)
+# Route prefix: /api/founder  |  Auth: POST /api/founder/auth → founder session token
+# Founder sessions are stored separately from user sessions (prefix "f:")
 # ═══════════════════════════════════════════════════════════════════════════════
 
 founder_router = APIRouter(prefix="/api/founder")
 
+# Founder sessions: token -> expiry (separate dict from user _sessions)
+_founder_sessions: dict = {}
+FOUNDER_SESSION_TTL = 60 * 60 * 12  # 12 hours
+
 def require_founder(request: StarletteRequest):
-    """Validates the founder token — completely separate from user sessions."""
-    token = request.headers.get("X-Founder-Token", "")
-    expected = os.environ.get("ADMIN_TOKEN", "")
-    if not expected or not token or token != expected:
+    """Validates founder session token from Authorization: Bearer header."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    token = auth.split(" ", 1)[1]
+    exp = _founder_sessions.get(token)
+    if not exp or _time.time() > exp:
+        _founder_sessions.pop(token, None)
         raise HTTPException(status_code=403, detail="Forbidden")
     return token
+
+
+@founder_router.post("/auth")
+async def founder_auth(request: StarletteRequest, token: str = Body(..., embed=True)):
+    """Exchange founder token for a session. Rate limited."""
+    rate_limit(request, max_calls=5, window=60)
+    expected = os.environ.get("ADMIN_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    session = secrets.token_hex(32)
+    _founder_sessions[session] = _time.time() + FOUNDER_SESSION_TTL
+    return {"granted": True, "session": session, "expires_in": FOUNDER_SESSION_TTL}
 
 
 @founder_router.get("/metrics", dependencies=[Depends(require_founder)])

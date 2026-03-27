@@ -2,16 +2,19 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { API } from "../config/chains";
 
 // ── Session storage — wiped on tab close ──────────────────────────────────────
-const FT_KEY = "ft";
-const getToken = () => sessionStorage.getItem(FT_KEY);
-const setToken = (t) => sessionStorage.setItem(FT_KEY, t);
-const clearToken = () => sessionStorage.removeItem(FT_KEY);
+const FS_KEY = "fs"; // stores the founder SESSION token (not the raw admin token)
+const getSession = () => sessionStorage.getItem(FS_KEY);
+const setSession = (t) => sessionStorage.setItem(FS_KEY, t);
+const clearSession = () => sessionStorage.removeItem(FS_KEY);
 
 async function founderFetch(path) {
   const res = await fetch(`${API}/founder${path}`, {
-    headers: { "X-Founder-Token": getToken() },
+    headers: {
+      "Authorization": `Bearer ${getSession()}`,
+      "Content-Type": "application/json",
+    },
   });
-  if (res.status === 403) { clearToken(); throw new Error("forbidden"); }
+  if (res.status === 403) { clearSession(); throw new Error("forbidden"); }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -47,11 +50,19 @@ function Gate({ onAuth }) {
     setErr(false);
     setLoading(true);
     try {
-      const res = await fetch(`${API}/founder/metrics`, {
-        headers: { "X-Founder-Token": val.trim() },
+      const res = await fetch(`${API}/founder/auth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: val.trim() }),
       });
-      if (res.ok) { setToken(val.trim()); onAuth(); }
-      else { setErr(true); setVal(""); }
+      if (res.ok) {
+        const data = await res.json();
+        setSession(data.session);
+        onAuth();
+      } else {
+        setErr(true);
+        setVal("");
+      }
     } catch { setErr(true); }
     finally { setLoading(false); }
   };
@@ -240,7 +251,7 @@ function Dashboard({ onLogout }) {
         <div style={s.topRight}>
           <span style={s.syncLabel}>{lastSync ? `Synced ${lastSync.toLocaleTimeString()}` : "Syncing…"}</span>
           <button data-testid="founder-refresh-btn" onClick={load} style={s.ghostBtn}>Refresh</button>
-          <button data-testid="founder-logout-btn" onClick={() => { clearToken(); onLogout(); }} style={s.lockBtn}>
+          <button data-testid="founder-logout-btn" onClick={() => { clearSession(); onLogout(); }} style={s.lockBtn}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             Lock
           </button>
@@ -413,7 +424,7 @@ function Dashboard({ onLogout }) {
 
 // ── Root ───────────────────────────────────────────────────────────────────────
 export default function FounderMode() {
-  const [authed, setAuthed] = useState(!!getToken());
+  const [authed, setAuthed] = useState(!!getSession());
 
   useEffect(() => {
     const meta = document.createElement("meta");
