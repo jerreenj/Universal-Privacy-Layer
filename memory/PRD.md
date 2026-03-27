@@ -25,7 +25,7 @@ privacycloak/
 
 ### Security Model
 - Public Mode: AccessGate → code "ROTATED-ACCESS-CODE" → session Bearer token → 8h TTL
-- Founder Mode: `/founder` route → `X-Founder-Token` header → `ADMIN_TOKEN` env var
+- Founder Mode: `/founder` route → `X-Founder-Token` header → operator env var
 - Both use sessionStorage only (wiped on tab close)
 - No cross-contamination between modes
 - All `/api/*` protected by SecurityHeadersMiddleware (founder routes bypass to own auth)
@@ -55,7 +55,7 @@ privacycloak/
 
 ### Access Credentials
 - Public access code: `ROTATED-ACCESS-CODE`
-- Founder token: stored in `ADMIN_TOKEN` env var in backend/.env
+- Founder token: stored securely in backend environment — never committed to repo
 
 ### Next Steps (Prioritized)
 1. P0: Deploy StealthAddressRegistry + PrivacyRelayer to all 7 chains (requires wallet funding)

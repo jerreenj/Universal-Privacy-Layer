@@ -230,7 +230,6 @@ MONGO_URL=
 DB_NAME=
 CORS_ORIGINS=
 ACCESS_CODE=
-ADMIN_TOKEN=
 ```
 
 **frontend/.env**
