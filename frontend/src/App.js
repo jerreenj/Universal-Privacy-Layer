@@ -1951,18 +1951,30 @@ function DeveloperAPI() {
 // ─── Access Gate ──────────────────────────────────────────────────────────────
 // Session token stored in memory only — never in localStorage
 let _sessionToken = sessionStorage.getItem("_upl_tok") || null;
+let _onSessionExpired = null; // callback set by PublicApp
 
 function setSessionToken(t) {
   _sessionToken = t;
   if (t) sessionStorage.setItem("_upl_tok", t);
   else sessionStorage.removeItem("_upl_tok");
-  // Attach to all axios requests automatically
   if (t) axios.defaults.headers.common["Authorization"] = `Bearer ${t}`;
   else delete axios.defaults.headers.common["Authorization"];
 }
 
 // Restore token on page load
 if (_sessionToken) axios.defaults.headers.common["Authorization"] = `Bearer ${_sessionToken}`;
+
+// Global interceptor — any 401 from backend clears session and shows gate
+axios.interceptors.response.use(
+  res => res,
+  err => {
+    if (err.response?.status === 401) {
+      setSessionToken(null);
+      if (_onSessionExpired) _onSessionExpired();
+    }
+    return Promise.reject(err);
+  }
+);
 
 function AccessGate({ onGranted }) {
   const [code, setCode] = useState("");
@@ -2860,30 +2872,35 @@ function Dashboard() {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 function PublicApp() {
+function PublicApp() {
   const [granted, setGranted] = useState(false);
-  const [checking, setChecking] = useState(true);
+
+  // Register callback so the global interceptor can kick user back to gate
+  _onSessionExpired = () => { setGranted(false); };
 
   useEffect(() => {
-    const tok = sessionStorage.getItem("_upl_tok");
-    if (!tok) { setChecking(false); return; }
-    // Verify token is still valid against backend
-    axios.defaults.headers.common["Authorization"] = `Bearer ${tok}`;
-    axios.get(`${API}/health`)
-      .then(() => { setGranted(true); })
+    if (!_sessionToken) return; // no token — show gate immediately
+    // Verify token is valid against a protected endpoint
+    axios.get(`${API}/stats`)
+      .then(() => setGranted(true))
       .catch(() => {
-        // Token expired — clear and show gate
-        sessionStorage.removeItem("_upl_tok");
-        delete axios.defaults.headers.common["Authorization"];
-      })
-      .finally(() => setChecking(false));
+        // 401 interceptor already cleared the token — just ensure gate shows
+        setGranted(false);
+      });
   }, []);
 
-  if (checking) return (
-    <div style={{ minHeight: "100vh", background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ width: 24, height: 24, border: "2px solid #333", borderTop: "2px solid #fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-    </div>
+  const handleGranted = () => setGranted(true);
+
+  if (!granted) return <AccessGate onGranted={handleGranted} />;
+
+  return (
+    <WalletProvider>
+      <Dashboard />
+      <Toaster position="bottom-right"
+        toastOptions={{ style: { background: "#000", border: "1px solid #333", color: "#fff" } }} />
+    </WalletProvider>
   );
-  if (!granted) return <AccessGate onGranted={() => setGranted(true)} />;
+}
 
   return (
     <WalletProvider>
