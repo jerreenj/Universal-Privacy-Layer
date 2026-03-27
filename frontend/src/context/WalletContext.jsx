@@ -74,6 +74,14 @@ export function WalletProvider({ children }) {
     setBalance(null);
     setHiddenBalance(null);
     setPrivacyWallet(null);
+    // Wipe any wallet session data from storage
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.startsWith("wc@") || k.startsWith("walletconnect") || k.startsWith("wagmi") || k.startsWith("WALLETCONNECT")) {
+          localStorage.removeItem(k);
+        }
+      });
+    } catch {}
   };
 
   const switchChain = useCallback(async (k) => {
@@ -127,8 +135,8 @@ export function WalletProvider({ children }) {
     try {
       const res = await axios.get(`${API}/balance/hidden/${address}`);
       setHiddenBalance(res.data);
-    } catch (e) {
-      console.error("Hidden balance fetch error:", e);
+    } catch {
+      // silent fail — do not log wallet data to console
     }
   }, [address]);
 

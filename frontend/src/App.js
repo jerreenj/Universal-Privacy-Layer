@@ -261,13 +261,13 @@ function DualSeedSetup() {
   const generateWallet = async () => {
     setLoading(true);
     try {
-      const res = await axios.post(`${API}/wallet/create`, { password: 'temp_' + Date.now() });
+      const res = await axios.post(`${API}/wallet/create`, {});
       setCreated(res.data);
       setMainSeed(res.data.main_seed_phrase);
       setPrivacySeed(res.data.privacy_seed_phrase);
       setStep(2);
-      toast.success("Dual wallet created!");
-    } catch (e) {
+      toast.success("Dual wallet created — write down your seed phrases NOW!");
+    } catch {
       toast.error("Failed to create wallet");
     }
     setLoading(false);

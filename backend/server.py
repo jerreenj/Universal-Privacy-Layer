@@ -272,7 +272,7 @@ class EncryptedReceiptResponse(BaseModel):
     created_at: str
 
 class WalletCreateRequest(BaseModel):
-    password: str
+    pass  # No sensitive fields accepted — keys generated server-side, returned once, never stored
 
 class WalletCreateResponse(BaseModel):
     wallet_id: str

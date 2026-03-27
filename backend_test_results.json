@@ -57,7 +57,7 @@
     {
       "test": "Balance Aggregation",
       "success": false,
-      "details": "HTTPSConnectionPool(host='doc-to-deployment.preview.emergentagent.com', port=443): Read timed out. (read timeout=20)",
+      "details": "HTTPSConnectionPool(host='privacycloak.in', port=443): Read timed out. (read timeout=20)",
       "timestamp": "2026-03-14T18:08:45.528922"
     }
   ]
