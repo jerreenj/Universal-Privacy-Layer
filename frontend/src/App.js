@@ -399,50 +399,37 @@ function DualSeedSetup() {
   );
 }
 
-// ─── Private Receive (Stealth) ────────────────────────────────────────────────
-function StealthContent() {
-  const { address, chain, vm } = useWallet();
-  const [stealth, setStealth] = useState(null);
-  const [loading, setLoading] = useState(false);
+// ─── Full Stealth Flow — Meta / Send / Receive ────────────────────────────────
+import { StealthMeta } from "./components/features/StealthMeta";
+import { StealthSend } from "./components/features/StealthSend";
+import { StealthReceive } from "./components/features/StealthReceive";
 
-  const generate = async () => {
-    if (!address) return toast.error("Connect wallet first");
-    setLoading(true);
-    try {
-      const r = await axios.post(`${API}/stealth/generate`, { public_address: address, chain });
-      setStealth(r.data);
-      toast.success("Stealth address generated");
-    } catch { toast.error("Generation failed"); }
-    setLoading(false);
-  };
+function StealthContent() {
+  const { address, chain, provider } = useWallet();
+  const [tab, setTab] = useState("meta");
+  const tabs = [
+    { id: "meta",    label: "My Identity" },
+    { id: "send",    label: "Send Privately" },
+    { id: "receive", label: "Scan & Receive" },
+  ];
 
   return (
-    <div className="space-y-6">
-      <p className="text-gray-400 text-sm">Generate a one-time stealth address. Share it with senders — funds arrive untraceable.</p>
-      <div className="bg-white/5 border border-white/10 p-4">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-          <span className="text-xs text-white/50">Chain: {CHAINS[chain]?.name}</span>
-        </div>
+    <div className="space-y-5">
+      <div className="flex gap-1 border-b border-white/10">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            data-testid={`stealth-tab-${t.id}`}
+            onClick={() => setTab(t.id)}
+            className={`px-4 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${tab === t.id ? "border-white text-white" : "border-transparent text-white/40 hover:text-white/70"}`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
-      <button data-testid="generate-stealth-btn" onClick={generate} disabled={loading}
-        className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
-        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Fingerprint className="w-5 h-5" />}
-        Generate Stealth Address
-      </button>
-      {stealth && (
-        <div className="bg-white/5 border border-white/20 p-4 space-y-3">
-          <div className="flex justify-between items-center">
-            <span className="text-xs text-gray-500 uppercase tracking-wider">Your Stealth Address</span>
-            <CopyButton text={stealth.stealth_address} />
-          </div>
-          <p className="font-mono text-xs md:text-sm break-all text-white">{stealth.stealth_address}</p>
-          <div className="flex items-center gap-2 text-xs text-green-400">
-            <Check className="w-3 h-3" />
-            One-time use — share with sender
-          </div>
-        </div>
-      )}
+      {tab === "meta"    && <StealthMeta address={address} />}
+      {tab === "send"    && <StealthSend address={address} chain={chain} provider={provider} />}
+      {tab === "receive" && <StealthReceive address={address} provider={provider} />}
     </div>
   );
 }

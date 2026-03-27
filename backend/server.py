@@ -2764,6 +2764,110 @@ async def get_recent_errors(limit: int = 50, token: str = ""):
     return {"errors": errors, "count": len(errors)}
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# STEALTH FULL FLOW — Meta-addresses, Announcements, Scanning
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MetaAddressRegister(BaseModel):
+    wallet_address: str
+    spend_pub: str       # compressed 33-byte hex pubkey
+    view_pub: str        # compressed 33-byte hex pubkey
+    meta_address: str    # st:eth:0x<spend><view>
+    chain: str = "all"
+
+class StealthAnnouncement(BaseModel):
+    sender_address: str
+    stealth_address: str
+    ephemeral_pub: str   # compressed 33-byte hex
+    view_tag: str        # 1 byte hex (2 chars)
+    amount_wei: str      # string to avoid int overflow
+    chain: str
+    tx_hash: str = ""
+
+@api_router.post("/stealth/meta/register")
+async def register_meta_address(request: MetaAddressRegister):
+    """Register or update a stealth meta-address for a wallet."""
+    doc = {
+        "wallet_address": request.wallet_address.lower(),
+        "spend_pub": request.spend_pub,
+        "view_pub": request.view_pub,
+        "meta_address": request.meta_address,
+        "chain": request.chain,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.stealth_meta.update_one(
+        {"wallet_address": request.wallet_address.lower()},
+        {"$set": doc},
+        upsert=True
+    )
+    return {"registered": True, "meta_address": request.meta_address}
+
+@api_router.get("/stealth/meta/{wallet_address}")
+async def get_meta_address(wallet_address: str):
+    """Get stealth meta-address for a wallet."""
+    doc = await db.stealth_meta.find_one(
+        {"wallet_address": wallet_address.lower()}, {"_id": 0}
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="No meta-address registered")
+    return doc
+
+@api_router.post("/stealth/announce")
+async def post_announcement(request: StealthAnnouncement):
+    """Post a stealth announcement after sending. Acts as the off-chain relay."""
+    doc = {
+        "announcement_id": str(uuid.uuid4()),
+        "sender_address": request.sender_address,
+        "stealth_address": request.stealth_address,
+        "ephemeral_pub": request.ephemeral_pub,
+        "view_tag": request.view_tag,
+        "amount_wei": request.amount_wei,
+        "chain": request.chain,
+        "tx_hash": request.tx_hash,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.stealth_announcements.insert_one(doc)
+    return {"announced": True, "announcement_id": doc["announcement_id"]}
+
+@api_router.get("/stealth/announcements")
+async def get_announcements(chain: str = "all", limit: int = 500):
+    """Get all stealth announcements for scanning. Recipients scan these to find their payments."""
+    query = {} if chain == "all" else {"chain": chain}
+    docs = await db.stealth_announcements.find(
+        query, {"_id": 0}
+    ).sort("created_at", -1).limit(min(limit, 1000)).to_list(min(limit, 1000))
+    return {"announcements": docs, "count": len(docs)}
+
+@api_router.post("/stealth/check-balance")
+async def check_stealth_balance(addresses: List[str] = Body(..., embed=True), chain: str = Body(..., embed=True)):
+    """Check ETH balance of multiple stealth addresses via RPC."""
+    rpc_map = {
+        "base":        "https://rpc.ankr.com/base",
+        "arbitrum":    "https://rpc.ankr.com/arbitrum",
+        "polygon":     "https://rpc.ankr.com/polygon",
+        "optimism":    "https://rpc.ankr.com/optimism",
+        "bnb":         "https://rpc.ankr.com/bsc",
+        "avalanche":   "https://rpc.ankr.com/avalanche",
+        "hyperliquid": "https://rpc.hyperliquid.xyz/evm",
+    }
+    rpc = rpc_map.get(chain)
+    if not rpc:
+        raise HTTPException(status_code=400, detail="Unsupported chain")
+
+    results = {}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for addr in addresses[:50]:  # max 50 at once
+            try:
+                r = await client.post(rpc, json={
+                    "jsonrpc": "2.0", "method": "eth_getBalance",
+                    "params": [addr, "latest"], "id": 1
+                })
+                bal_hex = r.json().get("result", "0x0")
+                results[addr] = str(int(bal_hex, 16))
+            except Exception:
+                results[addr] = "0"
+    return {"balances": results, "chain": chain}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # FOUNDER MODE — completely isolated router, separate token, zero overlap
 # Route prefix: /api/founder  |  Auth: POST /api/founder/auth → founder session token
 # Founder sessions are stored separately from user sessions (prefix "f:")
