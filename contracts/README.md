@@ -1,75 +1,33 @@
-# UPL Smart Contracts
+# PrivacyCloak — Smart Contracts
+
+Solidity contracts deployed across 7 EVM chains.
 
 ## Contracts
 
-### 1. PrivacyRelayer.sol
-Main privacy relayer contract for private ETH transfers.
+| Contract | Description |
+|----------|-------------|
+| `PrivacyRelayer.sol` | On-chain relayer for gasless meta-transactions |
+| `StealthAddressRegistry.sol` | Stealth address announcement registry |
+| `UPLVerifier.sol` | Main ZKP verifier (wraps Groth16Verifier) |
+| `Groth16Verifier.sol` | Auto-generated Circom/snarkjs verifier |
+| `UniswapPrivacyWrapper.sol` | Uniswap V3 router privacy wrapper |
 
-**Features:**
-- Private send to stealth addresses
-- Batch transfers
-- 0.05% fee (configurable)
-- View tag registry
+## Deployed Addresses
 
-### 2. StealthAddressRegistry.sol
-Registry for stealth address announcements.
+See `deployed_*.json` files for each chain's contract addresses.
 
-**Features:**
-- Ephemeral public key storage
-- View tag indexing
-- Range scanning for efficient sync
+## Deployer Wallet
+`0x88993B262B8a89fe9888AD3bc0aF04b89932a9d4`
 
-### 3. UniswapPrivacyWrapper.sol
-Privacy wrapper for Uniswap V3 swaps.
+Fund with gas tokens before deploying. Mnemonic must be set as `MNEMONIC` environment variable — never hardcode it.
 
-**Features:**
-- Private ETH → Token swaps
-- Private Token → ETH swaps
-- Private Token → Token swaps
-- Minimal event emission for privacy
-
-## Deployment
-
-### Prerequisites
-1. Get testnet ETH from faucets:
-   - Ethereum Sepolia: https://www.alchemy.com/faucets/ethereum-sepolia
-   - Arbitrum Sepolia: https://www.alchemy.com/faucets/arbitrum-sepolia
-   - Base Sepolia: https://www.coinbase.com/faucets
-
-2. Install dependencies:
-   ```bash
-   npm install @openzeppelin/contracts hardhat
-   ```
-
-### Deploy
+## Deploy
 ```bash
-# Set deployer mnemonic
-export DEPLOYER_MNEMONIC="your seed phrase here"
-
-# Deploy to Base Sepolia (cheapest gas)
-export DEPLOY_CHAIN=base_sepolia
-python deploy.py
+export MNEMONIC="your twelve word seed phrase here"
+python deploy.py --chain base
+python deploy.py --chain arbitrum
+python deploy.py --chain polygon
 ```
 
-## Contract Addresses (After Deployment)
-
-| Chain | PrivacyRelayer | StealthRegistry | UniswapWrapper |
-|-------|----------------|-----------------|----------------|
-| Ethereum Sepolia | TBD | TBD | TBD |
-| Arbitrum Sepolia | TBD | TBD | TBD |
-| Base Sepolia | TBD | TBD | TBD |
-
-## Uniswap V3 Router Addresses
-
-| Chain | Router | WETH |
-|-------|--------|------|
-| Ethereum Sepolia | 0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E | 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14 |
-| Arbitrum Sepolia | 0x101F443B4d1b059569D643917553c771E1b9663E | 0x980B62Da83eFf3D4576C647993b0c1D7faf17c73 |
-| Base Sepolia | 0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4 | 0x4200000000000000000000000000000000000006 |
-
-## Security Notes
-
-1. **Non-Custodial**: Contracts never hold user funds
-2. **Stateless**: No user data stored on-chain
-3. **Auditable**: Open source, simple logic
-4. **Upgradeable**: Owner can update fee rates only
+## Chains
+- Base, Arbitrum, Polygon, Optimism, BNB Chain, Avalanche, Hyperliquid
