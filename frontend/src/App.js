@@ -2872,7 +2872,6 @@ function Dashboard() {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 function PublicApp() {
-function PublicApp() {
   const [granted, setGranted] = useState(false);
 
   // Register callback so the global interceptor can kick user back to gate
@@ -2892,15 +2891,6 @@ function PublicApp() {
   const handleGranted = () => setGranted(true);
 
   if (!granted) return <AccessGate onGranted={handleGranted} />;
-
-  return (
-    <WalletProvider>
-      <Dashboard />
-      <Toaster position="bottom-right"
-        toastOptions={{ style: { background: "#000", border: "1px solid #333", color: "#fff" } }} />
-    </WalletProvider>
-  );
-}
 
   return (
     <WalletProvider>
