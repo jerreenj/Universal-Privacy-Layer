@@ -1841,6 +1841,55 @@ function DeveloperAPI() {
   );
 }
 
+// ─── Access Gate ──────────────────────────────────────────────────────────────
+function AccessGate({ onGranted }) {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState(false);
+  const [shake, setShake] = useState(false);
+
+  const attempt = () => {
+    if (code === process.env.REACT_APP_ACCESS_CODE) {
+      sessionStorage.setItem("_upl_access", "1");
+      onGranted();
+    } else {
+      setError(true);
+      setShake(true);
+      setCode("");
+      setTimeout(() => setShake(false), 600);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-black flex items-center justify-center">
+      <div className={`w-full max-w-xs px-8 py-10 border border-white/10 bg-white/[0.02] text-center ${shake ? "animate-shake" : ""}`}
+        style={{ animation: shake ? "shake 0.5s" : "none" }}>
+        <div className="w-2 h-2 rounded-full bg-green-400 mx-auto mb-6 animate-pulse" />
+        <h2 className="text-sm font-semibold tracking-[0.2em] uppercase text-white/60 mb-1">Universal Privacy Layer</h2>
+        <p className="text-xs text-white/20 mb-8">Restricted Access</p>
+        <input
+          data-testid="access-code-input"
+          type="password"
+          value={code}
+          onChange={e => { setCode(e.target.value); setError(false); }}
+          onKeyDown={e => e.key === "Enter" && attempt()}
+          placeholder="Enter access code"
+          autoFocus
+          className={`w-full bg-transparent border ${error ? "border-red-500/60 text-red-400" : "border-white/20 text-white"} p-3 text-center font-mono text-sm outline-none focus:border-white/50 tracking-widest`}
+        />
+        {error && <p className="text-red-400 text-xs mt-2">Invalid access code</p>}
+        <button
+          data-testid="access-code-submit"
+          onClick={attempt}
+          className="w-full mt-4 py-3 bg-white text-black text-xs font-bold uppercase tracking-[0.15em] hover:bg-white/90 transition-all"
+        >
+          Enter
+        </button>
+      </div>
+      <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}`}</style>
+    </div>
+  );
+}
+
 // ─── Landing ──────────────────────────────────────────────────────────────────
 function Landing() {
   const { connectWallet, connecting, vm, switchChain, chain } = useWallet();
@@ -2683,6 +2732,12 @@ function Dashboard() {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 function App() {
+  const [granted, setGranted] = useState(
+    () => sessionStorage.getItem("_upl_access") === "1"
+  );
+
+  if (!granted) return <AccessGate onGranted={() => setGranted(true)} />;
+
   return (
     <WalletProvider>
       <Dashboard />

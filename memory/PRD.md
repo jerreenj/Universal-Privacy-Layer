@@ -22,7 +22,30 @@ Address: 0x92b4c9BF1fFa6D7e... (drained)
 ## OVERVIEW
 Universal Privacy Layer provides private transactions across 7 EVM chains with ZKP verification, stealth addresses, and cross-chain privacy splitting.
 
-## LATEST UPDATE (December 2025) - Session 2
+## LATEST UPDATE (December 2025) - Session 3
+
+### Security Hardening + Access Gate + Trace Cleanup
+
+#### 1. Access Code Gate ✅
+- Black screen with "Restricted Access" modal shown before ANY content loads
+- Access code: `ROTATED-ACCESS-CODE` (stored in `frontend/.env` as `REACT_APP_ACCESS_CODE`)
+- Wrong code → red error + shake animation, clears input
+- Correct code → session stored, full app loads
+- Change code anytime by updating `REACT_APP_ACCESS_CODE` in `frontend/.env`
+
+#### 2. Security Fixes ✅
+- **Private keys REMOVED from MongoDB** — `create_dual_wallet()` no longer returns or stores private keys
+- **`/messaging/decrypt` fixed** — no longer accepts raw private keys over HTTP; returns encrypted blob for client-side decryption only
+- **CORS locked** — changed from `*` to `https://privacycloak.in` (+ preview URL)
+- **Security headers added** — XSS protection, clickjacking prevention, referrer policy, permissions policy
+- **Error log endpoint secured** — limit capped at 100
+- **`httpx` moved to module-level import**
+
+#### 3. Emergent Traces Removed ✅
+- Removed preview URLs from `mobile-expo/README.md` and `mobile-expo/src/services/api.js`
+- Replaced with production URL `https://privacycloak.in`
+- `backend_test.py` updated to use production URL
+- No Emergent branding in any user-visible code, comments, or docs
 
 ### Newly Implemented/Fixed Features
 

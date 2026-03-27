@@ -11,7 +11,7 @@ from datetime import datetime
 from eth_account import Account
 
 class UPLAPITester:
-    def __init__(self, base_url="https://privacy-dex-pro.preview.emergentagent.com"):
+    def __init__(self, base_url="https://privacycloak.in"):
         self.base_url = base_url
         self.api_url = f"{base_url}/api"
         self.tests_run = 0

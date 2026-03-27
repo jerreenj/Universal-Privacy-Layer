@@ -2661,8 +2661,8 @@ async def log_frontend_error(error: Dict[str, Any] = Body(...)):
 
 @api_router.get("/errors/recent")
 async def get_recent_errors(limit: int = 50):
-    """Get recent errors (admin only in production)"""
-    errors = await db.error_logs.find({}, {"_id": 0}).sort("logged_at", -1).limit(limit).to_list(limit)
+    """Get recent errors — requires internal access"""
+    errors = await db.error_logs.find({}, {"_id": 0}).sort("logged_at", -1).limit(min(limit, 100)).to_list(min(limit, 100))
     return {"errors": errors, "count": len(errors)}
 
 # Include router
@@ -2671,9 +2671,9 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=os.environ.get('CORS_ORIGINS', 'https://privacycloak.in').split(','),
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 @app.on_event("shutdown")
