@@ -32,12 +32,10 @@ function BackButton({ onClick }) {
 }
 
 function copyToClip(text) {
-  try { navigator.clipboard.writeText(text); } catch {
-    const el = Object.assign(document.createElement("textarea"), { value: text });
-    Object.assign(el.style, { position: "fixed", opacity: "0" });
-    document.body.appendChild(el); el.select();
-    document.execCommand("copy"); document.body.removeChild(el);
-  }
+  const el = Object.assign(document.createElement("textarea"), { value: text });
+  Object.assign(el.style, { position: "fixed", top: 0, left: 0, opacity: "0" });
+  document.body.appendChild(el); el.focus(); el.select();
+  document.execCommand("copy"); document.body.removeChild(el);
 }
 
 function CopyButton({ text }) {
