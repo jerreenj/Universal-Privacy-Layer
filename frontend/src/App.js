@@ -1863,6 +1863,21 @@ function DeveloperAPI() {
 }
 
 // ─── Access Gate ──────────────────────────────────────────────────────────────
+// Session token stored in memory only — never in localStorage
+let _sessionToken = sessionStorage.getItem("_upl_tok") || null;
+
+function setSessionToken(t) {
+  _sessionToken = t;
+  if (t) sessionStorage.setItem("_upl_tok", t);
+  else sessionStorage.removeItem("_upl_tok");
+  // Attach to all axios requests automatically
+  if (t) axios.defaults.headers.common["Authorization"] = `Bearer ${t}`;
+  else delete axios.defaults.headers.common["Authorization"];
+}
+
+// Restore token on page load
+if (_sessionToken) axios.defaults.headers.common["Authorization"] = `Bearer ${_sessionToken}`;
+
 function AccessGate({ onGranted }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState(false);
@@ -1873,8 +1888,8 @@ function AccessGate({ onGranted }) {
     if (!code) return;
     setLoading(true);
     try {
-      await axios.post(`${process.env.REACT_APP_BACKEND_URL}/api/auth/verify-access`, { code });
-      sessionStorage.setItem("_upl_access", "1");
+      const res = await axios.post(`${process.env.REACT_APP_BACKEND_URL}/api/auth/verify-access`, { code });
+      setSessionToken(res.data.token);
       onGranted();
     } catch {
       setError(true);
@@ -1887,7 +1902,7 @@ function AccessGate({ onGranted }) {
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center">
-      <div className={`w-full max-w-xs px-8 py-10 border border-white/10 bg-white/[0.02] text-center`}
+      <div className="w-full max-w-xs px-8 py-10 border border-white/10 bg-white/[0.02] text-center"
         style={{ animation: shake ? "shake 0.5s" : "none" }}>
         <div className="w-2 h-2 rounded-full bg-green-400 mx-auto mb-6 animate-pulse" />
         <h2 className="text-sm font-semibold tracking-[0.2em] uppercase text-white/60 mb-1">Universal Privacy Layer</h2>
@@ -2759,9 +2774,11 @@ function Dashboard() {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 function App() {
-  const [granted, setGranted] = useState(
-    () => sessionStorage.getItem("_upl_access") === "1"
-  );
+  const [granted, setGranted] = useState(() => {
+    const tok = sessionStorage.getItem("_upl_tok");
+    if (tok) { axios.defaults.headers.common["Authorization"] = `Bearer ${tok}`; return true; }
+    return false;
+  });
 
   if (!granted) return <AccessGate onGranted={() => setGranted(true)} />;
 

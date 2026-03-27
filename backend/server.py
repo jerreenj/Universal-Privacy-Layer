@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Body
+from fastapi import FastAPI, APIRouter, HTTPException, Body, Depends, Request as FastAPIRequest
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -43,6 +43,9 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# ── Protected router — all routes below require a valid session token ──────────
+protected_router = APIRouter(prefix="/api", dependencies=[Depends(lambda request: require_auth(request))])
+
 # ── Security Headers Middleware ───────────────────────────────────────────────
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
@@ -63,7 +66,22 @@ def rate_limit(request: StarletteRequest, max_calls: int = 20, window: int = 60)
         raise HTTPException(status_code=429, detail="Too many requests")
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    # Public endpoints that don't require a session token
+    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access"}
+
     async def dispatch(self, request: StarletteRequest, call_next):
+        # ── Auth gate — block all /api/* except public paths ──────────────────
+        path = request.url.path
+        if path.startswith("/api/") and path not in self.PUBLIC_PATHS:
+            auth = request.headers.get("Authorization", "")
+            if not auth.startswith("Bearer "):
+                return JSONResponse({"detail": "Authorization required"}, status_code=401)
+            token = auth.split(" ", 1)[1]
+            exp = _sessions.get(token)
+            if not exp or _time.time() > exp:
+                _sessions.pop(token, None)
+                return JSONResponse({"detail": "Session expired — re-authenticate"}, status_code=401)
+
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -73,6 +91,46 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+# ── Session Token Auth ────────────────────────────────────────────────────────
+# After /auth/verify-access, frontend gets a short-lived session token.
+# Every other endpoint requires: Authorization: Bearer <token>
+_sessions: dict = {}  # token -> expiry timestamp
+SESSION_TTL = 60 * 60 * 8  # 8 hours
+
+def _new_token() -> str:
+    return secrets.token_hex(32)
+
+def require_auth(request: StarletteRequest):
+    """Dependency: validates session token on every protected endpoint."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization required")
+    token = auth.split(" ", 1)[1]
+    exp = _sessions.get(token)
+    if not exp or _time.time() > exp:
+        _sessions.pop(token, None)
+        raise HTTPException(status_code=401, detail="Session expired — re-authenticate")
+    return token
+
+# ── EVM address validator ─────────────────────────────────────────────────────
+_EVM_RE = re.compile(r'^0x[a-fA-F0-9]{40}$')
+
+def validate_address(addr: str) -> str:
+    """Raise 400 if not a valid EVM address. Returns checksum address."""
+    if not _EVM_RE.match(addr or ""):
+        raise HTTPException(status_code=400, detail="Invalid EVM address format")
+    return Web3.to_checksum_address(addr)
+
+# ── Request body size limit (1 MB) ────────────────────────────────────────────
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > 1_048_576:
+            raise HTTPException(status_code=413, detail="Request too large")
+        return await call_next(request)
+
+app.add_middleware(RequestSizeLimitMiddleware)
 
 # ZKP Verifier addresses (deployed on all chains)
 ZKP_VERIFIER_ADDRESSES = {
@@ -389,12 +447,14 @@ async def root():
 
 @api_router.post("/auth/verify-access")
 async def verify_access(request: StarletteRequest, code: str = Body(..., embed=True)):
-    """Verify access code — 5 attempts per minute per IP"""
+    """Verify access code — issues session token valid for 8 hours. 5 attempts/min per IP."""
     rate_limit(request, max_calls=5, window=60)
     expected = os.environ.get("ACCESS_CODE", "")
     if not expected or code != expected:
         raise HTTPException(status_code=401, detail="Invalid access code")
-    return {"granted": True}
+    token = _new_token()
+    _sessions[token] = _time.time() + SESSION_TTL
+    return {"granted": True, "token": token, "expires_in": SESSION_TTL}
 
 @api_router.get("/health")
 async def health():
