@@ -2,39 +2,37 @@
 node_modules/
 __pycache__/
 *.pyc
-.Python
 venv/
 env/
 
 # Build outputs
 frontend/build/
-mobile-expo/dist/
-mobile-expo/web-build/
 *.tsbuildinfo
 
-# Environment — NEVER commit these
+# Environment — never commit
 .env
-.env.local
-.env.production
+.env.*
 backend/.env
 frontend/.env
 
-# Secrets & keys
+# Secrets
 *.pem
 *.key
-*.p12
 mnemonic.txt
 seed.txt
 
-# Logs
+# Deployment internals
+contracts/deployed_*.json
+contracts/verifier_addresses.json
+contracts/deploy*.py
+contracts/sui/
+
+# Logs & test artifacts
 *.log
 logs/
-
-# Test artifacts
 test_reports/
-backend_test_results.json
-test_result.md
-backend_test.py
+*.xml
+backend_test*
 
 # Editor
 .DS_Store
@@ -42,11 +40,8 @@ backend_test.py
 .idea/
 *.swp
 
-# Platform internals
+# Platform
 .emergent/
+.ruff_cache/
 frontend/node_modules/.cache/default-development/9.pack
 frontend/node_modules/.cache/default-development/5.pack
--e 
-# Environment files
-*.env
-*.env.*
