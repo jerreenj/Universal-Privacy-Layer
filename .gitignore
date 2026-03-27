@@ -45,3 +45,7 @@ backend_test*
 .ruff_cache/
 frontend/node_modules/.cache/default-development/9.pack
 frontend/node_modules/.cache/default-development/5.pack
+-e 
+# Environment files
+*.env
+*.env.*
