@@ -18,6 +18,7 @@ from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 import base64
 import json
+import re
 import httpx
 from web3 import Web3
 
@@ -365,6 +366,14 @@ def create_dual_wallet() -> dict:
 async def root():
     return {"message": "Universal Privacy Layer API", "version": "1.0.0"}
 
+@api_router.post("/auth/verify-access")
+async def verify_access(code: str = Body(..., embed=True)):
+    """Verify access code — code never stored in frontend bundle"""
+    expected = os.environ.get("ACCESS_CODE", "")
+    if not expected or code != expected:
+        raise HTTPException(status_code=401, detail="Invalid access code")
+    return {"granted": True}
+
 @api_router.get("/health")
 async def health():
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
@@ -446,7 +455,7 @@ async def get_swap_quote(request: SwapQuoteRequest):
         raise
     except Exception as e:
         logger.error(f"Swap quote error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # Record a swap transaction
 @api_router.post("/swap/record")
@@ -480,7 +489,7 @@ async def record_swap(
         return {"success": True, "swap_id": doc["id"]}
     except Exception as e:
         logger.error(f"Swap record error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # Get available tokens for swapping
 @api_router.get("/swap/tokens/{chain}")
@@ -530,7 +539,7 @@ async def create_wallet(request: WalletCreateRequest):
         )
     except Exception as e:
         logger.error(f"Wallet creation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # Stealth Address Generation
 @api_router.post("/stealth/generate", response_model=StealthAddressResponse)
@@ -562,7 +571,7 @@ async def generate_stealth(request: StealthAddressRequest):
         )
     except Exception as e:
         logger.error(f"Stealth generation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # Encrypted Receipt System
 @api_router.post("/receipt/create", response_model=EncryptedReceiptResponse)
@@ -600,7 +609,7 @@ async def create_receipt(request: EncryptedReceiptRequest):
         )
     except Exception as e:
         logger.error(f"Receipt creation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/receipt/decrypt")
 async def decrypt_receipt_api(request: DecryptReceiptRequest):
@@ -621,7 +630,7 @@ async def decrypt_receipt_api(request: DecryptReceiptRequest):
         raise
     except Exception as e:
         logger.error(f"Receipt decryption error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # Transaction History
 @api_router.get("/transactions/{address}")
@@ -635,7 +644,7 @@ async def get_transactions(address: str, chain: str = "ethereum_sepolia"):
         return {"transactions": transactions}
     except Exception as e:
         logger.error(f"Transaction fetch error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/transactions/record")
 async def record_transaction(
@@ -664,7 +673,7 @@ async def record_transaction(
         return {"success": True, "transaction_id": doc["id"]}
     except Exception as e:
         logger.error(f"Transaction record error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # Stealth Address Scanning
 @api_router.get("/stealth/scan/{address}")
@@ -678,7 +687,7 @@ async def scan_stealth_addresses(address: str):
         return {"stealth_addresses": stealth_addresses}
     except Exception as e:
         logger.error(f"Stealth scan error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # Balance Aggregation (Hidden Balance Feature)
 @api_router.get("/balance/{address}")
@@ -723,7 +732,7 @@ async def get_hidden_balance(address: str, chain: str = "ethereum_sepolia"):
         raise
     except Exception as e:
         logger.error(f"Balance fetch error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # ===================== ENHANCED FEATURES =====================
 
@@ -809,7 +818,7 @@ async def get_full_hidden_balance(address: str):
         return result
     except Exception as e:
         logger.error(f"Hidden balance error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # --- Transaction History (Enhanced) ---
 @api_router.get("/transactions/history/{address}")
@@ -819,9 +828,9 @@ async def get_full_transaction_history(address: str, limit: int = 50):
         # Get transactions where user is sender or recipient
         transactions = await db.transactions.find(
             {"$or": [
-                {"from_address": {"$regex": address, "$options": "i"}},
-                {"to_address": {"$regex": address, "$options": "i"}},
-                {"recipient_stealth": {"$regex": address, "$options": "i"}}
+                {"from_address": {"$regex": re.escape(address), "$options": "i"}},
+                {"to_address": {"$regex": re.escape(address), "$options": "i"}},
+                {"recipient_stealth": {"$regex": re.escape(address), "$options": "i"}}
             ]},
             {"_id": 0}
         ).sort("created_at", -1).to_list(limit)
@@ -855,7 +864,7 @@ async def get_full_transaction_history(address: str, limit: int = 50):
         }
     except Exception as e:
         logger.error(f"Transaction history error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # --- Privacy Wallet Registration ---
 class PrivacyWalletRegister(BaseModel):
@@ -887,7 +896,7 @@ async def register_privacy_wallet(request: PrivacyWalletRegister):
         return {"success": True, "wallet_id": doc["id"]}
     except Exception as e:
         logger.error(f"Privacy wallet registration error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/wallet/privacy/{address}")
 async def get_privacy_wallet(address: str):
@@ -902,7 +911,7 @@ async def get_privacy_wallet(address: str):
         return {"registered": True, "wallet": wallet}
     except Exception as e:
         logger.error(f"Privacy wallet fetch error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # --- NFT Privacy Proxy ---
 class NFTProxyRequest(BaseModel):
@@ -947,7 +956,7 @@ async def create_nft_proxy_transaction(request: NFTProxyRequest):
         }
     except Exception as e:
         logger.error(f"NFT proxy error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # --- Token Approval Privacy ---
 class TokenApprovalRequest(BaseModel):
@@ -987,7 +996,7 @@ async def create_disposable_approval(request: TokenApprovalRequest):
         }
     except Exception as e:
         logger.error(f"Disposable approval error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # --- Smart Contract Privacy Proxy ---
 class ContractProxyRequest(BaseModel):
@@ -1029,7 +1038,7 @@ async def create_contract_proxy(request: ContractProxyRequest):
         }
     except Exception as e:
         logger.error(f"Contract proxy error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # --- Relayer Stats ---
 @api_router.get("/stats")
@@ -1054,7 +1063,7 @@ async def get_platform_stats():
         }
     except Exception as e:
         logger.error(f"Stats error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # ===================== NEW FEATURES =====================
 
@@ -1108,7 +1117,7 @@ async def generate_zkp_inputs(
         }
     except Exception as e:
         logger.error(f"ZKP input generation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 class ZKPVerifyOnChainRequest(BaseModel):
     proof_a: List[str]
@@ -1166,7 +1175,7 @@ async def submit_zkp_proof(request: ZKPProofRequest):
         }
     except Exception as e:
         logger.error(f"ZKP proof submission error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/zkp/verify-onchain")
 async def verify_proof_onchain(request: ZKPVerifyOnChainRequest):
@@ -1225,7 +1234,7 @@ async def verify_proof_onchain(request: ZKPVerifyOnChainRequest):
         raise
     except Exception as e:
         logger.error(f"On-chain verification error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/zkp/verifier-info/{chain}")
 async def get_verifier_info(chain: str):
@@ -1264,7 +1273,7 @@ async def get_verifier_info(chain: str):
         raise
     except Exception as e:
         logger.error(f"Verifier info error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/zkp/proof/{proof_id}")
 async def get_zkp_proof(proof_id: str):
@@ -1278,7 +1287,7 @@ async def get_zkp_proof(proof_id: str):
         raise
     except Exception as e:
         logger.error(f"ZKP proof fetch error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # --- 2. PRIVATE RELAYER ON-CHAIN ---
 PRIVACY_RELAYER_ABI = [
@@ -1359,7 +1368,7 @@ async def prepare_relayer_transaction(request: RelayerTxRequest):
         raise
     except Exception as e:
         logger.error(f"Relayer tx preparation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/relayer/stats/{chain}")
 async def get_relayer_stats(chain: str):
@@ -1392,7 +1401,7 @@ async def get_relayer_stats(chain: str):
         raise
     except Exception as e:
         logger.error(f"Relayer stats error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # --- 3. CROSS-CHAIN PRIVACY SPLITTING ---
 class CrossChainSplitRequest(BaseModel):
@@ -1462,7 +1471,7 @@ async def prepare_cross_chain_split(request: CrossChainSplitRequest):
         raise
     except Exception as e:
         logger.error(f"Cross-chain split error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/split/update-status")
 async def update_split_status(
@@ -1495,7 +1504,7 @@ async def update_split_status(
         return {"success": True, "split_id": split_id}
     except Exception as e:
         logger.error(f"Split status update error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/split/{split_id}")
 async def get_split_status(split_id: str):
@@ -1509,7 +1518,7 @@ async def get_split_status(split_id: str):
         raise
     except Exception as e:
         logger.error(f"Split fetch error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # --- 4. ENCRYPTED MESSAGING ---
 class EncryptedMessageRequest(BaseModel):
@@ -1562,19 +1571,19 @@ async def send_encrypted_message(request: EncryptedMessageRequest):
         }
     except Exception as e:
         logger.error(f"Encrypted message send error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/messaging/inbox/{address}")
 async def get_encrypted_inbox(address: str, limit: int = 50):
     """Get encrypted messages for an address"""
     try:
         messages = await db.encrypted_messages.find(
-            {"recipient_address": {"$regex": address, "$options": "i"}},
+            {"recipient_address": {"$regex": re.escape(address), "$options": "i"}},
             {"_id": 0}
         ).sort("created_at", -1).to_list(limit)
         
         unread_count = await db.encrypted_messages.count_documents({
-            "recipient_address": {"$regex": address, "$options": "i"},
+            "recipient_address": {"$regex": re.escape(address), "$options": "i"},
             "read": False
         })
         
@@ -1586,7 +1595,7 @@ async def get_encrypted_inbox(address: str, limit: int = 50):
         }
     except Exception as e:
         logger.error(f"Inbox fetch error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/messaging/decrypt")
 async def decrypt_message(
@@ -1674,7 +1683,7 @@ async def create_multisig_wallet(request: MultisigCreateRequest):
         raise
     except Exception as e:
         logger.error(f"Multisig creation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/multisig/propose")
 async def propose_multisig_transaction(
@@ -1723,7 +1732,7 @@ async def propose_multisig_transaction(
         raise
     except Exception as e:
         logger.error(f"Multisig proposal error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/multisig/sign")
 async def sign_multisig_proposal(request: MultisigSignRequest):
@@ -1779,7 +1788,7 @@ async def sign_multisig_proposal(request: MultisigSignRequest):
         raise
     except Exception as e:
         logger.error(f"Multisig sign error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/multisig/{multisig_id}")
 async def get_multisig(multisig_id: str):
@@ -1793,14 +1802,14 @@ async def get_multisig(multisig_id: str):
         raise
     except Exception as e:
         logger.error(f"Multisig fetch error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/multisig/user/{address}")
 async def get_user_multisigs(address: str):
     """Get all multisigs where user is an owner"""
     try:
         multisigs = await db.multisig_wallets.find(
-            {"owners": {"$regex": address, "$options": "i"}},
+            {"owners": {"$regex": re.escape(address), "$options": "i"}},
             {"_id": 0}
         ).to_list(100)
         
@@ -1811,7 +1820,7 @@ async def get_user_multisigs(address: str):
         }
     except Exception as e:
         logger.error(f"User multisigs fetch error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # ─── Developer API: API Key Management ─────────────────────────────────────────
 
@@ -1879,7 +1888,7 @@ async def create_api_key(request: APIKeyCreate, owner_address: str = Body(...)):
         }
     except Exception as e:
         logger.error(f"API key creation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/developer/keys/{owner_address}")
 async def list_api_keys(owner_address: str):
@@ -1892,7 +1901,7 @@ async def list_api_keys(owner_address: str):
         
         return {"keys": keys, "count": len(keys)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.delete("/developer/keys/{key_name}")
 async def revoke_api_key(key_name: str, owner_address: str = Body(...)):
@@ -1910,7 +1919,7 @@ async def revoke_api_key(key_name: str, owner_address: str = Body(...)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/developer/usage/{owner_address}")
 async def get_api_usage(owner_address: str):
@@ -1934,7 +1943,7 @@ async def get_api_usage(owner_address: str):
             } for k in keys]
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # Public API endpoints (for developers)
 @api_router.get("/v1/chains")
@@ -2002,7 +2011,7 @@ async def public_generate_stealth(
             }
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="An internal error occurred")
 
 @api_router.get("/v1/docs")
 async def get_api_documentation():
@@ -2237,7 +2246,7 @@ async def uniswap_private_quote(request: UniswapPrivateSwapRequest):
         raise
     except Exception as e:
         logger.error(f"Uniswap quote error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/uniswap/record-swap")
 async def uniswap_record_private_swap(
@@ -2273,7 +2282,7 @@ async def uniswap_record_private_swap(
         return {"success": True, "swap_id": doc["id"]}
     except Exception as e:
         logger.error(f"Uniswap swap record error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/uniswap/supported-chains")
 async def uniswap_supported_chains():
@@ -2409,7 +2418,7 @@ async def prepare_hyperliquid_private_trade(request: HyperliquidPrivateOrderRequ
         }
     except Exception as e:
         logger.error(f"Hyperliquid trade preparation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/hyperliquid/record-trade")
 async def record_hyperliquid_trade(
@@ -2447,19 +2456,19 @@ async def record_hyperliquid_trade(
         return {"success": True, "trade_id": trade_id}
     except Exception as e:
         logger.error(f"Hyperliquid trade record error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/hyperliquid/trades/{address}")
 async def get_hyperliquid_trades(address: str):
     """Get all private Hyperliquid trades for an address"""
     try:
         trades = await db.defi_trades.find(
-            {"trader_address": {"$regex": address, "$options": "i"}, "platform": "hyperliquid"},
+            {"trader_address": {"$regex": re.escape(address), "$options": "i"}, "platform": "hyperliquid"},
             {"_id": 0}
         ).sort("created_at", -1).to_list(50)
         return {"trades": trades, "count": len(trades)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 
 # ─── Polymarket Integration ───────────────────────────────────────────────────
@@ -2594,7 +2603,7 @@ async def prepare_polymarket_private_bet(request: PolymarketPrivateBetRequest):
         }
     except Exception as e:
         logger.error(f"Polymarket bet preparation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/polymarket/record-bet")
 async def record_polymarket_bet(
@@ -2630,19 +2639,19 @@ async def record_polymarket_bet(
         return {"success": True, "bet_id": bet_id}
     except Exception as e:
         logger.error(f"Polymarket bet record error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/polymarket/bets/{address}")
 async def get_polymarket_bets(address: str):
     """Get all private Polymarket bets for an address"""
     try:
         bets = await db.defi_trades.find(
-            {"bettor_address": {"$regex": address, "$options": "i"}, "platform": "polymarket"},
+            {"bettor_address": {"$regex": re.escape(address), "$options": "i"}, "platform": "polymarket"},
             {"_id": 0}
         ).sort("created_at", -1).to_list(50)
         return {"bets": bets, "count": len(bets)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 
 # ─── Error Monitoring Endpoint ─────────────────────────────────────────────────
@@ -2660,8 +2669,11 @@ async def log_frontend_error(error: Dict[str, Any] = Body(...)):
         return {"logged": False}
 
 @api_router.get("/errors/recent")
-async def get_recent_errors(limit: int = 50):
-    """Get recent errors — requires internal access"""
+async def get_recent_errors(limit: int = 50, token: str = ""):
+    """Get recent errors — admin token required"""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token or token != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
     errors = await db.error_logs.find({}, {"_id": 0}).sort("logged_at", -1).limit(min(limit, 100)).to_list(min(limit, 100))
     return {"errors": errors, "count": len(errors)}
 

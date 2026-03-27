@@ -277,7 +277,6 @@ function DualSeedSetup() {
     if (!address) return toast.error("Connect main wallet first");
     setLoading(true);
     try {
-      // Generate privacy keys from the privacy seed
       const spendKey = ethers.keccak256(ethers.toUtf8Bytes(privacySeed + "_spend"));
       const viewKey = ethers.keccak256(ethers.toUtf8Bytes(privacySeed + "_view"));
       
@@ -288,9 +287,15 @@ function DualSeedSetup() {
       });
       
       setPrivacyWallet({ spendKey, viewKey, registered: true });
+
+      // SECURITY: Clear seed phrases from memory immediately after use
+      setMainSeed('');
+      setPrivacySeed('');
+      setCreated(null);
+
       setStep(3);
       toast.success("Privacy keys registered!");
-    } catch (e) {
+    } catch {
       toast.error("Failed to register privacy keys");
     }
     setLoading(false);
@@ -1846,22 +1851,27 @@ function AccessGate({ onGranted }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState(false);
   const [shake, setShake] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const attempt = () => {
-    if (code === process.env.REACT_APP_ACCESS_CODE) {
+  const attempt = async () => {
+    if (!code) return;
+    setLoading(true);
+    try {
+      await axios.post(`${process.env.REACT_APP_BACKEND_URL}/api/auth/verify-access`, { code });
       sessionStorage.setItem("_upl_access", "1");
       onGranted();
-    } else {
+    } catch {
       setError(true);
       setShake(true);
       setCode("");
       setTimeout(() => setShake(false), 600);
     }
+    setLoading(false);
   };
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center">
-      <div className={`w-full max-w-xs px-8 py-10 border border-white/10 bg-white/[0.02] text-center ${shake ? "animate-shake" : ""}`}
+      <div className={`w-full max-w-xs px-8 py-10 border border-white/10 bg-white/[0.02] text-center`}
         style={{ animation: shake ? "shake 0.5s" : "none" }}>
         <div className="w-2 h-2 rounded-full bg-green-400 mx-auto mb-6 animate-pulse" />
         <h2 className="text-sm font-semibold tracking-[0.2em] uppercase text-white/60 mb-1">Universal Privacy Layer</h2>
@@ -1880,9 +1890,10 @@ function AccessGate({ onGranted }) {
         <button
           data-testid="access-code-submit"
           onClick={attempt}
-          className="w-full mt-4 py-3 bg-white text-black text-xs font-bold uppercase tracking-[0.15em] hover:bg-white/90 transition-all"
+          disabled={loading}
+          className="w-full mt-4 py-3 bg-white text-black text-xs font-bold uppercase tracking-[0.15em] hover:bg-white/90 disabled:opacity-50 transition-all"
         >
-          Enter
+          {loading ? "Verifying..." : "Enter"}
         </button>
       </div>
       <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}`}</style>
