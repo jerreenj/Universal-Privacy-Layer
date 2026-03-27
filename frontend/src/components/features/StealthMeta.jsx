@@ -13,11 +13,9 @@ import axios from "axios";
 function CopyBtn({ text, label }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
-    try {
-      navigator.clipboard.writeText(text);
-    } catch {
-      const el = document.createElement("textarea");
-      el.value = text; el.style.position = "fixed"; el.style.opacity = "0";
+    try { navigator.clipboard.writeText(text); } catch {
+      const el = Object.assign(document.createElement("textarea"), { value: text });
+      Object.assign(el.style, { position: "fixed", opacity: "0" });
       document.body.appendChild(el); el.select();
       document.execCommand("copy"); document.body.removeChild(el);
     }
