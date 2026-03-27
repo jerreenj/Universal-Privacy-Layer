@@ -1,170 +1,195 @@
+<div align="center">
+
 # PrivacyCloak
 
-**Privacy infrastructure for on-chain finance. Trade, swap, send, and bet without your wallet being traced.**
+**Privacy infrastructure for on-chain finance.**  
+Trade, swap, send, and bet without your wallet being traced.
 
-[![Status](https://img.shields.io/badge/status-private%20beta-green)](https://privacycloak.in)
-[![Chains](https://img.shields.io/badge/chains-7%20EVM-blue)](#supported-chains)
-[![License](https://img.shields.io/badge/license-private-red)](#license)
+[![Status](https://img.shields.io/badge/status-private%20beta-brightgreen?style=flat-square)](https://privacycloak.in)
+[![Chains](https://img.shields.io/badge/chains-9%20networks-blue?style=flat-square)](#networks)
+[![API](https://img.shields.io/badge/API-REST%20%2B%20SDK-orange?style=flat-square)](#sdk)
+[![License](https://img.shields.io/badge/license-private-red?style=flat-square)](#license)
 
----
+**[privacycloak.in](https://privacycloak.in)**
 
-## The Problem
-
-Every on-chain action is public. When you swap on Uniswap, open a Hyperliquid position, or place a Polymarket bet — your wallet address, amount, and timing are permanently visible to anyone. Wallets get profiled, front-run, and tracked across protocols.
-
-## The Solution
-
-PrivacyCloak routes every transaction through stealth addresses and on-chain relayers. Your origin wallet is mathematically unlinkable from any destination, trade, or bet. Zero-knowledge proofs verify ownership without revealing identity.
+</div>
 
 ---
 
-## Supported Chains
+## Why PrivacyCloak
 
-| Chain | Type | Native Token |
-|-------|------|-------------|
-| Base | L2 (Coinbase) | ETH |
-| Arbitrum | L2 (Offchain Labs) | ETH |
-| Polygon | L1 sidechain | POL |
-| Optimism | L2 (OP Stack) | ETH |
-| BNB Chain | L1 | BNB |
-| Avalanche | L1 | AVAX |
-| Hyperliquid | L1 (perps) | HYPE |
+Every on-chain action is permanently public. When you swap on Uniswap, open a Hyperliquid position, or place a Polymarket bet — your wallet, amount, and timing are visible to anyone forever. Wallets get profiled, front-run, and cross-protocol tracked.
+
+PrivacyCloak routes every transaction through **stealth addresses** and **zero-knowledge proofs**. Your origin wallet is mathematically unlinkable from any destination, trade, or bet.
+
+---
+
+## Networks
+
+| Network | Type | Token | Private Send | Private Swap | Private DeFi |
+|---------|------|-------|:---:|:---:|:---:|
+| Base | EVM L2 | ETH | ✓ | ✓ | Uniswap V3 |
+| Arbitrum | EVM L2 | ETH | ✓ | ✓ | Uniswap V3, Hyperliquid |
+| Polygon | EVM L1 | POL | ✓ | ✓ | Uniswap V3, Polymarket |
+| Optimism | EVM L2 | ETH | ✓ | ✓ | Uniswap V3 |
+| BNB Chain | EVM L1 | BNB | ✓ | ✓ | — |
+| Avalanche | EVM L1 | AVAX | ✓ | ✓ | — |
+| Hyperliquid | L1 Perps | HYPE | ✓ | — | 229 Perp Markets |
+| Solana | SVM | SOL | ✓ | — | — |
+| Sui | Move VM | SUI | ✓ | — | — |
 
 ---
 
 ## Features
 
-### Core Privacy
-| Feature | Description |
-|---------|-------------|
-| Stealth Addresses | One-time addresses generated per transaction. Recipient is unlinkable. |
-| Privacy Relayer | On-chain relayer submits transactions so your wallet never signs publicly. |
-| ZK Proofs | Groth16 proofs (Circom) verify ownership without revealing the owner. |
-| Hidden Balance | Aggregate view across all your stealth addresses per chain. |
+### Privacy Primitives
+
+**Stealth Addresses** — A unique one-time address is generated for every transaction using an ephemeral keypair. The recipient is the only one who can detect and claim it. No on-chain link between sender and receiver.
+
+**Privacy Relayer** — A smart contract relayer submits transactions on behalf of users. Your wallet never appears as the transaction origin.
+
+**Zero-Knowledge Proofs** — Groth16 proofs (built with Circom) let you prove ownership of funds, range constraints, or set membership — without revealing any underlying data.
+
+**Cross-Chain Split** — Break a single transaction into multiple fragments sent across different chains simultaneously, eliminating amount fingerprinting.
+
+---
 
 ### Private DeFi
-| Integration | What's Private |
-|-------------|---------------|
-| Uniswap V3 | Token swaps routed through a stealth proxy. Real quotes via on-chain Quoter + DeFiLlama oracle. |
-| Hyperliquid | Perpetual positions opened via a stealth margin proxy. 229 markets, up to 50x leverage. |
-| Polymarket | USDC bets placed via a stealth proxy. Your wallet never touches the prediction market. |
+
+**Uniswap V3** — Token swaps are routed through a stealth proxy. Quotes are fetched directly from the Uniswap V3 on-chain Quoter, with DeFiLlama as a price oracle fallback. The swap output lands in a stealth address — not your wallet.
+
+**Hyperliquid** — Open perpetual futures positions with your margin routed through a fresh stealth proxy on each trade. 229 available markets, up to 50× leverage. Your wallet is never deposited into Hyperliquid directly.
+
+**Polymarket** — Place prediction market bets with USDC routed through a stealth proxy. Your wallet never interacts with the Polymarket CLOB.
+
+---
 
 ### Utilities
-- **Private Send** — Transfer ETH or any ERC-20 through a stealth address
-- **Cross-Chain Split** — Split a single transaction across multiple chains simultaneously
-- **Encrypted Messaging** — On-chain encrypted messages between wallets
-- **NFT Privacy** — Transfer NFTs without linking sender and recipient
-- **Token Approval Privacy** — Revoke or grant approvals without on-chain fingerprinting
+
+- **Hidden Balance** — Aggregated view of all funds held across your stealth addresses, per chain
+- **Encrypted Messaging** — On-chain encrypted messages delivered between wallets
+- **NFT Privacy** — Move NFTs without linking sender and receiver
+- **Token Approval Privacy** — Manage approvals without on-chain fingerprinting
 - **Multisig Privacy** — Multi-signature flows with hidden participant identities
+- **PWA** — Installable as a mobile/desktop app with offline support
 
 ---
 
-## Architecture
+## How It Works
 
 ```
-User Wallet
+Your Wallet
      │
      ▼
- Access Gate ──── session token required on every API call
+ Access Gate  ──────────────────────────────────────────────────────────
+ (passphrase → session token required on every API call)               │
+     │                                                                  │
+     ▼                                                                  │
+Stealth Address Generator                                               │
+(ephemeral keypair + view tag, unique per transaction)                 │
+     │                                                                  │
+     ├──────────────────────────────────────────────────────────────────┘
      │
-     ▼
-Stealth Address Generator
-(ephemeral keypair + view tag per transaction)
+     ├──→  Privacy Relayer Contract  ──────────→  Recipient Stealth Address
      │
-     ├──→ Privacy Relayer Contract ───→ Recipient Stealth Address
-     ├──→ Uniswap V3 Router ──────────→ Output to Stealth Address  
-     ├──→ Hyperliquid L1 ─────────────→ Via Fresh Stealth Margin Proxy
-     └──→ Polymarket CLOB ────────────→ Via Fresh Stealth USDC Proxy
+     ├──→  Uniswap V3 Router  ────────────────→  Output Stealth Address
+     │         ↑ quote from on-chain Quoter
+     │           + DeFiLlama oracle fallback
+     │
+     ├──→  Hyperliquid L1  ─────────────────→  Fresh Stealth Margin Proxy
+     │         ↑ 229 markets, up to 50× leverage
+     │
+     └──→  Polymarket CLOB  ───────────────→  Fresh Stealth USDC Proxy
+               ↑ live markets from Polymarket API
 ```
-
-### Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18, Ethers.js v6, Tailwind CSS, Framer Motion |
-| Backend | FastAPI (Python 3.11), Motor (async MongoDB) |
-| Smart Contracts | Solidity 0.8, Hardhat |
-| ZK Circuits | Circom 2, snarkjs, Groth16 |
-| Wallet | MetaMask, Phantom, WalletConnect |
-| Price Oracle | DeFiLlama (free, no rate limits) + Uniswap V3 on-chain Quoter |
 
 ---
 
-## Repository Structure
+## Repository
 
 ```
-├── backend/
-│   ├── server.py          # 2,700+ lines — all API logic, 80+ endpoints
+privacycloak/
+│
+├── backend/                    # FastAPI — privacy routing, chain interactions
+│   ├── server.py               # 80+ endpoints across all features
 │   └── requirements.txt
 │
-├── contracts/             # Solidity smart contracts
-│   ├── PrivacyRelayer.sol
+├── contracts/                  # Solidity smart contracts
+│   ├── PrivacyRelayer.sol      # On-chain relayer for gasless transactions
 │   ├── StealthAddressRegistry.sol
-│   ├── UPLVerifier.sol
-│   ├── Groth16Verifier.sol
+│   ├── UPLVerifier.sol         # ZKP verifier (wraps Groth16)
+│   ├── Groth16Verifier.sol     # Circom-generated verifier
 │   └── UniswapPrivacyWrapper.sol
 │
-├── circuits/              # Zero-knowledge circuits (Circom)
-│   └── sources/
-│       ├── stealth_ownership.circom
-│       ├── amount_range.circom
-│       └── membership.circom
-│
-├── frontend/
+├── frontend/                   # React 18 dashboard
 │   └── src/
-│       ├── App.js                      # Main dashboard
-│       ├── components/features/        # Per-feature components
-│       ├── context/WalletContext.jsx   # Multi-chain wallet state
-│       └── utils/errorMonitor.js      # Sanitized error tracking
+│       ├── App.js              # Full privacy dashboard
+│       ├── components/         # Per-feature components
+│       ├── context/            # Multi-chain wallet state
+│       └── utils/              # Sanitized error monitoring
 │
 └── sdk/
-    ├── js/                # TypeScript SDK
-    └── python/            # Python SDK
+    ├── js/                     # TypeScript SDK
+    └── python/                 # Python SDK
 ```
 
 ---
 
 ## SDK
 
-**Python**
+### Python
+
 ```bash
 pip install upl-sdk
 ```
+
 ```python
 from upl_sdk import UPL
 
 upl = UPL(base_url="https://privacycloak.in", token="<session_token>")
 
-# Private Uniswap V3 swap quote
+# Private Uniswap V3 swap — real on-chain quote
 quote = upl.get_uniswap_quote("base", "ETH", "USDC", "1.0", stealth_address)
-# → {"amount_out_human": "2094.58", "routing": "relayer → uniswap_v3 → stealth"}
+# → { "amount_out_human": "2094.58", "routing": "relayer → uniswap_v3 → stealth" }
 
-# Private Hyperliquid perpetual trade
+# Private Hyperliquid perp trade
 trade = upl.prepare_hyperliquid_trade("0x...", "ETH", is_buy=True, size_usd=500, leverage=10)
-# → {"proxy_address": "0x...", "instructions": [...]}
+# → { "proxy_address": "0x...", "routing": "wallet → stealth_proxy → hyperliquid" }
 
 # Private Polymarket bet
 bet = upl.prepare_polymarket_bet("0x...", condition_id, "1", "YES", amount_usdc=100)
-# → {"proxy_address": "0x...", "estimated_payout_if_win": "$238.10"}
+# → { "proxy_address": "0x...", "estimated_payout_if_win": "$238.10" }
+
+# Stealth address generation
+stealth = upl.generate_stealth_address(spend_key, view_key)
 
 # Hidden balance across all stealth addresses
 balance = upl.get_hidden_balance("0x...")
 ```
 
-**TypeScript**
+### TypeScript
+
 ```typescript
 import UPL from "upl-sdk";
 
 const upl = new UPL({ baseUrl: "https://privacycloak.in", token: "<session_token>" });
 
+// Private swap
 const quote = await upl.getUniswapQuote({
-  chain: "base", tokenIn: "ETH", tokenOut: "USDC",
-  amountIn: "1.0", stealthRecipient: "0x..."
+  chain: "base",
+  tokenIn: "ETH",
+  tokenOut: "USDC",
+  amountIn: "1.0",
+  stealthRecipient: "0x..."
 });
 
+// Private perp trade
 const trade = await upl.prepareHyperliquidTrade({
-  traderAddress: "0x...", asset: "ETH",
-  isBuy: true, sizeUsd: 500, leverage: 10
+  traderAddress: "0x...",
+  asset: "ETH",
+  isBuy: true,
+  sizeUsd: 500,
+  leverage: 10
 });
 ```
 
@@ -172,30 +197,31 @@ const trade = await upl.prepareHyperliquidTrade({
 
 ## Security
 
-- All API endpoints require a short-lived session token issued after passphrase authentication
-- Seed phrases and private keys are generated client-side, shown once, and never written to any database
-- WalletConnect and MetaMask session history wiped from storage on every disconnect
-- CORS locked to the production domain only
-- Rate limiting on all sensitive endpoints (auth, wallet creation)
-- API schema (`/docs`, `/openapi.json`) disabled in production
-- MongoDB query injection protection on all inputs
-- Security headers on all responses (XSS, clickjacking, referrer policy)
+| Protection | Implementation |
+|------------|---------------|
+| API Authentication | Session token issued after passphrase auth. Required on every endpoint. |
+| Brute Force | Rate limited: 5 auth attempts / minute per IP |
+| Private Keys | Generated once, returned once, never stored in any database |
+| Seed Phrases | Cleared from memory immediately after user confirms backup |
+| Wallet History | WalletConnect + MetaMask session storage wiped on disconnect |
+| CORS | Locked to production domain only |
+| API Schema | `/docs` and `/openapi.json` disabled in production |
+| Injection Protection | All MongoDB regex queries escaped |
+| Error Responses | Generic messages only — no stack traces |
+| Request Limits | 1 MB max body size enforced at middleware level |
+| Security Headers | XSS, clickjacking, referrer policy on every response |
 
 ---
 
 ## Self-Hosting
 
-**Requirements:** Node 18+, Python 3.11+, MongoDB
-
 ```bash
 # Backend
-cd backend
-pip install -r requirements.txt
+cd backend && pip install -r requirements.txt
 uvicorn server:app --host 0.0.0.0 --port 8001
 
-# Frontend  
-cd frontend
-yarn install && yarn start
+# Frontend
+cd frontend && yarn && yarn start
 ```
 
 **backend/.env**
@@ -214,6 +240,10 @@ REACT_APP_BACKEND_URL=
 
 ---
 
-## License
+<div align="center">
 
-Private — All rights reserved.
+**Private Beta** · [privacycloak.in](https://privacycloak.in)
+
+*All rights reserved.*
+
+</div>
