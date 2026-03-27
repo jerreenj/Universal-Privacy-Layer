@@ -30,7 +30,13 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-app = FastAPI(title="Universal Privacy Layer API", version="1.0.0")
+app = FastAPI(
+    title="Universal Privacy Layer API",
+    version="1.0.0",
+    docs_url=None,        # Disable public Swagger UI
+    redoc_url=None,       # Disable public ReDoc
+    openapi_url=None      # Disable public OpenAPI schema
+)
 api_router = APIRouter(prefix="/api")
 
 # Configure logging
@@ -40,6 +46,21 @@ logger = logging.getLogger(__name__)
 # ── Security Headers Middleware ───────────────────────────────────────────────
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
+from collections import defaultdict
+import time as _time
+
+# ── In-memory rate limiter ────────────────────────────────────────────────────
+_rate_store: dict = defaultdict(list)
+
+def rate_limit(request: StarletteRequest, max_calls: int = 20, window: int = 60):
+    """Allow max_calls per IP per window seconds. Raises 429 if exceeded."""
+    ip = request.client.host if request.client else "unknown"
+    now = _time.time()
+    calls = [t for t in _rate_store[ip] if now - t < window]
+    calls.append(now)
+    _rate_store[ip] = calls
+    if len(calls) > max_calls:
+        raise HTTPException(status_code=429, detail="Too many requests")
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: StarletteRequest, call_next):
@@ -367,8 +388,9 @@ async def root():
     return {"message": "Universal Privacy Layer API", "version": "1.0.0"}
 
 @api_router.post("/auth/verify-access")
-async def verify_access(code: str = Body(..., embed=True)):
-    """Verify access code — code never stored in frontend bundle"""
+async def verify_access(request: StarletteRequest, code: str = Body(..., embed=True)):
+    """Verify access code — 5 attempts per minute per IP"""
+    rate_limit(request, max_calls=5, window=60)
     expected = os.environ.get("ACCESS_CODE", "")
     if not expected or code != expected:
         raise HTTPException(status_code=401, detail="Invalid access code")
@@ -511,12 +533,13 @@ async def get_swap_tokens(chain: str):
 
 # Wallet Management
 @api_router.post("/wallet/create", response_model=WalletCreateResponse)
-async def create_wallet(request: WalletCreateRequest):
+async def create_wallet(request: StarletteRequest):
     """
-    Create a new dual-key wallet (Main + Privacy).
+    Create a new dual-key wallet. Rate limited: 3 per minute per IP.
     SECURITY: Private keys and seed phrases are generated here and returned ONCE.
-    They are NEVER stored server-side. Store them securely on the client only.
+    They are NEVER stored server-side.
     """
+    rate_limit(request, max_calls=3, window=60)
     try:
         wallet_data = create_dual_wallet()
         wallet_id = str(uuid.uuid4())
