@@ -2860,12 +2860,29 @@ function Dashboard() {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 function PublicApp() {
-  const [granted, setGranted] = useState(() => {
-    const tok = sessionStorage.getItem("_upl_tok");
-    if (tok) { axios.defaults.headers.common["Authorization"] = `Bearer ${tok}`; return true; }
-    return false;
-  });
+  const [granted, setGranted] = useState(false);
+  const [checking, setChecking] = useState(true);
 
+  useEffect(() => {
+    const tok = sessionStorage.getItem("_upl_tok");
+    if (!tok) { setChecking(false); return; }
+    // Verify token is still valid against backend
+    axios.defaults.headers.common["Authorization"] = `Bearer ${tok}`;
+    axios.get(`${API}/health`)
+      .then(() => { setGranted(true); })
+      .catch(() => {
+        // Token expired — clear and show gate
+        sessionStorage.removeItem("_upl_tok");
+        delete axios.defaults.headers.common["Authorization"];
+      })
+      .finally(() => setChecking(false));
+  }, []);
+
+  if (checking) return (
+    <div style={{ minHeight: "100vh", background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ width: 24, height: 24, border: "2px solid #333", borderTop: "2px solid #fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+    </div>
+  );
   if (!granted) return <AccessGate onGranted={() => setGranted(true)} />;
 
   return (

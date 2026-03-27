@@ -102,6 +102,10 @@ body {
 }
 
 /* Animations */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes pulse-glow {
   0%, 100% { box-shadow: 0 0 20px rgba(0, 255, 148, 0.3); }
   50% { box-shadow: 0 0 40px rgba(0, 255, 148, 0.5); }
