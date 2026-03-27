@@ -1,110 +1,93 @@
 /**
  * Stealth Address Cryptography — EIP-5564 compatible
- * Uses @noble/secp256k1 for proper EC point operations on secp256k1
+ * Uses @noble/secp256k1 v3 + ethers for proper EC operations on secp256k1
  *
- * Meta-address format: st:eth:0x<spend_pub_33bytes><view_pub_33bytes>
+ * Meta-address format: st:eth:0x<spend_pub_33bytes_hex><view_pub_33bytes_hex>
  */
 import * as secp from "@noble/secp256k1";
 import { ethers } from "ethers";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-const toBigInt = (hex) => BigInt("0x" + hex.replace("0x", ""));
-const toHex = (bytes) => Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+const toHex = (bytes) =>
+  Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 
-/** Hash bytes → 32-byte Uint8Array */
-async function sha256(data) {
-  const buf = await crypto.subtle.digest("SHA-256", data instanceof Uint8Array ? data : new TextEncoder().encode(data));
-  return new Uint8Array(buf);
-}
+const keccak256 = (data) =>
+  ethers.keccak256(data instanceof Uint8Array ? data : ethers.toUtf8Bytes(data));
 
-/** keccak256 via ethers */
-const keccak256 = (data) => ethers.keccak256(data instanceof Uint8Array ? data : ethers.toUtf8Bytes(data));
-
-/** secp256k1 curve order n */
-const CURVE_N = secp.etc.bytesToNumberBE(secp.utils.randomPrivateKey()) > 0n
-  ? 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n
-  : 0n;
+/** secp256k1 curve order */
 const N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
 
 // ── Meta-Address Generation ────────────────────────────────────────────────────
 
 /**
  * Generate a new stealth meta-address.
- * Returns spend keypair, view keypair, and combined meta-address string.
- * SAVE the private keys securely — they cannot be recovered.
+ * SAVE the private keys — they cannot be recovered.
  */
 export function generateMetaAddress() {
-  const spendPriv = secp.utils.randomPrivateKey();
-  const viewPriv  = secp.utils.randomPrivateKey();
-
-  const spendPub = secp.getPublicKey(spendPriv, true); // compressed 33 bytes
-  const viewPub  = secp.getPublicKey(viewPriv, true);
+  const spendPriv = secp.utils.randomSecretKey();
+  const viewPriv  = secp.utils.randomSecretKey();
+  const spendPub  = secp.getPublicKey(spendPriv, true); // compressed 33 bytes
+  const viewPub   = secp.getPublicKey(viewPriv, true);
 
   const spendPrivHex = "0x" + toHex(spendPriv);
   const viewPrivHex  = "0x" + toHex(viewPriv);
   const spendPubHex  = "0x" + toHex(spendPub);
   const viewPubHex   = "0x" + toHex(viewPub);
 
-  // meta-address = st:eth:0x<spend_33bytes><view_33bytes> (132 hex chars after 0x)
+  // st:eth:0x<spend_66hex><view_66hex>  (total 141 chars)
   const metaAddress = `st:eth:${spendPubHex}${toHex(viewPub)}`;
 
-  return {
-    spendPriv: spendPrivHex,
-    viewPriv:  viewPrivHex,
-    spendPub:  spendPubHex,
-    viewPub:   viewPubHex,
-    metaAddress,
-  };
+  return { spendPriv: spendPrivHex, viewPriv: viewPrivHex, spendPub: spendPubHex, viewPub: viewPubHex, metaAddress };
 }
 
 /**
- * Parse a stealth meta-address string into spend/view public keys.
+ * Parse a stealth meta-address into spend/view public keys.
  */
 export function parseMetaAddress(metaAddress) {
   const cleaned = metaAddress.replace("st:eth:", "").replace("0x", "");
-  if (cleaned.length !== 132) throw new Error("Invalid meta-address length");
-  const spendPub = "0x" + cleaned.slice(0, 66);
-  const viewPub  = "0x" + cleaned.slice(66);
-  return { spendPub, viewPub };
+  if (cleaned.length !== 132) throw new Error("Invalid meta-address length (expected 132 hex chars)");
+  return {
+    spendPub: "0x" + cleaned.slice(0, 66),
+    viewPub:  "0x" + cleaned.slice(66),
+  };
 }
 
 // ── Sender: Derive Stealth Address ────────────────────────────────────────────
 
 /**
- * Given a recipient's meta-address, derive a unique stealth address.
- * This is what the SENDER runs before transferring funds.
- *
- * @returns { stealthAddress, ephemeralPub, viewTag }
+ * Given a recipient's meta-address, derive a unique one-time stealth address.
+ * Run this on the SENDER side before transferring funds.
  */
 export function deriveStealthAddress(metaAddress) {
   const { spendPub, viewPub } = parseMetaAddress(metaAddress);
 
   // 1. Random ephemeral keypair
-  const ephPriv = secp.utils.randomPrivateKey();
-  const ephPub  = secp.getPublicKey(ephPriv, true); // compressed
+  const ephPriv = secp.utils.randomSecretKey();
+  const ephPub  = secp.getPublicKey(ephPriv, true);
 
-  // 2. ECDH: shared = ephPriv * viewPub
-  const viewPubBytes = secp.Point.fromHex(viewPub.replace("0x", ""));
-  const shared = viewPubBytes.multiply(secp.etc.bytesToNumberBE(ephPriv));
-  const sharedBytes = shared.toRawBytes(true); // compressed
+  // 2. ECDH: shared = ephPriv * viewPub  (using secp256k1's built-in getSharedSecret)
+  const viewPubBytes = secp.etc.hexToBytes(viewPub.replace("0x", ""));
+  const shared = secp.getSharedSecret(ephPriv, viewPubBytes, true); // compressed
 
-  // 3. h = keccak256(sharedBytes)
-  const h = toBigInt(keccak256(sharedBytes).replace("0x", ""));
+  // 3. h = keccak256(shared) mod N
+  const h = BigInt(keccak256(shared)) % N;
 
-  // 4. stealth_pub = spend_pub + h*G (point addition)
-  const spendPoint = secp.Point.fromHex(spendPub.replace("0x", ""));
-  const hG = secp.Point.BASE.multiply(h);
+  // 4. stealth_pub = spend_pub + h*G  (EC point addition)
+  const spendPoint  = secp.Point.fromHex(spendPub.replace("0x", ""));
+  const hG          = secp.Point.BASE.multiply(h);
   const stealthPoint = spendPoint.add(hG);
 
-  // 5. stealth address = keccak256(stealthPoint uncompressed[1:])[12:]
-  const stealthPubUncompressed = stealthPoint.toRawBytes(false).slice(1); // 64 bytes, no prefix
-  const stealthAddress = "0x" + keccak256(stealthPubUncompressed).slice(-40);
+  // 5. stealth_address = keccak256(uncompressed_pub[1:])[last 20 bytes]
+  const stealthUncompressed = stealthPoint.toBytes(false); // 65 bytes
+  const stealthAddress = ethers.getAddress(
+    "0x" + keccak256(stealthUncompressed.slice(1)).slice(-40)
+  );
 
-  // 6. view tag = first byte of h (as hex)
+  // 6. view tag = first byte of h (fast scan filter)
   const viewTag = (h & 0xFFn).toString(16).padStart(2, "0");
 
   return {
-    stealthAddress: ethers.getAddress(stealthAddress),
+    stealthAddress,
     ephemeralPub: "0x" + toHex(ephPub),
     viewTag,
   };
@@ -113,72 +96,58 @@ export function deriveStealthAddress(metaAddress) {
 // ── Recipient: Scan Announcements ─────────────────────────────────────────────
 
 /**
- * Scan a list of announcements and return ones that belong to this recipient.
- * Uses view key (read-only) — spend key is NOT needed for scanning.
- *
- * @param announcements  Array from GET /api/stealth/announcements
- * @param viewPrivHex    Recipient's view private key
- * @param spendPubHex    Recipient's spend public key (for address derivation)
- * @returns Array of matched announcements with derived stealth address
+ * Scan announcements and return those belonging to this recipient.
+ * Only needs the VIEW private key — spend key stays cold.
  */
 export function scanAnnouncements(announcements, viewPrivHex, spendPubHex) {
   const viewPrivBytes = secp.etc.hexToBytes(viewPrivHex.replace("0x", ""));
-  const spendPoint = secp.Point.fromHex(spendPubHex.replace("0x", ""));
+  const spendPoint    = secp.Point.fromHex(spendPubHex.replace("0x", ""));
   const matched = [];
 
   for (const ann of announcements) {
     try {
-      const ephPoint = secp.Point.fromHex(ann.ephemeral_pub.replace("0x", ""));
+      const ephBytes = secp.etc.hexToBytes(ann.ephemeral_pub.replace("0x", ""));
 
-      // 1. ECDH: shared = viewPriv * ephPub
-      const shared = ephPoint.multiply(secp.etc.bytesToNumberBE(viewPrivBytes));
-      const sharedBytes = shared.toRawBytes(true);
+      // ECDH: shared = viewPriv * ephPub
+      const shared = secp.getSharedSecret(viewPrivBytes, ephBytes, true);
+      const h      = BigInt(keccak256(shared)) % N;
 
-      // 2. h = keccak256(sharedBytes)
-      const h = toBigInt(keccak256(sharedBytes).replace("0x", ""));
+      // Quick view-tag filter (avoids heavy EC ops on non-matches)
+      const myTag = (h & 0xFFn).toString(16).padStart(2, "0");
+      if (myTag !== ann.view_tag) continue;
 
-      // 3. Quick filter: check view tag (first byte of h)
-      const myViewTag = (h & 0xFFn).toString(16).padStart(2, "0");
-      if (myViewTag !== ann.view_tag) continue; // fast skip
-
-      // 4. Derive stealth address
-      const hG = secp.Point.BASE.multiply(h);
+      // Derive stealth address
+      const hG           = secp.Point.BASE.multiply(h);
       const stealthPoint = spendPoint.add(hG);
-      const stealthPubUncompressed = stealthPoint.toRawBytes(false).slice(1);
-      const stealthAddress = ethers.getAddress(
-        "0x" + keccak256(stealthPubUncompressed).slice(-40)
+      const stealthUncompressed = stealthPoint.toBytes(false);
+      const derivedStealth = ethers.getAddress(
+        "0x" + keccak256(stealthUncompressed.slice(1)).slice(-40)
       );
 
-      // 5. Confirm match (stealth address must match announcement)
-      if (stealthAddress.toLowerCase() === ann.stealth_address.toLowerCase()) {
-        matched.push({ ...ann, derivedStealth: stealthAddress });
+      // Confirm exact match
+      if (derivedStealth.toLowerCase() === ann.stealth_address?.toLowerCase()) {
+        matched.push({ ...ann, derivedStealth });
       }
-    } catch {
-      // malformed announcement — skip
-    }
+    } catch { /* malformed — skip */ }
   }
 
   return matched;
 }
 
-// ── Recipient: Compute Stealth Private Key (for sweeping) ─────────────────────
+// ── Recipient: Compute Stealth Private Key (sweep) ────────────────────────────
 
 /**
- * Compute the stealth private key so the recipient can sign a sweep tx.
+ * Compute stealth private key so recipient can sign a sweep transaction.
  * stealth_priv = (spend_priv + h) mod N
- *
- * @returns hex private key of the stealth address
  */
 export function computeStealthPrivKey(spendPrivHex, viewPrivHex, ephemeralPubHex) {
   const viewPrivBytes = secp.etc.hexToBytes(viewPrivHex.replace("0x", ""));
-  const spendPrivBig  = toBigInt(spendPrivHex.replace("0x", ""));
+  const ephBytes      = secp.etc.hexToBytes(ephemeralPubHex.replace("0x", ""));
+  const spendPrivBig  = BigInt("0x" + spendPrivHex.replace("0x", ""));
 
-  const ephPoint  = secp.Point.fromHex(ephemeralPubHex.replace("0x", ""));
-  const shared    = ephPoint.multiply(secp.etc.bytesToNumberBE(viewPrivBytes));
-  const sharedBytes = shared.toRawBytes(true);
+  const shared = secp.getSharedSecret(viewPrivBytes, ephBytes, true);
+  const h      = BigInt(keccak256(shared)) % N;
 
-  const h = toBigInt(keccak256(sharedBytes).replace("0x", ""));
   const stealthPriv = (spendPrivBig + h) % N;
-
   return "0x" + stealthPriv.toString(16).padStart(64, "0");
 }
