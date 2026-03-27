@@ -83,6 +83,8 @@ export function StealthMeta({ address }) {
   };
 
   const register = async () => {
+    if (!address) { toast.error("Connect your wallet first"); return; }
+    if (!keys || !meta) { toast.error("Generate a meta-address first"); return; }
     setLoading(true);
     try {
       await axios.post(`${API}/stealth/meta/register`, {
@@ -96,8 +98,10 @@ export function StealthMeta({ address }) {
       setExisting({ ...keys, meta_address: meta.metaAddress });
       setStep("done");
       toast.success("Stealth meta-address registered");
-    } catch {
-      toast.error("Registration failed");
+    } catch (e) {
+      const msg = e.response?.data?.detail || e.message || "Unknown error";
+      toast.error(`Registration failed: ${msg}`);
+      console.error("Register error:", e.response?.status, e.response?.data);
     } finally {
       setLoading(false);
     }
