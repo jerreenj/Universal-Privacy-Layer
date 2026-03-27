@@ -251,12 +251,22 @@ function TransactionHistory() {
 
 // ─── Dual Seed Wallet Setup ───────────────────────────────────────────────────
 function DualSeedSetup() {
-  const { address, privacyWallet, setPrivacyWallet } = useWallet();
+  const { address, setPrivacyWallet } = useWallet();
   const [step, setStep] = useState(1);
   const [mainSeed, setMainSeed] = useState('');
   const [privacySeed, setPrivacySeed] = useState('');
   const [loading, setLoading] = useState(false);
   const [created, setCreated] = useState(null);
+  const [confirmed, setConfirmed] = useState(false);
+
+  // SECURITY: Wipe seeds from memory on unmount (user navigates away)
+  useEffect(() => {
+    return () => {
+      setMainSeed('');
+      setPrivacySeed('');
+      setCreated(null);
+    };
+  }, []);
 
   const generateWallet = async () => {
     setLoading(true);
@@ -361,7 +371,13 @@ function DualSeedSetup() {
             <p className="text-sm text-red-400">Write down BOTH seed phrases and store them securely. Never share them!</p>
           </div>
 
-          <button onClick={registerPrivacyKeys} disabled={loading || !address}
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}
+              className="w-4 h-4 accent-white" />
+            <span className="text-sm text-white/70">I have written down both seed phrases in a safe place</span>
+          </label>
+
+          <button onClick={registerPrivacyKeys} disabled={loading || !address || !confirmed}
             className="w-full py-4 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50">
             {!address ? 'Connect Main Wallet First' : loading ? 'Registering...' : 'Register Privacy Keys'}
           </button>

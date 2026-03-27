@@ -8,6 +8,24 @@ import { CHAINS, VM, API } from "@/config/chains";
 const WalletContext = createContext();
 export const useWallet = () => useContext(WalletContext);
 
+// Wipe all wallet-related storage keys
+function clearWalletStorage() {
+  try {
+    const keysToRemove = Object.keys(localStorage).filter(k =>
+      k.startsWith("wc@") ||
+      k.startsWith("walletconnect") ||
+      k.startsWith("wagmi") ||
+      k.startsWith("WALLETCONNECT") ||
+      k.startsWith("W3M") ||
+      k.startsWith("web3modal") ||
+      k.startsWith("metamask") ||
+      k.startsWith("phantom")
+    );
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    sessionStorage.removeItem("_upl_wallet_addr");
+  } catch {}
+}
+
 export function WalletProvider({ children }) {
   const [chain, setChain] = useState("base");
   const [address, setAddress] = useState(null);
@@ -28,8 +46,8 @@ export function WalletProvider({ children }) {
       const provider = new ethers.BrowserProvider(window.ethereum);
       setAddress(accounts[0]);
       setSigner(await provider.getSigner());
-      toast.success("MetaMask connected");
-    } catch { toast.error("MetaMask connection failed"); }
+      toast.success("Wallet connected");
+    } catch { toast.error("Connection failed"); }
     setConnecting(false);
   }, []);
 
@@ -42,8 +60,8 @@ export function WalletProvider({ children }) {
       setAddress(resp.publicKey.toBase58());
       setSigner(phantom);
       setSolConn(new Connection(CHAINS.solana.rpcUrl, "confirmed"));
-      toast.success("Phantom connected");
-    } catch { toast.error("Phantom connection failed"); }
+      toast.success("Wallet connected");
+    } catch { toast.error("Connection failed"); }
     setConnecting(false);
   }, []);
 
@@ -57,8 +75,8 @@ export function WalletProvider({ children }) {
       if (accounts.length === 0) throw new Error("No accounts");
       setAddress(accounts[0]);
       setSigner(suiWallet);
-      toast.success("Sui Wallet connected");
-    } catch { toast.error("Sui Wallet connection failed"); }
+      toast.success("Wallet connected");
+    } catch { toast.error("Connection failed"); }
     setConnecting(false);
   }, []);
 
@@ -68,31 +86,20 @@ export function WalletProvider({ children }) {
     if (vm === VM.SUI) return connectSui();
   }, [vm, connectEVM, connectSolana, connectSui]);
 
-  const disconnect = () => {
+  const disconnect = useCallback(() => {
     setAddress(null);
     setSigner(null);
     setBalance(null);
     setHiddenBalance(null);
     setPrivacyWallet(null);
-    // Wipe any wallet session data from storage
-    try {
-      Object.keys(localStorage).forEach(k => {
-        if (k.startsWith("wc@") || k.startsWith("walletconnect") || k.startsWith("wagmi") || k.startsWith("WALLETCONNECT")) {
-          localStorage.removeItem(k);
-        }
-      });
-    } catch {}
-  };
+    clearWalletStorage();
+  }, []);
 
   const switchChain = useCallback(async (k) => {
     const next = CHAINS[k];
     setChain(k);
     setBalance(null);
-    if (next.vm !== vm) {
-      setAddress(null);
-      setSigner(null);
-      return;
-    }
+    if (next.vm !== vm) { setAddress(null); setSigner(null); return; }
     if (next.vm === VM.EVM && window.ethereum && address) {
       try {
         await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: next.chainId }] });
@@ -124,8 +131,7 @@ export function WalletProvider({ children }) {
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "suix_getBalance", params: [address, "0x2::sui::SUI"] })
         });
         const data = await res.json();
-        const mist = parseInt(data?.result?.totalBalance ?? "0");
-        setBalance({ formatted: (mist / 1e9).toFixed(6), symbol: "SUI" });
+        setBalance({ formatted: ((parseInt(data?.result?.totalBalance ?? "0")) / 1e9).toFixed(6), symbol: "SUI" });
       }
     } catch {}
   }, [address, chain, vm, solConn]);
@@ -135,17 +141,16 @@ export function WalletProvider({ children }) {
     try {
       const res = await axios.get(`${API}/balance/hidden/${address}`);
       setHiddenBalance(res.data);
-    } catch {
-      // silent fail — do not log wallet data to console
-    }
+    } catch {}
   }, [address]);
 
   useEffect(() => { if (address) { fetchBalance(); fetchHiddenBalance(); } }, [address, chain, fetchBalance, fetchHiddenBalance]);
+
   useEffect(() => {
     if (window.ethereum) {
       window.ethereum.on("accountsChanged", (a) => a.length > 0 ? setAddress(a[0]) : disconnect());
     }
-  }, []);
+  }, [disconnect]);
 
   return (
     <WalletContext.Provider value={{ chain, address, balance, hiddenBalance, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, connectWallet, disconnect, switchChain, fetchBalance, fetchHiddenBalance }}>
