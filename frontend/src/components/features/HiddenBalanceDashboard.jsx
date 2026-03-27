@@ -1,19 +1,14 @@
 import { useState } from "react";
-import { RefreshCw, ChevronDown } from "lucide-react";
-import { Loader2 } from "lucide-react";
-import { useWallet } from "@/context/WalletContext";
+import { RefreshCw, ChevronDown, Loader2 } from "lucide-react";
 import { CHAINS } from "@/config/chains";
+import { useWallet } from "@/context/WalletContext";
 
 export function HiddenBalanceDashboard() {
   const { hiddenBalance, fetchHiddenBalance } = useWallet();
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(null);
 
-  const refresh = async () => {
-    setLoading(true);
-    await fetchHiddenBalance();
-    setLoading(false);
-  };
+  const refresh = async () => { setLoading(true); await fetchHiddenBalance(); setLoading(false); };
 
   if (!hiddenBalance) return (
     <div className="text-center py-8">
@@ -33,6 +28,7 @@ export function HiddenBalanceDashboard() {
           <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {Object.entries(hiddenBalance.chains || {}).slice(0, 4).map(([chainKey, data]) => (
           <div key={chainKey} className="bg-white/5 border border-white/10 p-4">
@@ -45,6 +41,7 @@ export function HiddenBalanceDashboard() {
           </div>
         ))}
       </div>
+
       <div className="space-y-2">
         <h3 className="text-sm font-semibold text-white/70 uppercase tracking-wider">All Chains</h3>
         {Object.entries(hiddenBalance.chains || {}).map(([chainKey, data]) => (
@@ -58,7 +55,9 @@ export function HiddenBalanceDashboard() {
               <div className="flex items-center gap-4">
                 <div className="text-right">
                   <div className="font-mono">{parseFloat(data.total_balance || 0).toFixed(6)} {data.symbol}</div>
-                  <div className="text-xs text-white/30">Main: {parseFloat(data.main_balance || 0).toFixed(4)} | Stealth: {parseFloat(data.stealth_balance || 0).toFixed(4)}</div>
+                  <div className="text-xs text-white/30">
+                    Main: {parseFloat(data.main_balance || 0).toFixed(4)} | Stealth: {parseFloat(data.stealth_balance || 0).toFixed(4)}
+                  </div>
                 </div>
                 <ChevronDown className={`w-4 h-4 transition-transform ${expanded === chainKey ? 'rotate-180' : ''}`} />
               </div>
