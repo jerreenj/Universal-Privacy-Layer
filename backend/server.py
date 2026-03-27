@@ -99,7 +99,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 # After /auth/verify-access, frontend gets a short-lived session token.
 # Every other endpoint requires: Authorization: Bearer <token>
 _sessions: dict = {}  # token -> expiry timestamp
-SESSION_TTL = 60 * 60 * 8  # 8 hours
+SESSION_TTL = 60 * 60 * 72  # 72 hours
 
 def _new_token() -> str:
     return secrets.token_hex(32)
