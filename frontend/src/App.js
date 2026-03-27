@@ -1446,7 +1446,15 @@ function EncryptedMessaging() {
   };
 
   const copyLink = () => {
-    navigator.clipboard.writeText(`${window.location.origin}?msg=${address}`);
+    const text = `${window.location.origin}?msg=${address}`;
+    try {
+      navigator.clipboard.writeText(text);
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = text; el.style.position = "fixed"; el.style.opacity = "0";
+      document.body.appendChild(el); el.select();
+      document.execCommand("copy"); document.body.removeChild(el);
+    }
     setCopied(true);
     toast.success("Contact link copied — share it so anyone can message you");
     setTimeout(() => setCopied(false), 2000);

@@ -12,11 +12,21 @@ import axios from "axios";
 
 function CopyBtn({ text, label }) {
   const [copied, setCopied] = useState(false);
+  const copy = () => {
+    try {
+      navigator.clipboard.writeText(text);
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = text; el.style.position = "fixed"; el.style.opacity = "0";
+      document.body.appendChild(el); el.select();
+      document.execCommand("copy"); document.body.removeChild(el);
+    }
+    setCopied(true);
+    toast.success(`${label} copied`);
+    setTimeout(() => setCopied(false), 2000);
+  };
   return (
-    <button
-      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); toast.success(`${label} copied`); setTimeout(() => setCopied(false), 2000); }}
-      className="flex items-center gap-1 px-2 py-1 text-xs border border-white/20 hover:border-white/60 transition-colors"
-    >
+    <button onClick={copy} className="flex items-center gap-1 px-2 py-1 text-xs border border-white/20 hover:border-white/60 transition-colors">
       {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
       {copied ? "Copied" : "Copy"}
     </button>
