@@ -10,6 +10,10 @@ import { scanAnnouncements, computeStealthPrivKey, parseMetaAddress } from "../.
 import { API, CHAINS } from "../../config/chains";
 import axios from "axios";
 
+const authHeaders = () => ({
+  Authorization: `Bearer ${sessionStorage.getItem("_upl_tok") || ""}`,
+});
+
 const CHAIN_LIST = ["all", "base", "arbitrum", "polygon", "optimism", "bnb", "avalanche", "hyperliquid"];
 const EXPLORERS = {
   base: "https://basescan.org",
@@ -136,7 +140,8 @@ export function StealthReceive({ address, provider }) {
     setMatches([]);
     try {
       const r = await axios.get(`${API}/stealth/announcements`, {
-        params: { chain: selectedChain, limit: 1000 }
+        params: { chain: selectedChain, limit: 1000 },
+        headers: authHeaders(),
       });
       const announcements = r.data.announcements || [];
       const found = scanAnnouncements(announcements, viewPriv, spendPub);

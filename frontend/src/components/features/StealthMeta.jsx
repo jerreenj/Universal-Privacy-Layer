@@ -10,6 +10,11 @@ import { generateMetaAddress } from "../../utils/stealth";
 import { API } from "../../config/chains";
 import axios from "axios";
 
+// Use the same session token set by the access gate
+const authHeaders = () => ({
+  Authorization: `Bearer ${sessionStorage.getItem("_upl_tok") || ""}`,
+});
+
 function CopyBtn({ text, label }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
@@ -41,7 +46,7 @@ export function StealthMeta({ address }) {
   // Check if user already has a meta-address
   useEffect(() => {
     if (!address) return;
-    axios.get(`${API}/stealth/meta/${address}`)
+    axios.get(`${API}/stealth/meta/${address}`, { headers: authHeaders() })
       .then(r => { setExisting(r.data); setStep("done"); })
       .catch(() => setStep("generate"));
   }, [address]);
@@ -86,7 +91,7 @@ export function StealthMeta({ address }) {
         view_pub: keys.viewPub,
         meta_address: meta.metaAddress,
         chain: "all",
-      });
+      }, { headers: authHeaders() });
       setRegistered(true);
       setExisting({ ...keys, meta_address: meta.metaAddress });
       setStep("done");

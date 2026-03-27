@@ -10,6 +10,10 @@ import { deriveStealthAddress } from "../../utils/stealth";
 import { API, CHAINS } from "../../config/chains";
 import axios from "axios";
 
+const authHeaders = () => ({
+  Authorization: `Bearer ${sessionStorage.getItem("_upl_tok") || ""}`,
+});
+
 const EXPLORERS = {
   base: "https://basescan.org/tx/",
   arbitrum: "https://arbiscan.io/tx/",
@@ -36,7 +40,7 @@ export function StealthSend({ address, chain, provider }) {
       let metaAddress = recipient.trim();
       if (!metaAddress.startsWith("st:eth:")) {
         // Try lookup by wallet address
-        const r = await axios.get(`${API}/stealth/meta/${recipient.trim()}`);
+        const r = await axios.get(`${API}/stealth/meta/${recipient.trim()}`, { headers: authHeaders() });
         metaAddress = r.data.meta_address;
       }
       const result = deriveStealthAddress(metaAddress);
@@ -77,7 +81,7 @@ export function StealthSend({ address, chain, provider }) {
         amount_wei: amountWei.toString(),
         chain: chain,
         tx_hash: tx.hash,
-      });
+      }, { headers: authHeaders() });
 
       setStep("done");
       toast.success("Private transfer announced");
