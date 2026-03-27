@@ -1606,37 +1606,102 @@ async def get_split_status(split_id: str):
         logger.error(f"Split fetch error: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
 
-# --- 4. ENCRYPTED MESSAGING ---
+# --- 4. ENCRYPTED MESSAGING (True E2E — ECIES / ECDH + AES-GCM) ---
+
+class RegisterMessagingKeyRequest(BaseModel):
+    address: str
+    public_key: str  # Compressed secp256k1 hex (66 chars)
+
+class E2EMessageRequest(BaseModel):
+    sender_address: str
+    recipient_address: str
+    ciphertext: str       # Hex-encoded AES-GCM ciphertext (encrypted client-side)
+    ephemeral_pub: str    # Hex-encoded ephemeral public key used for ECDH
+    nonce: str            # Hex-encoded 12-byte GCM nonce
+    chain: str = "base"
+    attached_tx_hash: Optional[str] = None
+
+# Legacy model kept for backwards compat — new clients use E2EMessageRequest
 class EncryptedMessageRequest(BaseModel):
     sender_address: str
     recipient_address: str
     message: str
-    recipient_public_key: str  # For encryption
+    recipient_public_key: str
     chain: str = "base"
     attached_tx_hash: Optional[str] = None
 
-@api_router.post("/messaging/send")
-async def send_encrypted_message(request: EncryptedMessageRequest):
-    """Send an encrypted message (optionally attached to a transaction)"""
+@api_router.post("/messaging/register-key")
+async def register_messaging_key(request: RegisterMessagingKeyRequest):
+    """Register a user's messaging public key (derived from wallet signature)."""
+    try:
+        await db.messaging_keys.update_one(
+            {"address": request.address.lower()},
+            {"$set": {
+                "address": request.address.lower(),
+                "public_key": request.public_key,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }},
+            upsert=True
+        )
+        return {"address": request.address, "registered": True}
+    except Exception as e:
+        logger.error(f"Register messaging key error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to register key")
+
+@api_router.get("/messaging/pubkey/{address}")
+async def get_messaging_pubkey(address: str):
+    """Retrieve a user's messaging public key so others can encrypt messages for them."""
+    try:
+        doc = await db.messaging_keys.find_one(
+            {"address": address.lower()},
+            {"_id": 0}
+        )
+        if not doc:
+            raise HTTPException(status_code=404, detail="Recipient has not registered a messaging key yet")
+        return {"address": address, "public_key": doc["public_key"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get messaging pubkey error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch key")
+
+@api_router.post("/messaging/send-e2e")
+async def send_e2e_message(request: E2EMessageRequest):
+    """Store a pre-encrypted E2E message. Server NEVER sees plaintext."""
     try:
         message_id = str(uuid.uuid4())
-        
-        # Generate encryption key from recipient's public key
-        # Using simplified encryption for demo (in production use ECIES)
+        doc = {
+            "message_id": message_id,
+            "sender_address": request.sender_address,
+            "recipient_address": request.recipient_address,
+            "ciphertext": request.ciphertext,
+            "ephemeral_pub": request.ephemeral_pub,
+            "nonce": request.nonce,
+            "chain": request.chain,
+            "attached_tx_hash": request.attached_tx_hash,
+            "e2e": True,
+            "read": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.encrypted_messages.insert_one(doc)
+        return {"message_id": message_id, "recipient": request.recipient_address, "e2e": True}
+    except Exception as e:
+        logger.error(f"E2E message send error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+@api_router.post("/messaging/send")
+async def send_encrypted_message(request: EncryptedMessageRequest):
+    """Legacy send — server-side encryption fallback for non-E2E clients."""
+    try:
+        message_id = str(uuid.uuid4())
         key = hashlib.sha256(request.recipient_public_key.encode()).digest()
-        
-        # Encrypt message with AES
         iv = secrets.token_bytes(16)
         cipher = AES.new(key, AES.MODE_CBC, iv)
-        
-        # Pad message
         message_bytes = request.message.encode()
         padding_len = 16 - (len(message_bytes) % 16)
         padded_message = message_bytes + bytes([padding_len] * padding_len)
-        
         encrypted = cipher.encrypt(padded_message)
         encrypted_b64 = base64.b64encode(iv + encrypted).decode()
-        
         doc = {
             "message_id": message_id,
             "sender_address": request.sender_address,
@@ -1644,11 +1709,11 @@ async def send_encrypted_message(request: EncryptedMessageRequest):
             "encrypted_content": encrypted_b64,
             "chain": request.chain,
             "attached_tx_hash": request.attached_tx_hash,
+            "e2e": False,
             "read": False,
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         await db.encrypted_messages.insert_one(doc)
-        
         return {
             "message_id": message_id,
             "encrypted_content": encrypted_b64,

@@ -1,13 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { Lock, Copy, Check, Loader2, MessageSquare } from "lucide-react";
+import { Lock, Copy, Check, Loader2, MessageSquare, ShieldCheck, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { API } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { copyToClip } from "@/components/common/CopyButton";
+import { deriveMessagingKeys, encryptMessage, decryptMessage } from "@/lib/messageCrypto";
 
 export function EncryptedMessaging() {
-  const { address } = useWallet();
+  const { address, signer } = useWallet();
   const [tab, setTab] = useState("send");
   const [recipient, setRecipient] = useState("");
   const [message, setMessage] = useState("");
@@ -16,16 +17,68 @@ export function EncryptedMessaging() {
   const [sent, setSent] = useState(null);
   const [decrypted, setDecrypted] = useState({});
   const [copied, setCopied] = useState(false);
+  // E2E key state
+  const [msgKeys, setMsgKeys] = useState(null); // { privateKey, publicKey }
+  const [deriving, setDeriving] = useState(false);
 
-  const deriveKey = async (addr) => {
-    const enc = new TextEncoder().encode(addr);
-    const hash = await crypto.subtle.digest("SHA-256", enc);
-    return crypto.subtle.importKey("raw", hash, { name: "AES-CBC" }, false, ["decrypt"]);
-  };
-
-  const decryptMsg = async (encrypted_b64, recipientAddr) => {
+  // Derive messaging keys from wallet signature
+  const deriveKeys = useCallback(async () => {
+    if (!signer || msgKeys || deriving) return;
+    setDeriving(true);
     try {
-      const key = await deriveKey(recipientAddr);
+      const keys = await deriveMessagingKeys(signer);
+      setMsgKeys(keys);
+      // Register public key with backend
+      await axios.post(`${API}/messaging/register-key`, {
+        address: address,
+        public_key: keys.publicKey,
+      });
+    } catch (e) {
+      // User rejected signature — don't block UI, just disable E2E
+      console.warn("Messaging key derivation skipped:", e.message);
+    }
+    setDeriving(false);
+  }, [signer, address, msgKeys, deriving]);
+
+  // Auto-derive keys when signer becomes available
+  useEffect(() => {
+    if (signer && address && !msgKeys && !deriving) deriveKeys();
+  }, [signer, address, msgKeys, deriving, deriveKeys]);
+
+  // Load inbox and decrypt E2E messages
+  const loadInbox = useCallback(async () => {
+    if (!address) return;
+    try {
+      const r = await axios.get(`${API}/messaging/inbox/${address}`);
+      const msgs = r.data.messages || [];
+      setInbox(msgs);
+      if (!msgKeys) return; // can't decrypt without keys
+      const dec = {};
+      for (const m of msgs) {
+        if (m.e2e && m.ciphertext && m.ephemeral_pub && m.nonce) {
+          // E2E message — decrypt with our private key
+          const plain = await decryptMessage(m.ciphertext, m.ephemeral_pub, m.nonce, msgKeys.privateKey);
+          if (plain) dec[m.message_id] = plain;
+        } else if (m.encrypted_content) {
+          // Legacy message — try old SHA256(address) decryption
+          const plain = await legacyDecrypt(m.encrypted_content, address);
+          if (plain) dec[m.message_id] = plain;
+        }
+      }
+      setDecrypted(dec);
+    } catch {}
+  }, [address, msgKeys]);
+
+  useEffect(() => {
+    if (address && tab === "inbox") loadInbox();
+  }, [address, tab, loadInbox]);
+
+  // Legacy decryption for old messages (SHA256(address) key)
+  const legacyDecrypt = async (encrypted_b64, addr) => {
+    try {
+      const enc = new TextEncoder().encode(addr);
+      const hash = await crypto.subtle.digest("SHA-256", enc);
+      const key = await crypto.subtle.importKey("raw", hash, { name: "AES-CBC" }, false, ["decrypt"]);
       const raw = Uint8Array.from(atob(encrypted_b64), c => c.charCodeAt(0));
       const iv = raw.slice(0, 16);
       const ciphertext = raw.slice(16);
@@ -36,42 +89,55 @@ export function EncryptedMessaging() {
     } catch { return null; }
   };
 
-  const loadInbox = async () => {
-    if (!address) return;
-    try {
-      const r = await axios.get(`${API}/messaging/inbox/${address}`);
-      const msgs = r.data.messages || [];
-      setInbox(msgs);
-      const dec = {};
-      for (const m of msgs) {
-        const plain = await decryptMsg(m.encrypted_content, address);
-        if (plain) dec[m.message_id] = plain;
-      }
-      setDecrypted(dec);
-    } catch {}
-  };
-
-  useEffect(() => {
-    if (address && tab === "inbox") loadInbox();
-  }, [address, tab]);
-
+  // Send E2E encrypted message
   const sendMessage = async () => {
     if (!address) return toast.error("Connect wallet first");
     if (!recipient || !message) return toast.error("Fill in recipient and message");
+
     setLoading(true);
     try {
-      await axios.post(`${API}/messaging/send`, { sender_address: address, recipient_address: recipient.trim(), message, recipient_public_key: recipient.trim() });
+      if (!msgKeys) {
+        toast.error("Sign the messaging key request first");
+        setLoading(false);
+        return;
+      }
+
+      // Fetch recipient's public key
+      let recipientPubKey;
+      try {
+        const r = await axios.get(`${API}/messaging/pubkey/${recipient.trim()}`);
+        recipientPubKey = r.data.public_key;
+      } catch {
+        toast.error("Recipient has not registered a messaging key yet. They need to open Encrypted Messaging first.");
+        setLoading(false);
+        return;
+      }
+
+      // Encrypt client-side
+      const encrypted = await encryptMessage(message, recipientPubKey);
+
+      // Send pre-encrypted blob — server NEVER sees plaintext
+      await axios.post(`${API}/messaging/send-e2e`, {
+        sender_address: address,
+        recipient_address: recipient.trim(),
+        ciphertext: encrypted.ciphertext,
+        ephemeral_pub: encrypted.ephemeralPub,
+        nonce: encrypted.nonce,
+      });
+
       setSent(true);
       setMessage("");
-      toast.success("Message sent — recipient can decrypt with their wallet address");
-    } catch { toast.error("Send failed"); }
+      toast.success("Message sent with true E2E encryption");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Send failed");
+    }
     setLoading(false);
   };
 
   const copyLink = () => {
     copyToClip(`${window.location.origin}?msg=${address}`);
     setCopied(true);
-    toast.success("Contact link copied — share it so anyone can message you");
+    toast.success("Contact link copied");
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -82,15 +148,40 @@ export function EncryptedMessaging() {
   }, []);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="encrypted-messaging">
+      {/* E2E Key Status Banner */}
+      {msgKeys ? (
+        <div className="bg-green-500/10 border border-green-500/30 p-3 text-xs text-green-300 flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 flex-shrink-0" />
+          <div>
+            <span className="font-semibold">True E2E Encryption Active</span>
+            <span className="text-green-300/60 ml-2">— Keys derived from your wallet signature. Server cannot read messages.</span>
+          </div>
+        </div>
+      ) : signer ? (
+        <button onClick={deriveKeys} disabled={deriving} data-testid="derive-keys-btn"
+          className="w-full bg-yellow-500/10 border border-yellow-500/30 p-3 text-xs text-yellow-300 flex items-center gap-2 hover:bg-yellow-500/20 transition-colors">
+          {deriving ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />}
+          <span className="font-semibold">Sign to enable E2E encryption</span>
+          <span className="text-yellow-300/60 ml-1">— Your wallet will ask you to sign a message (no gas)</span>
+        </button>
+      ) : (
+        <div className="bg-white/5 border border-white/10 p-3 text-xs text-white/40 flex items-center gap-2">
+          <Lock className="w-4 h-4" />
+          Connect wallet to enable E2E encrypted messaging
+        </div>
+      )}
+
       <div className="flex gap-2">
-        {["send","inbox"].map(t => (
+        {["send", "inbox"].map(t => (
           <button key={t} onClick={() => setTab(t)}
+            data-testid={`msg-tab-${t}`}
             className={`flex-1 py-2 text-sm font-medium capitalize ${tab === t ? "bg-white text-black" : "bg-white/10"}`}>
             {t === "inbox" ? `Inbox (${inbox.filter(m => !m.read).length})` : "Send"}
           </button>
         ))}
       </div>
+
       {tab === "send" && (
         <div className="space-y-3">
           {address && (
@@ -100,7 +191,10 @@ export function EncryptedMessaging() {
               {copied ? "Link copied!" : "Copy your contact link — share so people can message you"}
             </button>
           )}
-          <p className="text-xs text-white/30">Messages are encrypted. Only the recipient can read them.</p>
+          <p className="text-xs text-white/30">
+            Messages are encrypted end-to-end using ECDH + AES-256-GCM.
+            The server stores only ciphertext — it cannot decrypt your messages.
+          </p>
           <div>
             <label className="block text-xs text-gray-500 uppercase mb-2">Recipient wallet address</label>
             <input value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="0x..."
@@ -113,23 +207,25 @@ export function EncryptedMessaging() {
               data-testid="msg-body-input"
               className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none focus:border-white h-24 resize-none" />
           </div>
-          <button onClick={sendMessage} disabled={loading} data-testid="msg-send-btn"
+          <button onClick={sendMessage} disabled={loading || !msgKeys} data-testid="msg-send-btn"
             className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-            {loading ? "Encrypting & Sending..." : "Send Encrypted"}
+            {loading ? "Encrypting & Sending..." : !msgKeys ? "Sign to Enable E2E First" : "Send E2E Encrypted"}
           </button>
           {sent && (
             <div className="bg-green-400/10 border border-green-400/30 p-3 text-xs text-green-300">
-              Sent. Recipient opens their inbox and sees the decrypted message automatically.
+              <div className="flex items-center gap-2 mb-1"><ShieldCheck className="w-3 h-3" /><span className="font-semibold">Sent with true E2E encryption</span></div>
+              The server only stored ciphertext. Only the recipient's wallet can decrypt this message.
             </div>
           )}
         </div>
       )}
+
       {tab === "inbox" && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-white/30">Messages sent to your wallet address</p>
-            <button onClick={loadInbox} className="text-xs text-white/40 hover:text-white transition-colors">Refresh</button>
+            <button onClick={loadInbox} data-testid="msg-refresh-btn" className="text-xs text-white/40 hover:text-white transition-colors">Refresh</button>
           </div>
           {inbox.length === 0 ? (
             <div className="text-center py-10 text-white/30 space-y-2">
@@ -144,9 +240,13 @@ export function EncryptedMessaging() {
             </div>
           ) : (
             inbox.map((msg, i) => (
-              <div key={i} className={`border p-4 space-y-2 ${msg.read ? "border-white/10 bg-white/3" : "border-green-500/30 bg-green-400/5"}`}>
+              <div key={i} data-testid={`msg-item-${i}`}
+                className={`border p-4 space-y-2 ${msg.read ? "border-white/10 bg-white/[0.02]" : "border-green-500/30 bg-green-400/5"}`}>
                 <div className="flex justify-between items-center">
-                  <span className="text-xs font-mono text-white/50">From: {msg.sender_address?.slice(0,10)}...{msg.sender_address?.slice(-4)}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-white/50">From: {msg.sender_address?.slice(0, 10)}...{msg.sender_address?.slice(-4)}</span>
+                    {msg.e2e && <span className="text-[9px] border border-green-500/40 text-green-400 px-1 py-0.5">E2E</span>}
+                  </div>
                   <div className="flex items-center gap-2">
                     {!msg.read && <span className="text-[10px] text-green-400 font-semibold">NEW</span>}
                     <span className="text-xs text-white/30">{msg.created_at ? new Date(msg.created_at).toLocaleDateString() : ""}</span>
@@ -155,7 +255,9 @@ export function EncryptedMessaging() {
                 {decrypted[msg.message_id] ? (
                   <p className="text-sm text-white leading-relaxed">{decrypted[msg.message_id]}</p>
                 ) : (
-                  <p className="text-xs text-white/20 font-mono italic">Unable to decrypt — message not addressed to your current wallet</p>
+                  <p className="text-xs text-white/20 font-mono italic">
+                    {!msgKeys ? "Sign to derive keys to decrypt messages" : "Unable to decrypt — message not addressed to your current wallet"}
+                  </p>
                 )}
               </div>
             ))
