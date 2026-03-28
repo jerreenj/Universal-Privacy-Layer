@@ -5,11 +5,11 @@ import { useNavigate } from "react-router-dom";
 const plans = [
   {
     name: "Phantom",
-    price: "499",
-    yearlyPrice: "399",
-    period: "month",
+    price: "50",
+    yearlyPrice: "50",
+    period: "14-day trial",
     features: [
-      "$50 for 7-day trial",
+      "$499/mo after 14 days",
       "Stealth address generation",
       "Off-chain stealth payments",
       "Encrypted P2P messaging",
@@ -17,7 +17,7 @@ const plans = [
       "Community support",
     ],
     description: "For the solo operator. Move in silence.",
-    buttonText: "Start 7-Day Trial — $50",
+    buttonText: "Start 14-Day Trial — $50",
     href: "/",
   },
   {
