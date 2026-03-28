@@ -2686,47 +2686,12 @@ async def get_polymarket_markets(limit: int = 10):
                     "count": len(markets[:limit]),
                     "source": "polymarket_clob"
                 }
-            # Fallback to sample markets
-            raise Exception("API returned non-200")
+            raise HTTPException(status_code=502, detail="Polymarket API returned non-200 status")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning(f"Polymarket market fetch failed: {e}")
-        # Return sample/demo markets
-        return {
-            "markets": [
-                {
-                    "condition_id": "demo_1",
-                    "question": "Will Bitcoin exceed $100K by end of 2025?",
-                    "outcomes": ["YES", "NO"],
-                    "volume": "$2.4M",
-                    "yes_price": 0.65,
-                    "no_price": 0.35,
-                    "end_date": "2025-12-31",
-                    "active": True
-                },
-                {
-                    "condition_id": "demo_2",
-                    "question": "Will Ethereum ETF see >$1B inflows in Q1 2026?",
-                    "outcomes": ["YES", "NO"],
-                    "volume": "$890K",
-                    "yes_price": 0.42,
-                    "no_price": 0.58,
-                    "end_date": "2026-03-31",
-                    "active": True
-                },
-                {
-                    "condition_id": "demo_3",
-                    "question": "Will the Fed cut rates in Q1 2026?",
-                    "outcomes": ["YES", "NO"],
-                    "volume": "$1.2M",
-                    "yes_price": 0.71,
-                    "no_price": 0.29,
-                    "end_date": "2026-03-31",
-                    "active": True
-                }
-            ],
-            "count": 3,
-            "source": "demo"
-        }
+        raise HTTPException(status_code=503, detail="Polymarket API is currently unreachable. Try again later.")
 
 @api_router.post("/polymarket/prepare-private-bet")
 async def prepare_polymarket_private_bet(request: PolymarketPrivateBetRequest):

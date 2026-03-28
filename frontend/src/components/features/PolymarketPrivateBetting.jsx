@@ -30,7 +30,7 @@ export function PolymarketPrivateBetting() {
     setPreparing(true); setBetPlan(null);
     try {
       const res = await axios.post(`${API}/polymarket/prepare-private-bet`, {
-        bettor_address: address, condition_id: selectedMarket.condition_id || selectedMarket.conditionId || "demo",
+        bettor_address: address, condition_id: selectedMarket.condition_id || selectedMarket.conditionId,
         token_id: outcome === "YES" ? "1" : "0", outcome, amount_usdc: parseFloat(amountUSDC), chain: "polygon"
       });
       setBetPlan(res.data);
