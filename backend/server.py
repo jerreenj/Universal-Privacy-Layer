@@ -49,8 +49,11 @@ logger = logging.getLogger(__name__)
 # Create index on sessions collection for fast lookups
 @app.on_event("startup")
 async def create_indexes():
-    await db.sessions.create_index("token", unique=True)
-    await db.sessions.create_index("expires_at")
+    try:
+        await db.sessions.create_index("token", unique=True)
+        await db.sessions.create_index("expires_at")
+    except Exception as e:
+        logger.warning(f"Index creation skipped (non-fatal): {e}")
 
 # ── Protected router — all routes below require a valid session token ──────────
 protected_router = APIRouter(prefix="/api", dependencies=[Depends(lambda request: require_auth(request))])
