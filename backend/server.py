@@ -1,5 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Body, Depends, Request as FastAPIRequest
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -23,12 +24,14 @@ import httpx
 from web3 import Web3
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / '.env', override=False)  # Railway injects env vars; .env is optional
 
 # MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+mongo_url = os.environ.get('MONGO_URL', '')
+if not mongo_url:
+    raise RuntimeError("MONGO_URL environment variable is required")
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[os.environ.get('DB_NAME', 'upl_database')]
 
 app = FastAPI(
     title="Universal Privacy Layer API",
@@ -3164,3 +3167,19 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+# ── Serve React Frontend (production only — when build/ exists) ────────────
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.is_dir():
+    # Serve static assets (JS, CSS, images)
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR / "static")), name="react-static")
+
+    # SPA fallback — serve index.html for all non-API routes
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # If the file exists in build dir, serve it (favicon, manifest, etc.)
+        file_path = STATIC_DIR / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(str(file_path))
+        # Otherwise serve index.html for client-side routing
+        return FileResponse(str(STATIC_DIR / "index.html"))
