@@ -8,6 +8,7 @@ Production-ready privacy layer for crypto transactions. DeFi + privacy-preservin
 - Backend: FastAPI + MongoDB
 - Crypto: @noble/secp256k1 v3, EIP-5564
 - Hosting: Hostinger VPS (ROTATED-VPS-IP) + Docker + Nginx + Let's Encrypt
+- Admin: Retool (connected via SSH tunnel to MongoDB)
 
 ## Implemented
 - [x] Access Gate + persistent MongoDB sessions (1yr TTL)
@@ -15,36 +16,29 @@ Production-ready privacy layer for crypto transactions. DeFi + privacy-preservin
 - [x] E2E Encrypted Messaging (ECDH + AES-256-GCM)
 - [x] Private DeFi (Uniswap V3, Hyperliquid, Polymarket)
 - [x] Crypto-only payments (QR, MetaMask, manual)
-- [x] Pricing page (Phantom $50 trial, Specter $4,999, Wraith $24,999)
-- [x] Founder Mode removed
-- [x] All mock data removed
-- [x] Deployed to Hostinger VPS with HTTPS
-- [x] **Wallet Privacy Analyzer** — Scans any wallet across 6 EVM chains via public RPCs, scores privacy posture (0-100, A+ to F grade), identifies risks & recommendations. Zero gas, permanently free. (2026-03-28)
-- [x] **Encrypted Receipts** — AES-256-GCM encrypted proof-of-payment for stealth sends. One-time code decryption. Browser-generated, stored in DB. (2026-03-28)
-- [x] **Privacy Address Book** — Encrypted contact storage by stealth meta-address. Full CRUD. Notes encrypted client-side before storage. (2026-03-28)
-- [x] **ZK Commitments** — Client-side SHA-256 zero-knowledge amount commitments with cryptographic blinding factors. Commit, verify, and track history. All math runs in user's browser. (2026-03-28)
+- [x] Pricing page (Phantom $50, Specter $4,999, Wraith $24,999)
+- [x] Deployed to Hostinger VPS with HTTPS + Let's Encrypt
+- [x] Wallet Privacy Analyzer — 6 EVM chains, privacy score 0-100 (2026-03-28)
+- [x] Encrypted Receipts — AES-256-GCM, one-time code decryption (2026-03-28)
+- [x] Privacy Address Book — Encrypted contacts, full CRUD (2026-03-28)
+- [x] ZK Commitments — Client-side SHA-256 with blinding factors (2026-03-28)
+- [x] Messaging privacy fix — stealth address as sender, never leaks public address (2026-03-28)
+- [x] Stealth address auto-rotation — max 3 uses, then new address (2026-03-28)
+- [x] Inbox fix — checks real + all stealth addresses (2026-03-28)
+- [x] 72-hour message auto-delete via MongoDB TTL (2026-03-28)
+- [x] Email collection after payment (2026-03-28)
+- [x] Contact email: jerreen@jasprlabs.com on pricing page (2026-03-28)
+- [x] Retool admin dashboard — SSH tunnel to MongoDB (2026-03-28)
 
-## Pending
-- [ ] On-chain stealth migration (needs deployer wallet funding)
-- [ ] Privacy Pools (needs deployer wallet funding)
-- [ ] On-Chain Smart Contract deployment (StealthAddressRegistry.sol, Privacy Pools) — BLOCKED on gas
+## Pending (BLOCKED on gas funding)
+- [ ] On-chain StealthAddressRegistry.sol deployment
+- [ ] Privacy Pools
+- [ ] On-chain smart contracts
 
 ## Key DB Collections
-- `sessions`: {token, expires_at (TTL indexed)}
-- `stealth_addresses`: {off-chain stealth announcements}
-- `encrypted_messages`: {P2P messages, e2e bool}
-- `payment_transactions`: {crypto payments from pricing page}
-- `address_book`: {owner_address, label, stealth_meta_address, public_address, notes_encrypted}
-- `zk_commitments`: {commitment_id, owner_address, commitment_hash, amount_range, revealed}
-- `receipts`: {receipt_id, encrypted_data, one_time_code_hash}
+- `sessions`, `stealth_addresses`, `stealth_meta`, `stealth_rotation`
+- `encrypted_messages` (72hr TTL), `receipts`, `payment_transactions`
+- `address_book`, `zk_commitments`, `messaging_keys`
 
-## Key API Endpoints (New)
-- `GET /api/analyzer/scan/{address}` — Privacy score across 6 chains
-- `POST /api/addressbook/add` — Add encrypted contact
-- `GET /api/addressbook/{owner}` — List contacts
-- `DELETE /api/addressbook/{entry_id}` — Delete contact
-- `POST /api/zk-commitments/create` — Create commitment hash
-- `GET /api/zk-commitments/{owner}` — List commitments
-- `POST /api/zk-commitments/verify` — Verify with amount + blinding factor
-- `POST /api/receipt/create` — Create encrypted receipt
-- `POST /api/receipt/decrypt` — Decrypt with one-time code
+## Contact
+- jerreen@jasprlabs.com
