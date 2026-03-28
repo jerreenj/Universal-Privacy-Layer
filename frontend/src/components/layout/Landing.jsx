@@ -100,6 +100,8 @@ export function Landing() {
         </div>
 
         <div className="flex items-center justify-center gap-4 text-[10px] text-white/30">
+          <a href="/pricing" className="hover:text-white/50 transition-colors" data-testid="landing-pricing-link">Pricing</a>
+          <span>·</span>
           <a href="/terms" className="hover:text-white/50 transition-colors">Terms of Service</a>
           <span>·</span>
           <a href="/privacy" className="hover:text-white/50 transition-colors">Privacy Policy</a>
