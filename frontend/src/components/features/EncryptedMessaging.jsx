@@ -22,16 +22,22 @@ export function EncryptedMessaging() {
   const [openMsg, setOpenMsg] = useState(null);
   const [stealthAddr, setStealthAddr] = useState(null);
 
-  // Load user's stealth meta-address for sharing
+  // Load user's stealth meta-address for sharing — NEVER expose raw public address
   useEffect(() => {
     if (!address) return;
-    axios.get(`${API}/stealth/scan/${address}`).then(r => {
-      const addrs = r.data.stealth_addresses || [];
-      if (addrs.length > 0) setStealthAddr(addrs[0].meta_address || addrs[0].stealth_address);
-    }).catch(() => {});
+    // Try stealth meta first (preferred)
+    axios.get(`${API}/stealth/meta/${address}`).then(r => {
+      if (r.data.meta_address) setStealthAddr(r.data.meta_address);
+    }).catch(() => {
+      // Fallback: check stealth/scan
+      axios.get(`${API}/stealth/scan/${address}`).then(r => {
+        const addrs = r.data.stealth_addresses || [];
+        if (addrs.length > 0) setStealthAddr(addrs[0].meta_address || addrs[0].stealth_address);
+      }).catch(() => {});
+    });
   }, [address]);
 
-  // Silently derive E2E keys
+  // Silently derive E2E keys — register with stealth address, not real wallet
   useEffect(() => {
     if (!signer || !address || msgKeys || deriving) return;
     let cancelled = false;
@@ -41,12 +47,18 @@ export function EncryptedMessaging() {
         const keys = await deriveMessagingKeys(signer);
         if (cancelled) return;
         setMsgKeys(keys);
-        await axios.post(`${API}/messaging/register-key`, { address: address.toLowerCase(), public_key: keys.publicKey }).catch(() => {});
+        // Register with both stealth and real address for receiving
+        const registerAddr = stealthAddr ? stealthAddr.toLowerCase() : address.toLowerCase();
+        await axios.post(`${API}/messaging/register-key`, { address: registerAddr, public_key: keys.publicKey }).catch(() => {});
+        // Also register real address as fallback for receiving
+        if (stealthAddr) {
+          await axios.post(`${API}/messaging/register-key`, { address: address.toLowerCase(), public_key: keys.publicKey }).catch(() => {});
+        }
       } catch {}
       if (!cancelled) setDeriving(false);
     })();
     return () => { cancelled = true; };
-  }, [signer, address, msgKeys, deriving]);
+  }, [signer, address, stealthAddr, msgKeys, deriving]);
 
   // Decrypt a single message — try client-side first, then server fallback
   const tryDecrypt = async (m) => {
@@ -90,6 +102,7 @@ export function EncryptedMessaging() {
   const sendMessage = async () => {
     if (!address) return toast.error("Connect wallet first");
     if (!recipient || !message) return toast.error("Fill in recipient and message");
+    if (!stealthAddr) return toast.error("Generate a stealth meta-address in Private Receive first — never expose your real address");
     setLoading(true);
     setSentMode(null);
     let recipientAddr = recipient.trim();
@@ -97,6 +110,8 @@ export function EncryptedMessaging() {
     const msgParam = recipientAddr.match(/[?&]msg=([^&]+)/);
     if (msgParam) recipientAddr = msgParam[1];
     recipientAddr = recipientAddr.toLowerCase();
+    // Use stealth address as sender — NEVER leak real public address
+    const senderIdentity = stealthAddr.toLowerCase();
     try {
       let usedE2E = false;
       if (msgKeys) {
@@ -105,7 +120,7 @@ export function EncryptedMessaging() {
           if (r.data.public_key) {
             const encrypted = await encryptMessage(message, r.data.public_key);
             await axios.post(`${API}/messaging/send-e2e`, {
-              sender_address: address.toLowerCase(),
+              sender_address: senderIdentity,
               recipient_address: recipientAddr,
               ciphertext: encrypted.ciphertext,
               ephemeral_pub: encrypted.ephemeralPub,
@@ -117,7 +132,7 @@ export function EncryptedMessaging() {
       }
       if (!usedE2E) {
         await axios.post(`${API}/messaging/send`, {
-          sender_address: address.toLowerCase(),
+          sender_address: senderIdentity,
           recipient_address: recipientAddr,
           message,
           recipient_public_key: recipientAddr,
@@ -138,8 +153,8 @@ export function EncryptedMessaging() {
     return dt.toLocaleDateString() + " " + dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
-  // Share stealth address, not real wallet
-  const shareAddr = stealthAddr || address;
+  // PRIVACY: Never share raw public address — stealth only
+  const shareAddr = stealthAddr;
 
   return (
     <div className="space-y-4" data-testid="encrypted-messaging">
@@ -161,20 +176,20 @@ export function EncryptedMessaging() {
 
       {tab === "send" && (
         <div className="space-y-3">
-          {shareAddr && (
-            <button onClick={() => { copyToClip(shareAddr); setCopied(true); toast.success(stealthAddr ? "Stealth address copied" : "Address copied"); setTimeout(() => setCopied(false), 2000); }}
+          {shareAddr ? (
+            <button onClick={() => { copyToClip(shareAddr); setCopied(true); toast.success("Stealth address copied — your real address stays hidden"); setTimeout(() => setCopied(false), 2000); }}
               className="w-full py-2 border border-white/20 hover:border-white/50 text-xs text-white/50 hover:text-white flex items-center justify-center gap-2 transition-colors">
               {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
               {copied ? "Copied!" : (
                 <span>
-                  {stealthAddr ? "Share stealth address: " : "Share address: "}
-                  <span className="font-mono">{shareAddr.slice(0, 8)}...{shareAddr.slice(-6)}</span>
+                  Share stealth address: <span className="font-mono">{shareAddr.slice(0, 12)}...{shareAddr.slice(-6)}</span>
                 </span>
               )}
             </button>
-          )}
-          {!stealthAddr && address && (
-            <p className="text-[10px] text-yellow-400/60">Generate a stealth meta-address in Private Receive to share a private contact.</p>
+          ) : (
+            <div className="w-full py-3 border border-red-500/30 bg-red-500/10 text-xs text-red-400 text-center">
+              Generate a stealth meta-address in <span className="font-semibold">Private Receive</span> first — your public address will never be exposed here.
+            </div>
           )}
           <p className="text-xs text-white/30">All messages are encrypted. E2E when both wallets are connected.</p>
           <div>
@@ -226,7 +241,7 @@ export function EncryptedMessaging() {
                   <div className="flex items-center gap-2">
                     <Lock className="w-3.5 h-3.5 text-white/30" />
                     <span className="text-xs font-mono text-white/50">
-                      {msg.sender_address?.slice(0, 10)}...{msg.sender_address?.slice(-4)}
+                      {msg.sender_address?.startsWith("st:") ? "stealth:" + msg.sender_address?.slice(-8) : msg.sender_address?.slice(0, 6) + "..." + msg.sender_address?.slice(-4)}
                     </span>
                     {msg.e2e && <span className="text-[9px] border border-green-500/40 text-green-400 px-1 py-0.5">E2E</span>}
                   </div>
@@ -261,7 +276,7 @@ export function EncryptedMessaging() {
               <span className="text-sm font-semibold">{openMsg.e2e ? "E2E Encrypted" : "Encrypted Message"}</span>
             </div>
             <div className="space-y-2 text-xs text-white/50">
-              <div className="flex justify-between"><span>From</span><span className="font-mono">{openMsg.sender_address?.slice(0,12)}...{openMsg.sender_address?.slice(-6)}</span></div>
+              <div className="flex justify-between"><span>From</span><span className="font-mono">{openMsg.sender_address?.startsWith("st:") ? "stealth:" + openMsg.sender_address?.slice(-8) : openMsg.sender_address?.slice(0,6) + "..." + openMsg.sender_address?.slice(-4)}</span></div>
               <div className="flex justify-between"><span>Date</span><span>{formatDate(openMsg.created_at)}</span></div>
             </div>
             <div className="border-t border-white/10 pt-4">
