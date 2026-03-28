@@ -2838,6 +2838,283 @@ async def get_polymarket_bets(address: str):
 
 # ─── Error Monitoring Endpoint ─────────────────────────────────────────────────
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRIVACY ADDRESS BOOK — Encrypted contacts stored in DB
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class AddressBookEntry(BaseModel):
+    owner_address: str
+    label: str
+    stealth_meta_address: Optional[str] = None
+    public_address: Optional[str] = None
+    notes_encrypted: Optional[str] = None  # AES encrypted client-side
+    chain: str = "all"
+
+@api_router.post("/addressbook/add")
+async def add_addressbook_entry(entry: AddressBookEntry):
+    """Add encrypted contact to address book."""
+    try:
+        entry_id = str(uuid.uuid4())
+        doc = {
+            "entry_id": entry_id,
+            "owner_address": entry.owner_address.lower(),
+            "label": entry.label,
+            "stealth_meta_address": entry.stealth_meta_address,
+            "public_address": entry.public_address,
+            "notes_encrypted": entry.notes_encrypted,
+            "chain": entry.chain,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.address_book.insert_one(doc)
+        return {"entry_id": entry_id, "label": entry.label}
+    except Exception as e:
+        logger.error(f"Address book add error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+@api_router.get("/addressbook/{owner_address}")
+async def get_addressbook(owner_address: str):
+    """Get all address book entries for an owner."""
+    try:
+        entries = await db.address_book.find(
+            {"owner_address": owner_address.lower()},
+            {"_id": 0}
+        ).sort("created_at", -1).to_list(500)
+        return {"entries": entries, "count": len(entries)}
+    except Exception as e:
+        logger.error(f"Address book fetch error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+@api_router.delete("/addressbook/{entry_id}")
+async def delete_addressbook_entry(entry_id: str, owner_address: str = Body(..., embed=True)):
+    """Delete an address book entry."""
+    try:
+        result = await db.address_book.delete_one({
+            "entry_id": entry_id,
+            "owner_address": owner_address.lower()
+        })
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        return {"deleted": True, "entry_id": entry_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Address book delete error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZK COMMITMENTS — Client-side math, server stores commitments
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ZKCommitmentCreate(BaseModel):
+    owner_address: str
+    commitment_hash: str      # SHA-256(amount || blinding_factor)
+    amount_range: str          # e.g. "0-1 ETH", "1-10 ETH" (public range, not exact)
+    chain: str = "base"
+    label: Optional[str] = None
+
+class ZKCommitmentReveal(BaseModel):
+    commitment_id: str
+    amount_wei: str
+    blinding_factor: str
+
+@api_router.post("/zk-commitments/create")
+async def create_zk_commitment(req: ZKCommitmentCreate):
+    """Store a ZK commitment (hash of amount + blinding factor)."""
+    try:
+        commitment_id = str(uuid.uuid4())
+        doc = {
+            "commitment_id": commitment_id,
+            "owner_address": req.owner_address.lower(),
+            "commitment_hash": req.commitment_hash,
+            "amount_range": req.amount_range,
+            "chain": req.chain,
+            "label": req.label,
+            "revealed": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.zk_commitments.insert_one(doc)
+        return {"commitment_id": commitment_id, "commitment_hash": req.commitment_hash}
+    except Exception as e:
+        logger.error(f"ZK commitment create error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+@api_router.get("/zk-commitments/{owner_address}")
+async def get_zk_commitments(owner_address: str):
+    """Get all commitments for an address."""
+    try:
+        commitments = await db.zk_commitments.find(
+            {"owner_address": owner_address.lower()},
+            {"_id": 0}
+        ).sort("created_at", -1).to_list(200)
+        return {"commitments": commitments, "count": len(commitments)}
+    except Exception as e:
+        logger.error(f"ZK commitments fetch error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+@api_router.post("/zk-commitments/verify")
+async def verify_zk_commitment(req: ZKCommitmentReveal):
+    """Verify a commitment by revealing amount + blinding factor."""
+    try:
+        commitment = await db.zk_commitments.find_one(
+            {"commitment_id": req.commitment_id}, {"_id": 0}
+        )
+        if not commitment:
+            raise HTTPException(status_code=404, detail="Commitment not found")
+
+        # Recompute: SHA-256(amount_wei + blinding_factor)
+        recomputed = hashlib.sha256(
+            (req.amount_wei + req.blinding_factor).encode()
+        ).hexdigest()
+
+        is_valid = recomputed == commitment["commitment_hash"]
+
+        if is_valid:
+            await db.zk_commitments.update_one(
+                {"commitment_id": req.commitment_id},
+                {"$set": {
+                    "revealed": True,
+                    "revealed_amount_wei": req.amount_wei,
+                    "verified_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+
+        return {
+            "commitment_id": req.commitment_id,
+            "is_valid": is_valid,
+            "recomputed_hash": recomputed,
+            "stored_hash": commitment["commitment_hash"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"ZK commitment verify error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WALLET PRIVACY ANALYZER — Score wallet privacy via public RPCs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+ANKR_RPCS = {
+    "base":        "https://rpc.ankr.com/base",
+    "arbitrum":    "https://rpc.ankr.com/arbitrum",
+    "polygon":     "https://rpc.ankr.com/polygon",
+    "optimism":    "https://rpc.ankr.com/optimism",
+    "bnb":         "https://rpc.ankr.com/bsc",
+    "avalanche":   "https://rpc.ankr.com/avalanche",
+}
+
+@api_router.get("/analyzer/scan/{address}")
+async def analyze_wallet_privacy(address: str):
+    """Analyze a wallet's privacy posture across chains using public RPCs."""
+    try:
+        results = {}
+        total_tx_count = 0
+        chains_with_balance = 0
+        chains_with_activity = 0
+
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            for chain_key, rpc_url in ANKR_RPCS.items():
+                chain_data = {"chain": chain_key, "balance_wei": "0", "tx_count": 0}
+                try:
+                    # Get balance
+                    bal_resp = await client.post(rpc_url, json={
+                        "jsonrpc": "2.0", "method": "eth_getBalance",
+                        "params": [address, "latest"], "id": 1
+                    })
+                    bal_hex = bal_resp.json().get("result", "0x0")
+                    balance_wei = int(bal_hex, 16)
+                    chain_data["balance_wei"] = str(balance_wei)
+                    if balance_wei > 0:
+                        chains_with_balance += 1
+
+                    # Get tx count (nonce)
+                    tx_resp = await client.post(rpc_url, json={
+                        "jsonrpc": "2.0", "method": "eth_getTransactionCount",
+                        "params": [address, "latest"], "id": 2
+                    })
+                    tx_hex = tx_resp.json().get("result", "0x0")
+                    tx_count = int(tx_hex, 16)
+                    chain_data["tx_count"] = tx_count
+                    total_tx_count += tx_count
+                    if tx_count > 0:
+                        chains_with_activity += 1
+
+                    # Get code (check if contract)
+                    code_resp = await client.post(rpc_url, json={
+                        "jsonrpc": "2.0", "method": "eth_getCode",
+                        "params": [address, "latest"], "id": 3
+                    })
+                    code = code_resp.json().get("result", "0x")
+                    chain_data["is_contract"] = len(code) > 2
+
+                except Exception as e:
+                    chain_data["error"] = str(e)
+
+                results[chain_key] = chain_data
+
+        # Privacy scoring
+        score = 100
+        risks = []
+        recommendations = []
+
+        # Penalize high tx count (more linkable)
+        if total_tx_count > 100:
+            score -= 25
+            risks.append({"level": "high", "message": f"High transaction count ({total_tx_count}) across chains — easily linkable via on-chain analysis"})
+        elif total_tx_count > 20:
+            score -= 10
+            risks.append({"level": "medium", "message": f"Moderate transaction count ({total_tx_count}) — some linkability risk"})
+
+        # Penalize activity across many chains (cross-chain correlation)
+        if chains_with_activity >= 4:
+            score -= 20
+            risks.append({"level": "high", "message": f"Active on {chains_with_activity} chains — high cross-chain correlation risk"})
+        elif chains_with_activity >= 2:
+            score -= 8
+            risks.append({"level": "medium", "message": f"Active on {chains_with_activity} chains — moderate correlation risk"})
+
+        # Penalize balances on multiple chains
+        if chains_with_balance >= 3:
+            score -= 15
+            risks.append({"level": "medium", "message": f"Balances on {chains_with_balance} chains — increases deanonymization surface"})
+
+        # Check if address has ENS-style patterns (short addresses, vanity)
+        if address.lower().startswith("0x0000") or address.lower().endswith("0000"):
+            score -= 5
+            risks.append({"level": "low", "message": "Vanity/notable address pattern — may be recognizable"})
+
+        # Recommendations
+        if total_tx_count > 0:
+            recommendations.append("Use stealth addresses for receiving to break address linkage")
+        if chains_with_activity > 1:
+            recommendations.append("Use different stealth addresses per chain to prevent cross-chain correlation")
+        if chains_with_balance > 0:
+            recommendations.append("Move funds through the privacy relayer to break transaction graphs")
+        recommendations.append("Use ZK commitments to hide transaction amounts")
+        recommendations.append("Consider the cross-chain split feature to distribute funds privately")
+
+        score = max(0, min(100, score))
+
+        return {
+            "address": address,
+            "privacy_score": score,
+            "grade": "A+" if score >= 90 else "A" if score >= 80 else "B" if score >= 70 else "C" if score >= 50 else "D" if score >= 30 else "F",
+            "total_tx_count": total_tx_count,
+            "chains_with_balance": chains_with_balance,
+            "chains_with_activity": chains_with_activity,
+            "chain_data": results,
+            "risks": risks,
+            "recommendations": recommendations,
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Wallet analyzer error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
 @api_router.post("/errors/log")
 async def log_frontend_error(error: Dict[str, Any] = Body(...)):
     """Log frontend errors for monitoring"""

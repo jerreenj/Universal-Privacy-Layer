@@ -1,7 +1,8 @@
 import { useState } from "react";
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
-  History, Key, Image, FileCode, TrendingUp, MessageSquare, Users
+  History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
+  Search, FileText, BookOpen, Hash
 } from "lucide-react";
 import { CHAINS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -27,6 +28,10 @@ import { CrossChainSplit } from "@/components/features/CrossChainSplit";
 import { EncryptedMessaging } from "@/components/features/EncryptedMessaging";
 import { MultisigPrivacy } from "@/components/features/MultisigPrivacy";
 import { DeveloperAPI } from "@/pages/DeveloperAPI";
+import { WalletPrivacyAnalyzer } from "@/components/features/WalletPrivacyAnalyzer";
+import { EncryptedReceipts } from "@/components/features/EncryptedReceipts";
+import { PrivacyAddressBook } from "@/components/features/PrivacyAddressBook";
+import { ZKCommitments } from "@/components/features/ZKCommitments";
 
 export function Dashboard() {
   const { address, balance, chain, fetchBalance, hiddenBalance } = useWallet();
@@ -58,6 +63,10 @@ export function Dashboard() {
     messaging: { title: "Encrypted Messaging", component: <EncryptedMessaging /> },
     multisig: { title: "Multisig Privacy", component: <MultisigPrivacy /> },
     developer: { title: "Developer API", component: <DeveloperAPI /> },
+    analyzer: { title: "Wallet Privacy Analyzer", component: <WalletPrivacyAnalyzer /> },
+    receipts: { title: "Encrypted Receipts", component: <EncryptedReceipts /> },
+    addressbook: { title: "Privacy Address Book", component: <PrivacyAddressBook /> },
+    zkcommit: { title: "ZK Commitments", component: <ZKCommitments /> },
   };
 
   if (page !== "home" && pages[page]) {
@@ -163,6 +172,8 @@ export function Dashboard() {
               { id: "split",   icon: <Globe className="w-5 h-5" />, title: "Cross-Chain Split", color: "text-teal-400" },
               { id: "messaging", icon: <MessageSquare className="w-5 h-5" />, title: "Messaging", color: "text-pink-400" },
               { id: "multisig", icon: <Users className="w-5 h-5" />, title: "Multisig", color: "text-amber-400" },
+              { id: "analyzer", icon: <Search className="w-5 h-5" />, title: "Privacy Analyzer", color: "text-cyan-400" },
+              { id: "zkcommit", icon: <Hash className="w-5 h-5" />, title: "ZK Commitments", color: "text-lime-400" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
@@ -183,6 +194,8 @@ export function Dashboard() {
               { id: "contract",icon: <FileCode className="w-5 h-5" />, title: "Contracts", color: "text-cyan-400" },
               { id: "chains",  icon: <Layers className="w-5 h-5" />, title: "Chains", color: "text-white/50" },
               { id: "developer", icon: <FileCode className="w-5 h-5" />, title: "Developer API", color: "text-emerald-400" },
+              { id: "receipts", icon: <FileText className="w-5 h-5" />, title: "Receipts", color: "text-sky-400" },
+              { id: "addressbook", icon: <BookOpen className="w-5 h-5" />, title: "Address Book", color: "text-violet-400" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
