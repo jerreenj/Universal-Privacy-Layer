@@ -12,13 +12,9 @@ ENV REACT_APP_BACKEND_URL=""
 RUN yarn build
 
 # ── Stage 2: Python Backend + Static Frontend ─────────────────────
-FROM python:3.11-slim
+FROM python:3.11
 
 WORKDIR /app
-
-# Install system deps for cryptography wheels
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libffi-dev && \
-    rm -rf /var/lib/apt/lists/*
 
 # Install Python deps
 COPY backend/requirements.txt ./requirements.txt
@@ -30,9 +26,10 @@ COPY backend/ ./backend/
 # Copy built frontend into backend/static for serving
 COPY --from=frontend-build /build/frontend/build ./backend/static
 
-# Railway injects PORT env var
+# Railway injects PORT; default to 8001
 ENV PORT=8001
 
 EXPOSE ${PORT}
 
-CMD ["sh", "-c", "uvicorn backend.server:app --host 0.0.0.0 --port ${PORT}"]
+# Run from backend dir so imports resolve simply
+CMD sh -c "cd /app/backend && uvicorn server:app --host 0.0.0.0 --port ${PORT}"
