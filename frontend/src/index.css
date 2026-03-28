@@ -3,16 +3,39 @@
 @tailwind utilities;
 
 :root {
-  --background: #050505;
+  /* Legacy raw values */
   --surface: #0A0A0A;
   --surface-highlight: #121212;
-  --border: #222222;
-  --primary: #00FF94;
   --primary-dim: rgba(0, 255, 148, 0.1);
-  --secondary: #00F0FF;
-  --accent: #FF3B30;
   --text-main: #EDEDED;
   --text-muted: #888888;
+
+  /* shadcn HSL tokens (dark theme) */
+  --background: 0 0% 2%;
+  --foreground: 0 0% 93%;
+  --card: 0 0% 4%;
+  --card-foreground: 0 0% 93%;
+  --popover: 0 0% 4%;
+  --popover-foreground: 0 0% 93%;
+  --primary: 153 100% 50%;
+  --primary-foreground: 0 0% 0%;
+  --secondary: 186 100% 50%;
+  --secondary-foreground: 0 0% 0%;
+  --muted: 0 0% 10%;
+  --muted-foreground: 0 0% 53%;
+  --accent: 3 100% 59%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 13%;
+  --input: 0 0% 13%;
+  --ring: 153 100% 50%;
+  --radius: 0.5rem;
+  --chart-1: 153 100% 50%;
+  --chart-2: 186 100% 50%;
+  --chart-3: 3 100% 59%;
+  --chart-4: 45 100% 60%;
+  --chart-5: 270 70% 60%;
 }
 
 * {
@@ -20,7 +43,7 @@
 }
 
 html {
-  background-color: var(--background);
+  background-color: hsl(var(--background));
   color-scheme: dark;
 }
 
@@ -31,7 +54,7 @@ body {
   letter-spacing: 0.025em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: var(--background);
+  background-color: hsl(var(--background));
   color: var(--text-main);
   min-height: 100vh;
 }
@@ -56,16 +79,16 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--surface);
+  background: hsl(var(--card));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: hsl(var(--border));
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--primary);
+  background: hsl(var(--primary));
 }
 
 /* Glow effects */
@@ -133,17 +156,17 @@ body {
 .cursor-blink::after {
   content: '|';
   animation: blink 1s infinite;
-  color: var(--primary);
+  color: hsl(var(--primary));
 }
 
 /* Selection */
 ::selection {
-  background: var(--primary);
+  background: hsl(var(--primary));
   color: black;
 }
 
 @layer base {
   * {
-    @apply border-[#222222];
+    @apply border-border;
   }
 }

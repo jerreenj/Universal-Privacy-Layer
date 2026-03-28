@@ -13,6 +13,7 @@ import { WalletProvider } from "@/context/WalletContext";
 
 // Pages & Components
 import FounderMode from "@/pages/FounderMode";
+import PricingPage from "@/pages/Pricing";
 import { AccessGate } from "@/components/auth/AccessGate";
 import { Dashboard } from "@/components/layout/Dashboard";
 
@@ -51,6 +52,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/founder" element={<FounderMode />} />
+        <Route path="/pricing" element={<PricingPage />} />
         <Route path="/*" element={<PublicApp />} />
       </Routes>
     </BrowserRouter>
