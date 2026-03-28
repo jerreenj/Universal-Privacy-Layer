@@ -248,7 +248,7 @@ function CryptoPaymentModal({ plan, planId, onClose }) {
 
               <div className="mt-4 p-3 bg-neutral-800/50 rounded-lg">
                 <p className="text-neutral-500 text-xs">
-                  Already paid? Contact <a href="mailto:jerreen@jasprlabs.com" className="text-green-400 hover:underline">jerreen@jasprlabs.com</a> to get your access code.
+                  Already paid? Contact <a href="mailto:jerreen@jasprlabs.com?subject=Access%20Code%20Request%20-%20PrivacyCloak" target="_blank" rel="noopener noreferrer" className="text-green-400 hover:underline">jerreen@jasprlabs.com</a> to get your access code.
                 </p>
               </div>
 
@@ -568,7 +568,7 @@ export default function PricingPage() {
       />
       <div className="text-center pb-12 px-4">
         <p className="text-neutral-500 text-sm">
-          Already purchased? Contact <a href="mailto:jerreen@jasprlabs.com" className="text-green-400 hover:underline font-medium">jerreen@jasprlabs.com</a> to get your access code.
+          Already purchased? Contact <a href="mailto:jerreen@jasprlabs.com?subject=Access%20Code%20Request%20-%20PrivacyCloak" target="_blank" rel="noopener noreferrer" className="text-green-400 hover:underline font-medium">jerreen@jasprlabs.com</a> to get your access code.
         </p>
       </div>
     </div>
