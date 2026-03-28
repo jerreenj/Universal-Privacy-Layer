@@ -135,19 +135,6 @@ export function EncryptedMessaging() {
     setLoading(false);
   };
 
-  const copyLink = () => {
-    copyToClip(`${window.location.origin}?msg=${address}`);
-    setCopied(true);
-    toast.success("Contact link copied");
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const msg = params.get("msg");
-    if (msg) { setRecipient(msg); setTab("send"); }
-  }, []);
-
   const formatDate = (d) => {
     if (!d) return "";
     const dt = new Date(d);
@@ -175,10 +162,10 @@ export function EncryptedMessaging() {
       {tab === "send" && (
         <div className="space-y-3">
           {address && (
-            <button onClick={copyLink}
+            <button onClick={() => { copyToClip(address); setCopied(true); toast.success("Wallet address copied"); setTimeout(() => setCopied(false), 2000); }}
               className="w-full py-2 border border-white/20 hover:border-white/50 text-xs text-white/50 hover:text-white flex items-center justify-center gap-2 transition-colors">
               {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
-              {copied ? "Link copied!" : "Copy your contact link"}
+              {copied ? "Copied!" : `Share your address: ${address.slice(0,6)}...${address.slice(-4)}`}
             </button>
           )}
           <p className="text-xs text-white/30">All messages are encrypted. E2E when both wallets are connected.</p>
