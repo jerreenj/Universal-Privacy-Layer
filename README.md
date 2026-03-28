@@ -29,7 +29,7 @@
 
 <br>
 
-<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,50:001a0e,100:00FF94&height=100&section=header&fontSize=0" />
+---
 
 </div>
 
