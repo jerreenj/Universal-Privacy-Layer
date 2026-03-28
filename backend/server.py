@@ -81,7 +81,7 @@ def rate_limit(request: StarletteRequest, max_calls: int = 20, window: int = 60)
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # Public endpoints that don't require a session token
-    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access", "/api/payments/info", "/api/payments/submit"}
+    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access", "/api/payments/info", "/api/payments/submit", "/api/payments/email"}
     PUBLIC_PREFIXES = ()
 
     async def dispatch(self, request: StarletteRequest, call_next):
@@ -3502,10 +3502,33 @@ async def submit_payment(request: StarletteRequest):
         "sender_address": sender.lower() if sender else "",
         "payout_wallet": PAYOUT_WALLET,
         "payment_status": "pending_verification",
+        "buyer_email": "",
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
     return {"status": "submitted", "message": "Payment submitted for verification. You'll be activated shortly."}
+
+
+@api_router.post("/payments/email")
+async def save_buyer_email(request: StarletteRequest):
+    """Save buyer email after payment submission."""
+    body = await request.json()
+    tx_hash = body.get("tx_hash", "")
+    email = body.get("email", "")
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    result = await db.payment_transactions.update_one(
+        {"tx_hash": tx_hash},
+        {"$set": {"buyer_email": email.strip().lower()}}
+    )
+    if result.matched_count == 0:
+        # Store anyway for manual lookup
+        await db.payment_transactions.update_one(
+            {"buyer_email": email.strip().lower()},
+            {"$set": {"buyer_email": email.strip().lower(), "tx_hash": tx_hash, "created_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
+    return {"saved": True}
 
 
 # Include router

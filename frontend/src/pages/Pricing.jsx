@@ -80,6 +80,8 @@ function CryptoPaymentModal({ plan, planId, onClose }) {
   const [tab, setTab] = useState("wallet"); // "wallet" | "qr" | "manual"
   const [walletSending, setWalletSending] = useState(false);
   const [walletSuccess, setWalletSuccess] = useState(false);
+  const [buyerEmail, setBuyerEmail] = useState("");
+  const [emailSubmitted, setEmailSubmitted] = useState(false);
 
   useEffect(() => {
     axios.get(`${API}/api/payments/info`).then(r => setPaymentInfo(r.data)).catch(() => {});
@@ -207,12 +209,50 @@ function CryptoPaymentModal({ plan, planId, onClose }) {
           </div>
 
           {submitted ? (
-            <div className="text-center py-8">
+            <div className="text-center py-6">
               <CheckCircle className="w-14 h-14 text-green-500 mx-auto mb-4" />
               <h4 className="text-xl font-bold text-white mb-2">Payment Submitted</h4>
               <p className="text-neutral-400 text-sm">We'll verify your transaction and activate your plan shortly.</p>
               {txHash && <p className="text-neutral-600 text-xs mt-3 font-mono break-all">TX: {txHash}</p>}
-              <button onClick={onClose} className="mt-6 px-6 py-2.5 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 transition-colors text-sm font-medium" data-testid="payment-done-btn">
+
+              {/* Email collection */}
+              {!emailSubmitted ? (
+                <div className="mt-5 space-y-3">
+                  <p className="text-neutral-400 text-xs">Leave your email so we can reach out with your access code:</p>
+                  <input
+                    type="email"
+                    value={buyerEmail}
+                    onChange={e => setBuyerEmail(e.target.value)}
+                    placeholder="your@email.com"
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg p-3 text-white text-sm placeholder-neutral-600 focus:outline-none focus:border-green-500"
+                    data-testid="buyer-email-input"
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!buyerEmail.trim() || !buyerEmail.includes("@")) return;
+                      try {
+                        await axios.post(`${API}/api/payments/email`, { tx_hash: txHash, email: buyerEmail.trim() });
+                        setEmailSubmitted(true);
+                      } catch {}
+                    }}
+                    disabled={!buyerEmail.includes("@")}
+                    className="w-full py-2.5 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 disabled:opacity-40 transition-colors text-sm font-medium"
+                    data-testid="submit-email-btn"
+                  >
+                    Submit Email
+                  </button>
+                </div>
+              ) : (
+                <p className="text-green-400 text-xs mt-4">Email saved. We'll be in touch.</p>
+              )}
+
+              <div className="mt-4 p-3 bg-neutral-800/50 rounded-lg">
+                <p className="text-neutral-500 text-xs">
+                  Already paid? Contact <a href="mailto:jerreen@jasprlabs.com" className="text-green-400 hover:underline">jerreen@jasprlabs.com</a> to get your access code.
+                </p>
+              </div>
+
+              <button onClick={onClose} className="mt-4 px-6 py-2.5 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 transition-colors text-sm font-medium" data-testid="payment-done-btn">
                 Done
               </button>
             </div>
@@ -491,7 +531,7 @@ export default function PricingPage() {
       if (!planId) return;
 
       if (planId === "wraith" || planId === "wraith_annual") {
-        window.open("mailto:contact@privacycloak.in?subject=Wraith%20Plan%20Inquiry", "_blank");
+        window.open("mailto:jerreen@jasprlabs.com?subject=Wraith%20Plan%20Inquiry", "_blank");
         return;
       }
 
@@ -526,6 +566,11 @@ export default function PricingPage() {
         title="Privacy Has a Price. Exposure Costs More."
         description={"Zero-knowledge transactions. Stealth addresses. On-chain anonymity.\nChoose your level of invisibility."}
       />
+      <div className="text-center pb-12 px-4">
+        <p className="text-neutral-500 text-sm">
+          Already purchased? Contact <a href="mailto:jerreen@jasprlabs.com" className="text-green-400 hover:underline font-medium">jerreen@jasprlabs.com</a> to get your access code.
+        </p>
+      </div>
     </div>
   );
 }
