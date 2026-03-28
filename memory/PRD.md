@@ -8,10 +8,10 @@ Build a production-ready "Universal Privacy Layer" for cryptocurrency transactio
 - **Backend**: FastAPI + MongoDB
 - **Cryptography**: @noble/secp256k1 v3.0.0, EIP-5564 compliant
 
-## Code Structure (Refactored Feb 27, 2026)
+## Code Structure (Updated Feb 28, 2026)
 ```
 frontend/src/
-├── App.js                           # Thin router (~55 lines)
+├── App.js                           # Thin router (~65 lines)
 ├── lib/session.js                   # Session token mgmt + 401 interceptor
 ├── lib/messageCrypto.js             # ECDH + AES-GCM E2E encryption
 ├── config/chains.js                 # Chain registry, API constants
@@ -25,31 +25,17 @@ frontend/src/
 │   ├── common/
 │   │   ├── BackButton.jsx
 │   │   └── CopyButton.jsx
+│   ├── ui/pricing.jsx               # Interactive pricing section component
 │   └── features/                    # 21 feature components
-│       ├── StealthMeta.jsx          # Meta-address generation
-│       ├── StealthSend.jsx          # Stealth transfer
-│       ├── StealthReceive.jsx       # Stealth scanning
-│       ├── StealthContent.jsx       # Stealth tab wrapper
-│       ├── SendContent.jsx
-│       ├── SwapContent.jsx
-│       ├── UniswapPrivateSwap.jsx
-│       ├── HyperliquidPrivateTrading.jsx
-│       ├── PolymarketPrivateBetting.jsx
-│       ├── HiddenBalanceDashboard.jsx
-│       ├── TransactionHistory.jsx
-│       ├── DualSeedSetup.jsx
-│       ├── NFTPrivacy.jsx
-│       ├── TokenApprovalPrivacy.jsx
-│       ├── ContractPrivacy.jsx
-│       ├── ChainsStatus.jsx
-│       ├── ZKPProofs.jsx
-│       ├── OnChainRelayer.jsx
-│       ├── CrossChainSplit.jsx
+│       ├── StealthMeta.jsx
+│       ├── StealthSend.jsx
+│       ├── StealthReceive.jsx
 │       ├── EncryptedMessaging.jsx
-│       └── MultisigPrivacy.jsx
+│       └── ... (17 more)
 ├── pages/
 │   ├── FounderMode.jsx
-│   └── DeveloperAPI.jsx
+│   ├── DeveloperAPI.jsx
+│   └── Pricing.jsx                  # Pricing page (3 plans)
 backend/
 ├── server.py                        # All API routes
 ```
@@ -62,7 +48,7 @@ backend/
   - Meta-address generation
   - Stealth sending
   - Stealth scanning/receiving
-- [x] Encrypted P2P Messaging — **True E2E** (ECDH secp256k1 + AES-256-GCM, server never sees plaintext)
+- [x] Encrypted P2P Messaging — **True E2E** (ECDH secp256k1 + AES-256-GCM)
 - [x] Private DeFi integrations (Uniswap V3, Hyperliquid, Polymarket)
 - [x] Cross-Chain Split payments
 - [x] ZKP Proof system
@@ -70,8 +56,12 @@ backend/
 - [x] NFT/Token/Contract privacy proxies
 - [x] Multisig privacy wallets
 - [x] Developer API with key management
-- [x] 7 EVM chains live (Base, Arbitrum, Polygon, Optimism, BNB, Avalanche, Hyperliquid)
-- [x] App.js monolith refactored (2925 → 55 lines, 25+ components)
+- [x] 7 EVM chains live
+- [x] App.js monolith refactored (25+ components)
+- [x] Railway deployment (Dockerfile + railway.toml)
+- [x] **Pricing page** at /pricing — 3 plans (Phantom/Specter/Wraith) with interactive starfield, Monthly/Annual toggle
+- [x] **All mock/demo data removed** — Polymarket returns real CLOB API data or proper 503 error
+- [x] **CSS variables migrated** to HSL format for full shadcn compatibility
 
 ## Pending / Backlog
 ### P1
