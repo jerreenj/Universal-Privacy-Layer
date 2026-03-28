@@ -96,38 +96,41 @@ export function EncryptedMessaging() {
 
     setLoading(true);
     try {
-      if (!msgKeys) {
-        toast.error("Sign the messaging key request first");
-        setLoading(false);
-        return;
+      // Try E2E first, fall back to legacy if recipient has no key
+      let usedE2E = false;
+      if (msgKeys) {
+        let recipientPubKey = null;
+        try {
+          const r = await axios.get(`${API}/messaging/pubkey/${recipient.trim()}`);
+          recipientPubKey = r.data.public_key;
+        } catch { /* recipient not registered — will fall back */ }
+
+        if (recipientPubKey) {
+          const encrypted = await encryptMessage(message, recipientPubKey);
+          await axios.post(`${API}/messaging/send-e2e`, {
+            sender_address: address,
+            recipient_address: recipient.trim(),
+            ciphertext: encrypted.ciphertext,
+            ephemeral_pub: encrypted.ephemeralPub,
+            nonce: encrypted.nonce,
+          });
+          usedE2E = true;
+        }
       }
 
-      // Fetch recipient's public key
-      let recipientPubKey;
-      try {
-        const r = await axios.get(`${API}/messaging/pubkey/${recipient.trim()}`);
-        recipientPubKey = r.data.public_key;
-      } catch {
-        toast.error("Recipient has not registered a messaging key yet. They need to open Encrypted Messaging first.");
-        setLoading(false);
-        return;
+      // Fallback: legacy server-side encryption (still encrypted, just not E2E)
+      if (!usedE2E) {
+        await axios.post(`${API}/messaging/send`, {
+          sender_address: address,
+          recipient_address: recipient.trim(),
+          message,
+          recipient_public_key: recipient.trim(),
+        });
       }
 
-      // Encrypt client-side
-      const encrypted = await encryptMessage(message, recipientPubKey);
-
-      // Send pre-encrypted blob — server NEVER sees plaintext
-      await axios.post(`${API}/messaging/send-e2e`, {
-        sender_address: address,
-        recipient_address: recipient.trim(),
-        ciphertext: encrypted.ciphertext,
-        ephemeral_pub: encrypted.ephemeralPub,
-        nonce: encrypted.nonce,
-      });
-
-      setSent(true);
+      setSent(usedE2E ? "e2e" : "legacy");
       setMessage("");
-      toast.success("Message sent with true E2E encryption");
+      toast.success(usedE2E ? "Sent with true E2E encryption" : "Sent with encrypted delivery");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Send failed");
     }
@@ -207,15 +210,20 @@ export function EncryptedMessaging() {
               data-testid="msg-body-input"
               className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none focus:border-white h-24 resize-none" />
           </div>
-          <button onClick={sendMessage} disabled={loading || !msgKeys} data-testid="msg-send-btn"
+          <button onClick={sendMessage} disabled={loading} data-testid="msg-send-btn"
             className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-            {loading ? "Encrypting & Sending..." : !msgKeys ? "Sign to Enable E2E First" : "Send E2E Encrypted"}
+            {loading ? "Encrypting & Sending..." : "Send Encrypted"}
           </button>
           {sent && (
-            <div className="bg-green-400/10 border border-green-400/30 p-3 text-xs text-green-300">
-              <div className="flex items-center gap-2 mb-1"><ShieldCheck className="w-3 h-3" /><span className="font-semibold">Sent with true E2E encryption</span></div>
-              The server only stored ciphertext. Only the recipient's wallet can decrypt this message.
+            <div className={`${sent === "e2e" ? "bg-green-400/10 border-green-400/30" : "bg-blue-400/10 border-blue-400/30"} border p-3 text-xs`}>
+              {sent === "e2e" ? (
+                <><div className="flex items-center gap-2 mb-1 text-green-300"><ShieldCheck className="w-3 h-3" /><span className="font-semibold">Sent with true E2E encryption</span></div>
+                <span className="text-green-300/70">The server only stored ciphertext. Only the recipient's wallet can decrypt this message.</span></>
+              ) : (
+                <><div className="flex items-center gap-2 mb-1 text-blue-300"><Lock className="w-3 h-3" /><span className="font-semibold">Sent with encrypted delivery</span></div>
+                <span className="text-blue-300/70">Recipient hasn't enabled E2E yet. Message was server-encrypted. When they enable E2E, future messages will be fully private.</span></>
+              )}
             </div>
           )}
         </div>
