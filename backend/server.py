@@ -105,23 +105,43 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 # ── Session Token Auth ────────────────────────────────────────────────────────
-# Sessions persisted in MongoDB so they survive backend restarts/redeploys
+# Sessions: MongoDB primary, in-memory fallback if DB is unavailable/full
 SESSION_TTL = 60 * 60 * 24 * 365  # 1 year
+_sessions_fallback: dict = {}  # in-memory fallback
 
 def _new_token() -> str:
     return secrets.token_hex(32)
 
 async def _get_session(token: str):
-    """Look up session in MongoDB."""
-    return await db.sessions.find_one({"token": token, "expires_at": {"$gt": _time.time()}}, {"_id": 0})
+    """Look up session — try MongoDB first, fallback to memory."""
+    try:
+        doc = await db.sessions.find_one({"token": token, "expires_at": {"$gt": _time.time()}}, {"_id": 0})
+        if doc:
+            return doc
+    except Exception:
+        pass
+    # Fallback: check in-memory
+    exp = _sessions_fallback.get(token)
+    if exp and _time.time() < exp:
+        return {"token": token, "expires_at": exp}
+    _sessions_fallback.pop(token, None)
+    return None
 
 async def _create_session(token: str):
-    """Store session in MongoDB."""
-    await db.sessions.insert_one({"token": token, "expires_at": _time.time() + SESSION_TTL, "created_at": datetime.now(timezone.utc).isoformat()})
+    """Store session — try MongoDB, always store in memory as backup."""
+    _sessions_fallback[token] = _time.time() + SESSION_TTL
+    try:
+        await db.sessions.insert_one({"token": token, "expires_at": _time.time() + SESSION_TTL, "created_at": datetime.now(timezone.utc).isoformat()})
+    except Exception as e:
+        logger.warning(f"MongoDB session write failed (using memory fallback): {e}")
 
 async def _delete_session(token: str):
-    """Remove session from MongoDB."""
-    await db.sessions.delete_one({"token": token})
+    """Remove session from both stores."""
+    _sessions_fallback.pop(token, None)
+    try:
+        await db.sessions.delete_one({"token": token})
+    except Exception:
+        pass
 
 def require_auth(request: StarletteRequest):
     """Dependency: validates session token on every protected endpoint.
