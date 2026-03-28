@@ -182,7 +182,7 @@ export function EncryptedMessaging() {
         {["send", "inbox"].map(t => (
           <button key={t} onClick={() => setTab(t)} data-testid={`msg-tab-${t}`}
             className={`flex-1 py-2 text-sm font-medium capitalize ${tab === t ? "bg-white text-black" : "bg-white/10"}`}>
-            {t === "inbox" ? `Inbox${msgCount.total > 0 ? ` (${msgCount.unread > 0 ? msgCount.unread + " new / " : ""}${msgCount.total})` : ""}` : "Send"}
+            {t === "inbox" ? `Inbox${msgCount.unread > 0 ? ` (${msgCount.unread})` : ""}` : "Send"}
           </button>
         ))}
       </div>

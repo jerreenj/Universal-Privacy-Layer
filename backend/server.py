@@ -10,7 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib
 import secrets
 from eth_account import Account
@@ -52,6 +52,8 @@ async def create_indexes():
     try:
         await db.sessions.create_index("token", unique=True)
         await db.sessions.create_index("expires_at")
+        # Auto-delete messages after 72 hours
+        await db.encrypted_messages.create_index("expires_at", expireAfterSeconds=0)
     except Exception as e:
         logger.warning(f"Index creation skipped (non-fatal): {e}")
 
@@ -1716,7 +1718,8 @@ async def send_e2e_message(request: E2EMessageRequest):
             "attached_tx_hash": request.attached_tx_hash,
             "e2e": True,
             "read": False,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=72)
         }
         await db.encrypted_messages.insert_one(doc)
         return {"message_id": message_id, "recipient": request.recipient_address, "e2e": True}
@@ -1748,7 +1751,8 @@ async def send_encrypted_message(request: EncryptedMessageRequest):
             "attached_tx_hash": request.attached_tx_hash,
             "e2e": False,
             "read": False,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=72)
         }
         await db.encrypted_messages.insert_one(doc)
         return {
