@@ -51,8 +51,9 @@ export function EncryptedMessaging() {
 
   const loadInbox = useCallback(async () => {
     if (!address) return;
+    const addrLower = address.toLowerCase();
     try {
-      const r = await axios.get(`${API}/messaging/inbox/${address}`);
+      const r = await axios.get(`${API}/messaging/inbox/${addrLower}`);
       const msgs = r.data.messages || [];
       setInbox(msgs);
       const dec = {};
@@ -61,7 +62,7 @@ export function EncryptedMessaging() {
           const plain = await decryptMessage(m.ciphertext, m.ephemeral_pub, m.nonce, msgKeys.privateKey);
           if (plain) dec[m.message_id] = plain;
         } else if (m.encrypted_content) {
-          const plain = await legacyDecrypt(m.encrypted_content, address);
+          const plain = await legacyDecrypt(m.encrypted_content, addrLower);
           if (plain) dec[m.message_id] = plain;
         }
       }
@@ -79,18 +80,19 @@ export function EncryptedMessaging() {
     if (!recipient || !message) return toast.error("Fill in recipient and message");
     setLoading(true);
     setSentMode(null);
+    const recipientAddr = recipient.trim().toLowerCase();
     try {
       let usedE2E = false;
 
       // Attempt E2E if we have our own keys
       if (msgKeys) {
         try {
-          const r = await axios.get(`${API}/messaging/pubkey/${recipient.trim()}`);
+          const r = await axios.get(`${API}/messaging/pubkey/${recipientAddr}`);
           if (r.data.public_key) {
             const encrypted = await encryptMessage(message, r.data.public_key);
             await axios.post(`${API}/messaging/send-e2e`, {
-              sender_address: address,
-              recipient_address: recipient.trim(),
+              sender_address: address.toLowerCase(),
+              recipient_address: recipientAddr,
               ciphertext: encrypted.ciphertext,
               ephemeral_pub: encrypted.ephemeralPub,
               nonce: encrypted.nonce,
@@ -103,10 +105,10 @@ export function EncryptedMessaging() {
       // Fallback: server-encrypted delivery
       if (!usedE2E) {
         await axios.post(`${API}/messaging/send`, {
-          sender_address: address,
-          recipient_address: recipient.trim(),
+          sender_address: address.toLowerCase(),
+          recipient_address: recipientAddr,
           message,
-          recipient_public_key: recipient.trim(),
+          recipient_public_key: recipientAddr,
         });
       }
 

@@ -1675,8 +1675,8 @@ async def send_e2e_message(request: E2EMessageRequest):
         message_id = str(uuid.uuid4())
         doc = {
             "message_id": message_id,
-            "sender_address": request.sender_address,
-            "recipient_address": request.recipient_address,
+            "sender_address": request.sender_address.lower(),
+            "recipient_address": request.recipient_address.lower(),
             "ciphertext": request.ciphertext,
             "ephemeral_pub": request.ephemeral_pub,
             "nonce": request.nonce,
@@ -1697,7 +1697,9 @@ async def send_encrypted_message(request: EncryptedMessageRequest):
     """Legacy send — server-side encryption fallback for non-E2E clients."""
     try:
         message_id = str(uuid.uuid4())
-        key = hashlib.sha256(request.recipient_public_key.encode()).digest()
+        # Normalize to lowercase for consistent decryption
+        recipient_key = request.recipient_public_key.lower()
+        key = hashlib.sha256(recipient_key.encode()).digest()
         iv = secrets.token_bytes(16)
         cipher = AES.new(key, AES.MODE_CBC, iv)
         message_bytes = request.message.encode()
@@ -1707,8 +1709,8 @@ async def send_encrypted_message(request: EncryptedMessageRequest):
         encrypted_b64 = base64.b64encode(iv + encrypted).decode()
         doc = {
             "message_id": message_id,
-            "sender_address": request.sender_address,
-            "recipient_address": request.recipient_address,
+            "sender_address": request.sender_address.lower(),
+            "recipient_address": request.recipient_address.lower(),
             "encrypted_content": encrypted_b64,
             "chain": request.chain,
             "attached_tx_hash": request.attached_tx_hash,
