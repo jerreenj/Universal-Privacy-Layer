@@ -66,13 +66,18 @@ export function EncryptedMessaging() {
           const plain = await decryptMessage(m.ciphertext, m.ephemeral_pub, m.nonce, msgKeys.privateKey);
           if (plain) dec[m.message_id] = plain;
         } else if (m.encrypted_content) {
-          // Try: original address, lowercase, recipient_address field from DB
+          // Try every possible key variant (handles old messages with URL-based keys)
+          const recipAddr = m.recipient_address || "";
+          const urlMatch = recipAddr.match(/[?&]msg=([^&]+)/);
+          const extractedAddr = urlMatch ? urlMatch[1] : null;
           const plain = await legacyDecrypt(
             m.encrypted_content,
             address,
             address.toLowerCase(),
-            m.recipient_address,
-            m.recipient_address?.toLowerCase()
+            recipAddr,
+            recipAddr.toLowerCase(),
+            extractedAddr,
+            extractedAddr?.toLowerCase()
           );
           if (plain) dec[m.message_id] = plain;
         }
@@ -90,7 +95,11 @@ export function EncryptedMessaging() {
     if (!recipient || !message) return toast.error("Fill in recipient and message");
     setLoading(true);
     setSentMode(null);
-    const recipientAddr = recipient.trim().toLowerCase();
+    // Extract address from contact link if user pasted the full URL
+    let recipientAddr = recipient.trim();
+    const msgParam = recipientAddr.match(/[?&]msg=([^&]+)/);
+    if (msgParam) recipientAddr = msgParam[1];
+    recipientAddr = recipientAddr.toLowerCase();
     try {
       let usedE2E = false;
       if (msgKeys) {
