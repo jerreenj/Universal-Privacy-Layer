@@ -9,6 +9,7 @@ const plans = [
     yearlyPrice: "399",
     period: "month",
     features: [
+      "$50 for 7-day trial",
       "Stealth address generation",
       "Off-chain stealth payments",
       "Encrypted P2P messaging",
@@ -16,7 +17,7 @@ const plans = [
       "Community support",
     ],
     description: "For the solo operator. Move in silence.",
-    buttonText: "Enter the Void",
+    buttonText: "Start 7-Day Trial — $50",
     href: "/",
   },
   {
