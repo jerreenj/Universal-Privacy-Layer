@@ -219,7 +219,10 @@ export function EncryptedMessaging() {
                 {decrypted[msg.message_id] ? (
                   <p className="text-sm text-white leading-relaxed">{decrypted[msg.message_id]}</p>
                 ) : (
-                  <p className="text-xs text-white/20 font-mono italic">Unable to decrypt</p>
+                  <div className="flex items-center gap-2 py-1">
+                    <Lock className="w-3 h-3 text-white/20" />
+                    <p className="text-xs text-white/30 font-mono">{msg.e2e ? "Encrypted message — connect the recipient wallet to decrypt" : "Encrypted message — decrypting..."}</p>
+                  </div>
                 )}
               </div>
             ))
