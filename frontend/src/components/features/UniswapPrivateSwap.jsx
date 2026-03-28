@@ -49,6 +49,7 @@ export function UniswapPrivateSwap() {
       setTxHash(tx.hash);
       await axios.post(`${API}/uniswap/record-swap`, { tx_hash: tx.hash, from_address: address, token_in: tokenIn, token_out: tokenOut, amount_in: amount, amount_out: quote.amount_out_human, chain, stealth_recipient: stealthRecipient, router_used: "uniswap_v3" });
       toast.success("Private swap executed via Uniswap V3!");
+      axios.post(`${API}/stealth/use/${address}`, { feature: "swap" }).catch(() => {});
       await tx.wait();
       fetchBalance(); setQuote(null); setAmount("");
     } catch (e) { toast.error(e.message?.slice(0, 80) || "Swap failed"); }

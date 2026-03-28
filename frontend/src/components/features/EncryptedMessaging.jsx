@@ -21,6 +21,15 @@ export function EncryptedMessaging() {
   const [deriving, setDeriving] = useState(false);
   const [openMsg, setOpenMsg] = useState(null);
   const [stealthAddr, setStealthAddr] = useState(null);
+  const [msgCount, setMsgCount] = useState({ total: 0, unread: 0 });
+
+  // Load message count on mount (before tab switch)
+  useEffect(() => {
+    if (!address) return;
+    axios.get(`${API}/messaging/count/${address}`).then(r => {
+      setMsgCount({ total: r.data.total || 0, unread: r.data.unread || 0 });
+    }).catch(() => {});
+  }, [address]);
 
   // Load user's stealth meta-address for sharing — NEVER expose raw public address
   useEffect(() => {
@@ -86,6 +95,7 @@ export function EncryptedMessaging() {
       const r = await axios.get(`${API}/messaging/inbox/${address}`);
       const msgs = r.data.messages || [];
       setInbox(msgs);
+      setMsgCount({ total: r.data.total_count || msgs.length, unread: r.data.unread_count || 0 });
       const dec = {};
       for (const m of msgs) {
         const plain = await tryDecrypt(m);
@@ -95,9 +105,10 @@ export function EncryptedMessaging() {
     } catch {}
   }, [address, msgKeys]);
 
+  // Load inbox on mount AND on tab switch
   useEffect(() => {
-    if (address && tab === "inbox") loadInbox();
-  }, [address, tab, loadInbox]);
+    if (address) loadInbox();
+  }, [address, loadInbox]);
 
   const sendMessage = async () => {
     if (!address) return toast.error("Connect wallet first");
@@ -141,6 +152,8 @@ export function EncryptedMessaging() {
       setSentMode(usedE2E ? "e2e" : "encrypted");
       setMessage("");
       toast.success(usedE2E ? "Sent with E2E encryption" : "Encrypted message sent");
+      // Record stealth address usage
+      axios.post(`${API}/stealth/use/${address}`, { feature: "messaging" }).catch(() => {});
     } catch (e) {
       toast.error(e.response?.data?.detail || "Send failed");
     }
@@ -169,7 +182,7 @@ export function EncryptedMessaging() {
         {["send", "inbox"].map(t => (
           <button key={t} onClick={() => setTab(t)} data-testid={`msg-tab-${t}`}
             className={`flex-1 py-2 text-sm font-medium capitalize ${tab === t ? "bg-white text-black" : "bg-white/10"}`}>
-            {t === "inbox" ? `Inbox (${inbox.filter(m => !m.read).length})` : "Send"}
+            {t === "inbox" ? `Inbox${msgCount.total > 0 ? ` (${msgCount.unread > 0 ? msgCount.unread + " new / " : ""}${msgCount.total})` : ""}` : "Send"}
           </button>
         ))}
       </div>

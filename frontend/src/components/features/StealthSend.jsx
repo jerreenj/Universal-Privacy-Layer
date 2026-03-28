@@ -81,6 +81,8 @@ export function StealthSend({ address, chain, provider }) {
 
       setStep("done");
       toast.success("Private transfer announced");
+      // Record stealth address usage
+      axios.post(`${API}/stealth/use/${address}`, { feature: "send" }).catch(() => {});
     } catch (e) {
       toast.error(e.message?.slice(0, 80) || "Transaction failed");
       setStep("preview");

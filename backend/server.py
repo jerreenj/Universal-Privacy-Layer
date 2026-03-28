@@ -1763,22 +1763,56 @@ async def send_encrypted_message(request: EncryptedMessageRequest):
 
 @api_router.get("/messaging/inbox/{address}")
 async def get_encrypted_inbox(address: str, limit: int = 50):
-    """Get encrypted messages for an address"""
+    """Get encrypted messages for an address — checks real address AND all stealth addresses"""
     try:
-        messages = await db.encrypted_messages.find(
+        # Collect all addresses belonging to this user (real + stealth)
+        user_addresses = [address.lower()]
+
+        # Get stealth meta-address
+        meta = await db.stealth_meta.find_one({"wallet_address": address.lower()}, {"_id": 0})
+        if meta and meta.get("meta_address"):
+            user_addresses.append(meta["meta_address"].lower())
+
+        # Get all stealth addresses
+        stealth_docs = await db.stealth_addresses.find(
             {"recipient_address": {"$regex": re.escape(address), "$options": "i"}},
-            {"_id": 0}
+            {"_id": 0, "stealth_address": 1}
+        ).to_list(200)
+        for sd in stealth_docs:
+            if sd.get("stealth_address"):
+                user_addresses.append(sd["stealth_address"].lower())
+
+        # Get all active stealth rotation addresses
+        rotation_docs = await db.stealth_rotation.find(
+            {"wallet_address": address.lower()},
+            {"_id": 0, "stealth_address": 1}
+        ).to_list(200)
+        for rd in rotation_docs:
+            if rd.get("stealth_address"):
+                user_addresses.append(rd["stealth_address"].lower())
+
+        # Deduplicate
+        user_addresses = list(set(user_addresses))
+
+        # Query for messages to ANY of the user's addresses
+        query = {"recipient_address": {"$in": user_addresses}}
+        messages = await db.encrypted_messages.find(
+            query, {"_id": 0}
         ).sort("created_at", -1).to_list(limit)
-        
+
         unread_count = await db.encrypted_messages.count_documents({
-            "recipient_address": {"$regex": re.escape(address), "$options": "i"},
+            "recipient_address": {"$in": user_addresses},
             "read": False
         })
-        
+
+        total_count = await db.encrypted_messages.count_documents(
+            {"recipient_address": {"$in": user_addresses}}
+        )
+
         return {
             "address": address,
             "messages": messages,
-            "total_count": len(messages),
+            "total_count": total_count,
             "unread_count": unread_count
         }
     except Exception as e:
@@ -2837,6 +2871,164 @@ async def get_polymarket_bets(address: str):
 
 
 # ─── Error Monitoring Endpoint ─────────────────────────────────────────────────
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STEALTH ADDRESS ROTATION — Max 3 uses per address, then auto-rotate
+# ═══════════════════════════════════════════════════════════════════════════════
+
+STEALTH_MAX_USES = 3
+
+@api_router.get("/stealth/active/{wallet_address}")
+async def get_active_stealth(wallet_address: str):
+    """Get the current active stealth address. Auto-generates new one if current has >= 3 uses."""
+    try:
+        addr = wallet_address.lower()
+
+        # Find current active stealth address (usage < max)
+        active = await db.stealth_rotation.find_one(
+            {"wallet_address": addr, "usage_count": {"$lt": STEALTH_MAX_USES}, "retired": False},
+            {"_id": 0},
+            sort=[("created_at", -1)]
+        )
+
+        if active:
+            return {
+                "stealth_address": active["stealth_address"],
+                "usage_count": active["usage_count"],
+                "max_uses": STEALTH_MAX_USES,
+                "remaining": STEALTH_MAX_USES - active["usage_count"],
+                "rotation_id": active["rotation_id"],
+            }
+
+        # No active address — generate new one
+        meta = await db.stealth_meta.find_one({"wallet_address": addr}, {"_id": 0})
+        if not meta:
+            raise HTTPException(status_code=404, detail="No stealth meta-address registered. Generate one in Private Receive first.")
+
+        stealth_address, ephemeral_pk, view_tag = generate_stealth_address(addr)
+        rotation_id = str(uuid.uuid4())
+
+        doc = {
+            "rotation_id": rotation_id,
+            "wallet_address": addr,
+            "stealth_address": stealth_address,
+            "ephemeral_public_key": ephemeral_pk,
+            "view_tag": view_tag,
+            "usage_count": 0,
+            "max_uses": STEALTH_MAX_USES,
+            "retired": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.stealth_rotation.insert_one(doc)
+
+        return {
+            "stealth_address": stealth_address,
+            "usage_count": 0,
+            "max_uses": STEALTH_MAX_USES,
+            "remaining": STEALTH_MAX_USES,
+            "rotation_id": rotation_id,
+            "new": True,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Active stealth error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+@api_router.post("/stealth/use/{wallet_address}")
+async def record_stealth_use(wallet_address: str, feature: str = Body(..., embed=True)):
+    """Record a use of the current active stealth address. Auto-retires and rotates after 3 uses."""
+    try:
+        addr = wallet_address.lower()
+
+        # Find current active
+        active = await db.stealth_rotation.find_one(
+            {"wallet_address": addr, "usage_count": {"$lt": STEALTH_MAX_USES}, "retired": False},
+            {"_id": 0},
+            sort=[("created_at", -1)]
+        )
+
+        if not active:
+            raise HTTPException(status_code=404, detail="No active stealth address. Call GET /stealth/active first.")
+
+        new_count = active["usage_count"] + 1
+
+        # Increment usage
+        await db.stealth_rotation.update_one(
+            {"rotation_id": active["rotation_id"]},
+            {"$inc": {"usage_count": 1},
+             "$push": {"usage_log": {"feature": feature, "used_at": datetime.now(timezone.utc).isoformat()}}}
+        )
+
+        # Auto-retire if max reached
+        retired = new_count >= STEALTH_MAX_USES
+        if retired:
+            await db.stealth_rotation.update_one(
+                {"rotation_id": active["rotation_id"]},
+                {"$set": {"retired": True, "retired_at": datetime.now(timezone.utc).isoformat()}}
+            )
+
+        return {
+            "stealth_address": active["stealth_address"],
+            "usage_count": new_count,
+            "max_uses": STEALTH_MAX_USES,
+            "remaining": max(0, STEALTH_MAX_USES - new_count),
+            "retired": retired,
+            "feature": feature,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Stealth use error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+@api_router.get("/stealth/rotation-history/{wallet_address}")
+async def get_stealth_rotation_history(wallet_address: str):
+    """Get history of all rotated stealth addresses for a wallet."""
+    try:
+        history = await db.stealth_rotation.find(
+            {"wallet_address": wallet_address.lower()},
+            {"_id": 0}
+        ).sort("created_at", -1).to_list(100)
+        return {"history": history, "count": len(history), "max_uses_per_address": STEALTH_MAX_USES}
+    except Exception as e:
+        logger.error(f"Stealth rotation history error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+@api_router.get("/messaging/count/{address}")
+async def get_message_count(address: str):
+    """Get total and unread message count for an address (checks all stealth addresses too)."""
+    try:
+        user_addresses = [address.lower()]
+        meta = await db.stealth_meta.find_one({"wallet_address": address.lower()}, {"_id": 0})
+        if meta and meta.get("meta_address"):
+            user_addresses.append(meta["meta_address"].lower())
+        stealth_docs = await db.stealth_addresses.find(
+            {"recipient_address": {"$regex": re.escape(address), "$options": "i"}},
+            {"_id": 0, "stealth_address": 1}
+        ).to_list(200)
+        for sd in stealth_docs:
+            if sd.get("stealth_address"):
+                user_addresses.append(sd["stealth_address"].lower())
+        rotation_docs = await db.stealth_rotation.find(
+            {"wallet_address": address.lower()},
+            {"_id": 0, "stealth_address": 1}
+        ).to_list(200)
+        for rd in rotation_docs:
+            if rd.get("stealth_address"):
+                user_addresses.append(rd["stealth_address"].lower())
+        user_addresses = list(set(user_addresses))
+
+        total = await db.encrypted_messages.count_documents({"recipient_address": {"$in": user_addresses}})
+        unread = await db.encrypted_messages.count_documents({"recipient_address": {"$in": user_addresses}, "read": False})
+        return {"total": total, "unread": unread}
+    except Exception as e:
+        logger.error(f"Message count error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
