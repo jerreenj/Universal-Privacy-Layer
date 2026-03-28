@@ -75,10 +75,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: StarletteRequest, call_next):
         # ── Auth gate — block all /api/* except public paths ──────────────────
         path = request.url.path
-        # Founder routes use their own session auth — skip user session check
-        if path.startswith("/api/founder/"):
-            pass
-        elif path.startswith("/api/") and path not in self.PUBLIC_PATHS:
+        if path.startswith("/api/") and path not in self.PUBLIC_PATHS:
             auth = request.headers.get("Authorization", "")
             if not auth.startswith("Bearer "):
                 return JSONResponse({"detail": "Authorization required"}, status_code=401)
@@ -3149,7 +3146,6 @@ async def founder_system():
 
 
 # Include router
-app.include_router(founder_router)
 app.include_router(api_router)
 
 app.add_middleware(
