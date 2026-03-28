@@ -1,13 +1,13 @@
 import axios from "axios";
 
-// Session token stored in memory + sessionStorage — never in localStorage
-let _sessionToken = sessionStorage.getItem("_upl_tok") || null;
+// Session token stored in memory + localStorage — persists across browser restarts
+let _sessionToken = localStorage.getItem("_upl_tok") || null;
 let _onSessionExpired = null;
 
 export function setSessionToken(t) {
   _sessionToken = t;
-  if (t) sessionStorage.setItem("_upl_tok", t);
-  else sessionStorage.removeItem("_upl_tok");
+  if (t) localStorage.setItem("_upl_tok", t);
+  else localStorage.removeItem("_upl_tok");
   if (t) axios.defaults.headers.common["Authorization"] = `Bearer ${t}`;
   else delete axios.defaults.headers.common["Authorization"];
 }

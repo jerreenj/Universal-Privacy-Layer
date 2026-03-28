@@ -46,6 +46,12 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Create index on sessions collection for fast lookups
+@app.on_event("startup")
+async def create_indexes():
+    await db.sessions.create_index("token", unique=True)
+    await db.sessions.create_index("expires_at")
+
 # ── Protected router — all routes below require a valid session token ──────────
 protected_router = APIRouter(prefix="/api", dependencies=[Depends(lambda request: require_auth(request))])
 
@@ -80,9 +86,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             if not auth.startswith("Bearer "):
                 return JSONResponse({"detail": "Authorization required"}, status_code=401)
             token = auth.split(" ", 1)[1]
-            exp = _sessions.get(token)
-            if not exp or _time.time() > exp:
-                _sessions.pop(token, None)
+            session = await _get_session(token)
+            if not session:
                 return JSONResponse({"detail": "Session expired — re-authenticate"}, status_code=401)
 
         response = await call_next(request)
@@ -96,25 +101,31 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 # ── Session Token Auth ────────────────────────────────────────────────────────
-# After /auth/verify-access, frontend gets a short-lived session token.
-# Every other endpoint requires: Authorization: Bearer <token>
-_sessions: dict = {}  # token -> expiry timestamp
-SESSION_TTL = 60 * 60 * 72  # 72 hours
+# Sessions persisted in MongoDB so they survive backend restarts/redeploys
+SESSION_TTL = 60 * 60 * 24 * 365  # 1 year
 
 def _new_token() -> str:
     return secrets.token_hex(32)
 
+async def _get_session(token: str):
+    """Look up session in MongoDB."""
+    return await db.sessions.find_one({"token": token, "expires_at": {"$gt": _time.time()}}, {"_id": 0})
+
+async def _create_session(token: str):
+    """Store session in MongoDB."""
+    await db.sessions.insert_one({"token": token, "expires_at": _time.time() + SESSION_TTL, "created_at": datetime.now(timezone.utc).isoformat()})
+
+async def _delete_session(token: str):
+    """Remove session from MongoDB."""
+    await db.sessions.delete_one({"token": token})
+
 def require_auth(request: StarletteRequest):
-    """Dependency: validates session token on every protected endpoint."""
+    """Dependency: validates session token on every protected endpoint.
+    Note: actual validation is done in middleware; this is a secondary check."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authorization required")
-    token = auth.split(" ", 1)[1]
-    exp = _sessions.get(token)
-    if not exp or _time.time() > exp:
-        _sessions.pop(token, None)
-        raise HTTPException(status_code=401, detail="Session expired — re-authenticate")
-    return token
+    return auth.split(" ", 1)[1]
 
 # ── EVM address validator ─────────────────────────────────────────────────────
 _EVM_RE = re.compile(r'^0x[a-fA-F0-9]{40}$')
@@ -450,13 +461,13 @@ async def root():
 
 @api_router.post("/auth/verify-access")
 async def verify_access(request: StarletteRequest, code: str = Body(..., embed=True)):
-    """Verify access code — issues session token valid for 8 hours. 5 attempts/min per IP."""
+    """Verify access code — issues persistent session token. 5 attempts/min per IP."""
     rate_limit(request, max_calls=5, window=60)
     expected = os.environ.get("ACCESS_CODE", "")
     if not expected or code != expected:
         raise HTTPException(status_code=401, detail="Invalid access code")
     token = _new_token()
-    _sessions[token] = _time.time() + SESSION_TTL
+    await _create_session(token)
     return {"granted": True, "token": token, "expires_in": SESSION_TTL}
 
 @api_router.get("/health")
