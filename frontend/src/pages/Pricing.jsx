@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PricingSection } from "@/components/ui/pricing";
-import { ArrowLeft, CheckCircle, XCircle, Loader2 } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft, Copy, CheckCircle, X, Wallet, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -66,85 +66,188 @@ const plans = [
   },
 ];
 
-function PaymentStatus({ sessionId, status: urlStatus }) {
-  const [paymentData, setPaymentData] = useState(null);
-  const [polling, setPolling] = useState(true);
+function CryptoPaymentModal({ plan, planId, onClose }) {
+  const [paymentInfo, setPaymentInfo] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [txHash, setTxHash] = useState("");
+  const [senderAddr, setSenderAddr] = useState("");
+  const [selectedChain, setSelectedChain] = useState("");
+  const [selectedToken, setSelectedToken] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!sessionId) return;
-    let attempts = 0;
-    const maxAttempts = 8;
+    axios.get(`${API}/api/payments/info`).then(r => setPaymentInfo(r.data)).catch(() => {});
+  }, []);
 
-    const poll = async () => {
-      if (attempts >= maxAttempts) {
-        setPolling(false);
-        return;
-      }
-      try {
-        const token = localStorage.getItem("_upl_tok");
-        const { data } = await axios.get(`${API}/api/payments/status/${sessionId}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        setPaymentData(data);
-        if (data.payment_status === "paid" || data.status === "expired") {
-          setPolling(false);
-          return;
-        }
-      } catch (e) {
-        console.error("Poll error:", e);
-      }
-      attempts++;
-      setTimeout(poll, 2500);
-    };
-    poll();
-  }, [sessionId]);
+  const copyWallet = useCallback(() => {
+    if (!paymentInfo?.wallet) return;
+    navigator.clipboard.writeText(paymentInfo.wallet);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [paymentInfo]);
 
-  if (!sessionId) return null;
+  const handleSubmit = async () => {
+    if (!txHash.trim()) { setError("Enter your transaction hash"); return; }
+    if (!selectedChain) { setError("Select the chain you sent on"); return; }
+    setError("");
+    setSubmitting(true);
+    try {
+      await axios.post(`${API}/api/payments/submit`, {
+        plan_id: planId,
+        tx_hash: txHash.trim(),
+        chain: selectedChain,
+        token: selectedToken || "ETH",
+        sender_address: senderAddr.trim(),
+      });
+      setSubmitted(true);
+    } catch (e) {
+      setError(e.response?.data?.detail || "Submission failed. Try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-  const isPaid = paymentData?.payment_status === "paid";
-  const isCancelled = urlStatus === "cancelled";
+  if (!paymentInfo) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <Loader2 className="w-8 h-8 text-green-400 animate-spin" />
+      </div>
+    );
+  }
+
+  const amountUsd = paymentInfo.plans?.[planId]?.amount_usd || 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" data-testid="payment-status-modal">
-      <div className="bg-neutral-900 border border-neutral-700 rounded-2xl p-8 max-w-md w-full mx-4 text-center">
-        {polling ? (
-          <>
-            <Loader2 className="w-12 h-12 text-primary mx-auto animate-spin mb-4" />
-            <h3 className="text-xl font-bold text-white mb-2">Verifying Payment...</h3>
-            <p className="text-neutral-400 text-sm">Checking with Stripe. This may take a moment.</p>
-          </>
-        ) : isPaid ? (
-          <>
-            <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-white mb-2">Payment Successful</h3>
-            <p className="text-neutral-400 text-sm mb-4">
-              {paymentData?.metadata?.plan_name || "Plan"} activated. Welcome to the shadows.
-            </p>
-            <p className="text-xs text-neutral-500">
-              Amount: ${((paymentData?.amount_total || 0) / 100).toFixed(2)} {paymentData?.currency?.toUpperCase()}
-            </p>
-          </>
-        ) : isCancelled ? (
-          <>
-            <XCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-white mb-2">Payment Cancelled</h3>
-            <p className="text-neutral-400 text-sm">No charges were made. Choose a plan when you're ready.</p>
-          </>
-        ) : (
-          <>
-            <XCircle className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-white mb-2">Payment Pending</h3>
-            <p className="text-neutral-400 text-sm">Could not confirm payment. Check your email for confirmation.</p>
-          </>
-        )}
-        <button
-          data-testid="payment-status-close"
-          onClick={() => window.history.replaceState({}, "", "/pricing")}
-          className="mt-6 px-6 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors text-sm"
-          onClickCapture={() => window.location.href = "/pricing"}
-        >
-          Back to Pricing
-        </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" data-testid="crypto-payment-modal">
+      <div className="bg-neutral-900 border border-neutral-700 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-6">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <Wallet className="w-5 h-5 text-green-400" />
+              <h3 className="text-lg font-bold text-white">Pay with Crypto</h3>
+            </div>
+            <button onClick={onClose} className="text-neutral-500 hover:text-white transition-colors" data-testid="close-payment-modal">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {submitted ? (
+            <div className="text-center py-8">
+              <CheckCircle className="w-14 h-14 text-green-500 mx-auto mb-4" />
+              <h4 className="text-xl font-bold text-white mb-2">Payment Submitted</h4>
+              <p className="text-neutral-400 text-sm">We'll verify your transaction and activate your plan shortly.</p>
+              <button onClick={onClose} className="mt-6 px-6 py-2.5 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 transition-colors text-sm font-medium" data-testid="payment-done-btn">
+                Done
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Plan + Amount */}
+              <div className="bg-neutral-800/50 rounded-xl p-4 mb-5">
+                <div className="flex justify-between items-center">
+                  <span className="text-neutral-400 text-sm">{plan?.name || paymentInfo.plans?.[planId]?.name}</span>
+                  <span className="text-2xl font-bold text-white">${amountUsd.toLocaleString()}</span>
+                </div>
+              </div>
+
+              {/* Wallet Address */}
+              <div className="mb-5">
+                <label className="text-xs text-neutral-500 uppercase tracking-wider mb-2 block">Send to this wallet</label>
+                <div className="flex items-center gap-2 bg-neutral-800 rounded-lg p-3 border border-neutral-700">
+                  <code className="text-green-400 text-xs flex-1 break-all font-mono" data-testid="payout-wallet">{paymentInfo.wallet}</code>
+                  <button onClick={copyWallet} className="text-neutral-400 hover:text-white transition-colors shrink-0" data-testid="copy-wallet-btn">
+                    {copied ? <CheckCircle className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Accepted Tokens */}
+              <div className="mb-5">
+                <label className="text-xs text-neutral-500 uppercase tracking-wider mb-2 block">Accepted tokens</label>
+                <div className="flex flex-wrap gap-2">
+                  {paymentInfo.accepted_tokens?.map(t => (
+                    <button
+                      key={t.symbol}
+                      onClick={() => setSelectedToken(t.symbol)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        selectedToken === t.symbol
+                          ? "bg-green-500/20 text-green-400 border border-green-500/40"
+                          : "bg-neutral-800 text-neutral-400 border border-neutral-700 hover:border-neutral-500"
+                      }`}
+                    >
+                      {t.symbol}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Chain selector */}
+              <div className="mb-5">
+                <label className="text-xs text-neutral-500 uppercase tracking-wider mb-2 block">Chain you sent on</label>
+                <select
+                  value={selectedChain}
+                  onChange={e => setSelectedChain(e.target.value)}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg p-3 text-white text-sm focus:outline-none focus:border-green-500"
+                  data-testid="chain-select"
+                >
+                  <option value="">Select chain...</option>
+                  <option value="ethereum">Ethereum</option>
+                  <option value="base">Base</option>
+                  <option value="arbitrum">Arbitrum</option>
+                  <option value="polygon">Polygon</option>
+                  <option value="optimism">Optimism</option>
+                  <option value="bnb">BNB Chain</option>
+                  <option value="avalanche">Avalanche</option>
+                </select>
+              </div>
+
+              {/* Tx Hash */}
+              <div className="mb-5">
+                <label className="text-xs text-neutral-500 uppercase tracking-wider mb-2 block">Transaction hash</label>
+                <input
+                  type="text"
+                  value={txHash}
+                  onChange={e => setTxHash(e.target.value)}
+                  placeholder="0x..."
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg p-3 text-white text-sm placeholder-neutral-600 focus:outline-none focus:border-green-500 font-mono"
+                  data-testid="tx-hash-input"
+                />
+              </div>
+
+              {/* Sender Address (optional) */}
+              <div className="mb-5">
+                <label className="text-xs text-neutral-500 uppercase tracking-wider mb-2 block">Your wallet address <span className="text-neutral-600">(optional)</span></label>
+                <input
+                  type="text"
+                  value={senderAddr}
+                  onChange={e => setSenderAddr(e.target.value)}
+                  placeholder="0x..."
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg p-3 text-white text-sm placeholder-neutral-600 focus:outline-none focus:border-green-500 font-mono"
+                  data-testid="sender-address-input"
+                />
+              </div>
+
+              {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+
+              <button
+                onClick={handleSubmit}
+                disabled={submitting}
+                className="w-full py-3 bg-green-500 hover:bg-green-600 disabled:bg-neutral-700 text-black font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+                data-testid="submit-payment-btn"
+              >
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {submitting ? "Submitting..." : "Submit Payment"}
+              </button>
+
+              <p className="text-neutral-600 text-xs text-center mt-3">
+                Send the exact amount in any accepted token. We'll verify on-chain and activate your plan.
+              </p>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -152,61 +255,34 @@ function PaymentStatus({ sessionId, status: urlStatus }) {
 
 export default function PricingPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const sessionId = searchParams.get("session_id");
-  const urlStatus = searchParams.get("status");
-  const [checkoutLoading, setCheckoutLoading] = useState(null);
+  const [paymentModal, setPaymentModal] = useState(null);
 
-  // Override plan button clicks to trigger Stripe checkout
   useEffect(() => {
-    const handleClick = async (e) => {
+    const handleClick = (e) => {
       const link = e.target.closest("a[href='#']");
       if (!link) return;
       e.preventDefault();
 
-      // Find which plan was clicked by matching button text
       const btnText = link.textContent.trim();
       let planId = null;
-
-      // Check if annual toggle is active
-      const annualBtn = document.querySelector("button:nth-child(3)");
-      const isAnnual = annualBtn?.classList?.contains?.("text-primary-foreground");
+      let matchedPlan = null;
 
       for (const plan of plans) {
         if (btnText === plan.buttonText) {
-          if (isAnnual && plan.annualPlanId) {
-            planId = plan.annualPlanId;
-          } else {
-            planId = plan.planId;
-          }
+          planId = plan.planId;
+          matchedPlan = plan;
           break;
         }
       }
 
       if (!planId) return;
+
       if (planId === "wraith" || planId === "wraith_annual") {
         window.open("mailto:contact@privacycloak.in?subject=Wraith%20Plan%20Inquiry", "_blank");
         return;
       }
 
-      setCheckoutLoading(planId);
-      try {
-        const token = localStorage.getItem("_upl_tok");
-        const origin = window.location.origin;
-        const { data } = await axios.post(
-          `${API}/api/payments/checkout`,
-          { plan_id: planId, origin_url: origin },
-          { headers: token ? { Authorization: `Bearer ${token}` } : {} }
-        );
-        if (data.url) {
-          window.location.href = data.url;
-        }
-      } catch (err) {
-        console.error("Checkout error:", err);
-        alert("Payment initiation failed. Please try again.");
-      } finally {
-        setCheckoutLoading(null);
-      }
+      setPaymentModal({ plan: matchedPlan, planId });
     };
 
     document.addEventListener("click", handleClick);
@@ -215,8 +291,12 @@ export default function PricingPage() {
 
   return (
     <div className="min-h-screen bg-background" data-testid="pricing-page">
-      {(sessionId || urlStatus) && (
-        <PaymentStatus sessionId={sessionId} status={urlStatus} />
+      {paymentModal && (
+        <CryptoPaymentModal
+          plan={paymentModal.plan}
+          planId={paymentModal.planId}
+          onClose={() => setPaymentModal(null)}
+        />
       )}
       <div className="absolute top-6 left-6 z-20">
         <button
@@ -233,14 +313,6 @@ export default function PricingPage() {
         title="Privacy Has a Price. Exposure Costs More."
         description={"Zero-knowledge transactions. Stealth addresses. On-chain anonymity.\nChoose your level of invisibility."}
       />
-      {checkoutLoading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="flex items-center gap-3 text-white">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            <span>Redirecting to checkout...</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
