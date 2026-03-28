@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: privacycloak
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+    envVars:
+      - key: MONGO_URL
+        sync: false
+      - key: ACCESS_CODE
+        sync: false
+      - key: PAYOUT_WALLET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: PORT
+        value: 8001
