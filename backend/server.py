@@ -76,12 +76,14 @@ def rate_limit(request: StarletteRequest, max_calls: int = 20, window: int = 60)
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # Public endpoints that don't require a session token
-    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access"}
+    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access", "/api/payments/checkout"}
+    PUBLIC_PREFIXES = ("/api/payments/status/", "/api/webhook/")
 
     async def dispatch(self, request: StarletteRequest, call_next):
         # ── Auth gate — block all /api/* except public paths ──────────────────
         path = request.url.path
-        if path.startswith("/api/") and path not in self.PUBLIC_PATHS:
+        is_public = path in self.PUBLIC_PATHS or any(path.startswith(p) for p in self.PUBLIC_PREFIXES)
+        if path.startswith("/api/") and not is_public:
             auth = request.headers.get("Authorization", "")
             if not auth.startswith("Bearer "):
                 return JSONResponse({"detail": "Authorization required"}, status_code=401)
@@ -2935,6 +2937,144 @@ async def check_stealth_balance(addresses: List[str] = Body(..., embed=True), ch
             except Exception:
                 results[addr] = "0"
     return {"balances": results, "chain": chain}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAYMENTS — Stripe Checkout (card + crypto)
+# ═══════════════════════════════════════════════════════════════════════════════
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse, CheckoutStatusResponse
+)
+
+# Fixed pricing — NEVER accept amounts from frontend
+PLANS = {
+    "phantom_trial": {"name": "Phantom — 14-Day Trial", "amount": 50.00, "currency": "usd"},
+    "phantom": {"name": "Phantom Monthly", "amount": 499.00, "currency": "usd"},
+    "specter": {"name": "Specter Monthly", "amount": 4999.00, "currency": "usd"},
+    "specter_annual": {"name": "Specter Annual", "amount": 3999.00, "currency": "usd"},
+    "wraith": {"name": "Wraith Monthly", "amount": 24999.00, "currency": "usd"},
+    "wraith_annual": {"name": "Wraith Annual", "amount": 19999.00, "currency": "usd"},
+}
+
+
+@api_router.post("/payments/checkout")
+async def create_checkout(request: StarletteRequest, plan_id: str = Body(..., embed=False), origin_url: str = Body(..., embed=False)):
+    """Create a Stripe checkout session for a plan. Amounts defined server-side only."""
+    body = await request.json()
+    plan_id = body.get("plan_id", "")
+    origin_url = body.get("origin_url", "")
+
+    if plan_id not in PLANS:
+        raise HTTPException(status_code=400, detail=f"Invalid plan: {plan_id}")
+
+    plan = PLANS[plan_id]
+    api_key = os.environ.get("STRIPE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Payment system not configured")
+
+    host_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
+
+    success_url = f"{origin_url}/pricing?session_id={{CHECKOUT_SESSION_ID}}&status=success"
+    cancel_url = f"{origin_url}/pricing?status=cancelled"
+
+    payout_wallet = os.environ.get("PAYOUT_WALLET", "")
+
+    checkout_req = CheckoutSessionRequest(
+        amount=plan["amount"],
+        currency=plan["currency"],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={
+            "plan_id": plan_id,
+            "plan_name": plan["name"],
+            "payout_wallet": payout_wallet,
+        },
+        payment_methods=["card", "crypto"],
+    )
+
+    session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_req)
+
+    # Record in payment_transactions
+    await db.payment_transactions.insert_one({
+        "session_id": session.session_id,
+        "plan_id": plan_id,
+        "plan_name": plan["name"],
+        "amount": plan["amount"],
+        "currency": plan["currency"],
+        "payout_wallet": payout_wallet,
+        "payment_status": "initiated",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {"url": session.url, "session_id": session.session_id}
+
+
+@api_router.get("/payments/status/{session_id}")
+async def get_payment_status(request: StarletteRequest, session_id: str):
+    """Poll Stripe for checkout session status and update DB."""
+    api_key = os.environ.get("STRIPE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Payment system not configured")
+
+    host_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
+
+    status: CheckoutStatusResponse = await stripe_checkout.get_checkout_status(session_id)
+
+    # Update DB (only once per session)
+    existing = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if existing and existing.get("payment_status") != "paid":
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {
+                "payment_status": status.payment_status,
+                "status": status.status,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }}
+        )
+
+    return {
+        "status": status.status,
+        "payment_status": status.payment_status,
+        "amount_total": status.amount_total,
+        "currency": status.currency,
+        "metadata": status.metadata,
+    }
+
+
+@app.post("/api/webhook/stripe")
+async def stripe_webhook(request: StarletteRequest):
+    """Handle Stripe webhook events."""
+    api_key = os.environ.get("STRIPE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Payment system not configured")
+
+    host_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
+
+    body = await request.body()
+    signature = request.headers.get("Stripe-Signature", "")
+
+    try:
+        event = await stripe_checkout.handle_webhook(body, signature)
+        # Update payment status in DB
+        if event.session_id:
+            await db.payment_transactions.update_one(
+                {"session_id": event.session_id},
+                {"$set": {
+                    "payment_status": event.payment_status,
+                    "event_type": event.event_type,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }}
+            )
+        return {"status": "processed"}
+    except Exception as e:
+        logger.error(f"Stripe webhook error: {e}")
+        return {"status": "error"}
 
 
 # Include router
