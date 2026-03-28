@@ -2998,12 +2998,12 @@ async def verify_zk_commitment(req: ZKCommitmentReveal):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 ANKR_RPCS = {
-    "base":        "https://rpc.ankr.com/base",
-    "arbitrum":    "https://rpc.ankr.com/arbitrum",
-    "polygon":     "https://rpc.ankr.com/polygon",
-    "optimism":    "https://rpc.ankr.com/optimism",
-    "bnb":         "https://rpc.ankr.com/bsc",
-    "avalanche":   "https://rpc.ankr.com/avalanche",
+    "base":        CHAIN_CONFIG["base"]["rpc_url"],
+    "arbitrum":    CHAIN_CONFIG["arbitrum"]["rpc_url"],
+    "polygon":     CHAIN_CONFIG["polygon"]["rpc_url"],
+    "optimism":    CHAIN_CONFIG["optimism"]["rpc_url"],
+    "bnb":         CHAIN_CONFIG["bnb"]["rpc_url"],
+    "avalanche":   CHAIN_CONFIG["avalanche"]["rpc_url"],
 }
 
 @api_router.get("/analyzer/scan/{address}")
