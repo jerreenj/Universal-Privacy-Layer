@@ -19,7 +19,17 @@ export function EncryptedMessaging() {
   const [copied, setCopied] = useState(false);
   const [msgKeys, setMsgKeys] = useState(null);
   const [deriving, setDeriving] = useState(false);
-  const [openMsg, setOpenMsg] = useState(null); // clicked message
+  const [openMsg, setOpenMsg] = useState(null);
+  const [stealthAddr, setStealthAddr] = useState(null);
+
+  // Load user's stealth meta-address for sharing
+  useEffect(() => {
+    if (!address) return;
+    axios.get(`${API}/stealth/scan/${address}`).then(r => {
+      const addrs = r.data.stealth_addresses || [];
+      if (addrs.length > 0) setStealthAddr(addrs[0].meta_address || addrs[0].stealth_address);
+    }).catch(() => {});
+  }, [address]);
 
   // Silently derive E2E keys
   useEffect(() => {
@@ -38,18 +48,22 @@ export function EncryptedMessaging() {
     return () => { cancelled = true; };
   }, [signer, address, msgKeys, deriving]);
 
-  // Try decrypt with multiple key variants (handles old + new messages)
-  const legacyDecrypt = async (encrypted_b64, ...keyVariants) => {
-    for (const keyStr of keyVariants) {
-      if (!keyStr) continue;
+  // Decrypt a single message — try client-side first, then server fallback
+  const tryDecrypt = async (m) => {
+    // E2E messages: client-side only
+    if (m.e2e && m.ciphertext && m.ephemeral_pub && m.nonce && msgKeys) {
+      const plain = await decryptMessage(m.ciphertext, m.ephemeral_pub, m.nonce, msgKeys.privateKey);
+      if (plain) return plain;
+    }
+    // Legacy: ask server to decrypt (it encrypted them, it can decrypt them)
+    if (m.encrypted_content && !m.e2e) {
       try {
-        const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(keyStr));
-        const key = await crypto.subtle.importKey("raw", hash, { name: "AES-CBC" }, false, ["decrypt"]);
-        const raw = Uint8Array.from(atob(encrypted_b64), c => c.charCodeAt(0));
-        const plain = await crypto.subtle.decrypt({ name: "AES-CBC", iv: raw.slice(0, 16) }, key, raw.slice(16));
-        const text = new TextDecoder().decode(plain);
-        return text.slice(0, text.length - text.charCodeAt(text.length - 1));
-      } catch { /* try next variant */ }
+        const r = await axios.post(`${API}/messaging/decrypt`, {
+          message_id: m.message_id,
+          recipient_address: address,
+        });
+        if (r.data.plaintext) return r.data.plaintext;
+      } catch {}
     }
     return null;
   };
@@ -62,25 +76,8 @@ export function EncryptedMessaging() {
       setInbox(msgs);
       const dec = {};
       for (const m of msgs) {
-        if (m.e2e && m.ciphertext && m.ephemeral_pub && m.nonce && msgKeys) {
-          const plain = await decryptMessage(m.ciphertext, m.ephemeral_pub, m.nonce, msgKeys.privateKey);
-          if (plain) dec[m.message_id] = plain;
-        } else if (m.encrypted_content) {
-          // Try every possible key variant (handles old messages with URL-based keys)
-          const recipAddr = m.recipient_address || "";
-          const urlMatch = recipAddr.match(/[?&]msg=([^&]+)/);
-          const extractedAddr = urlMatch ? urlMatch[1] : null;
-          const plain = await legacyDecrypt(
-            m.encrypted_content,
-            address,
-            address.toLowerCase(),
-            recipAddr,
-            recipAddr.toLowerCase(),
-            extractedAddr,
-            extractedAddr?.toLowerCase()
-          );
-          if (plain) dec[m.message_id] = plain;
-        }
+        const plain = await tryDecrypt(m);
+        if (plain) dec[m.message_id] = plain;
       }
       setDecrypted(dec);
     } catch {}
@@ -95,8 +92,8 @@ export function EncryptedMessaging() {
     if (!recipient || !message) return toast.error("Fill in recipient and message");
     setLoading(true);
     setSentMode(null);
-    // Extract address from contact link if user pasted the full URL
     let recipientAddr = recipient.trim();
+    // Extract address if user pasted a URL
     const msgParam = recipientAddr.match(/[?&]msg=([^&]+)/);
     if (msgParam) recipientAddr = msgParam[1];
     recipientAddr = recipientAddr.toLowerCase();
@@ -141,6 +138,9 @@ export function EncryptedMessaging() {
     return dt.toLocaleDateString() + " " + dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
+  // Share stealth address, not real wallet
+  const shareAddr = stealthAddr || address;
+
   return (
     <div className="space-y-4" data-testid="encrypted-messaging">
       {msgKeys && (
@@ -161,17 +161,25 @@ export function EncryptedMessaging() {
 
       {tab === "send" && (
         <div className="space-y-3">
-          {address && (
-            <button onClick={() => { copyToClip(address); setCopied(true); toast.success("Wallet address copied"); setTimeout(() => setCopied(false), 2000); }}
+          {shareAddr && (
+            <button onClick={() => { copyToClip(shareAddr); setCopied(true); toast.success(stealthAddr ? "Stealth address copied" : "Address copied"); setTimeout(() => setCopied(false), 2000); }}
               className="w-full py-2 border border-white/20 hover:border-white/50 text-xs text-white/50 hover:text-white flex items-center justify-center gap-2 transition-colors">
               {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
-              {copied ? "Copied!" : `Share your address: ${address.slice(0,6)}...${address.slice(-4)}`}
+              {copied ? "Copied!" : (
+                <span>
+                  {stealthAddr ? "Share stealth address: " : "Share address: "}
+                  <span className="font-mono">{shareAddr.slice(0, 8)}...{shareAddr.slice(-6)}</span>
+                </span>
+              )}
             </button>
+          )}
+          {!stealthAddr && address && (
+            <p className="text-[10px] text-yellow-400/60">Generate a stealth meta-address in Private Receive to share a private contact.</p>
           )}
           <p className="text-xs text-white/30">All messages are encrypted. E2E when both wallets are connected.</p>
           <div>
-            <label className="block text-xs text-gray-500 uppercase mb-2">Recipient wallet address</label>
-            <input value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="0x..."
+            <label className="block text-xs text-gray-500 uppercase mb-2">Recipient address</label>
+            <input value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="0x... or stealth address"
               data-testid="msg-recipient-input"
               className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
           </div>
@@ -208,7 +216,6 @@ export function EncryptedMessaging() {
             <div className="text-center py-10 text-white/30 space-y-2">
               <MessageSquare className="w-8 h-8 mx-auto opacity-30" />
               <p className="text-sm">No messages yet</p>
-              <p className="text-xs">Share your contact link so people can message you</p>
             </div>
           ) : (
             inbox.map((msg, i) => (
@@ -231,7 +238,7 @@ export function EncryptedMessaging() {
                 <p className="text-sm text-white/40 mt-2 truncate">
                   {decrypted[msg.message_id]
                     ? decrypted[msg.message_id].slice(0, 60) + (decrypted[msg.message_id].length > 60 ? "..." : "")
-                    : "Tap to view encrypted message"}
+                    : "Tap to read"}
                 </p>
               </button>
             ))
@@ -239,7 +246,7 @@ export function EncryptedMessaging() {
         </div>
       )}
 
-      {/* Message popup modal */}
+      {/* Message popup */}
       {openMsg && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4"
           onClick={() => setOpenMsg(null)}>
@@ -249,35 +256,21 @@ export function EncryptedMessaging() {
               className="absolute top-4 right-4 text-white/40 hover:text-white">
               <X className="w-5 h-5" />
             </button>
-
             <div className="flex items-center gap-2">
-              {openMsg.e2e ? (
-                <ShieldCheck className="w-5 h-5 text-green-400" />
-              ) : (
-                <Lock className="w-5 h-5 text-blue-400" />
-              )}
-              <span className="text-sm font-semibold">{openMsg.e2e ? "E2E Encrypted Message" : "Encrypted Message"}</span>
+              {openMsg.e2e ? <ShieldCheck className="w-5 h-5 text-green-400" /> : <Lock className="w-5 h-5 text-blue-400" />}
+              <span className="text-sm font-semibold">{openMsg.e2e ? "E2E Encrypted" : "Encrypted Message"}</span>
             </div>
-
             <div className="space-y-2 text-xs text-white/50">
-              <div className="flex justify-between">
-                <span>From</span>
-                <span className="font-mono">{openMsg.sender_address}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Date</span>
-                <span>{formatDate(openMsg.created_at)}</span>
-              </div>
+              <div className="flex justify-between"><span>From</span><span className="font-mono">{openMsg.sender_address?.slice(0,12)}...{openMsg.sender_address?.slice(-6)}</span></div>
+              <div className="flex justify-between"><span>Date</span><span>{formatDate(openMsg.created_at)}</span></div>
             </div>
-
             <div className="border-t border-white/10 pt-4">
               {decrypted[openMsg.message_id] ? (
                 <p className="text-base text-white leading-relaxed whitespace-pre-wrap">{decrypted[openMsg.message_id]}</p>
               ) : (
                 <div className="text-center py-4">
                   <Lock className="w-8 h-8 text-white/20 mx-auto mb-2" />
-                  <p className="text-sm text-white/40">Could not decrypt this message.</p>
-                  <p className="text-xs text-white/20 mt-1">It may have been sent before your current wallet session.</p>
+                  <p className="text-sm text-white/40">Decrypting failed for this message.</p>
                 </div>
               )}
             </div>

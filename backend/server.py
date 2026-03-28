@@ -1754,37 +1754,66 @@ async def get_encrypted_inbox(address: str, limit: int = 50):
         raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/messaging/decrypt")
-async def decrypt_message(
+async def decrypt_legacy_message(
     message_id: str = Body(...),
     recipient_address: str = Body(...)
 ):
-    """
-    Return encrypted message data for CLIENT-SIDE decryption only.
-    Private keys must NEVER be sent to the server.
-    Decryption must be performed entirely in the browser.
-    """
+    """Server-side decrypt for legacy (non-E2E) messages. E2E messages cannot be decrypted here."""
     try:
         msg = await db.encrypted_messages.find_one({"message_id": message_id}, {"_id": 0})
         if not msg:
             raise HTTPException(status_code=404, detail="Message not found")
-
-        # Only return the encrypted blob — client decrypts locally with their own key
+        
+        if msg.get("e2e"):
+            raise HTTPException(status_code=400, detail="E2E messages can only be decrypted client-side")
+        
+        encrypted_b64 = msg.get("encrypted_content")
+        if not encrypted_b64:
+            raise HTTPException(status_code=400, detail="No encrypted content")
+        
+        # Try decrypting with the stored recipient_address (which was used as the key)
+        stored_recipient = msg.get("recipient_address", "")
+        key_candidates = [
+            stored_recipient,
+            stored_recipient.lower(),
+            recipient_address,
+            recipient_address.lower(),
+        ]
+        
+        raw = base64.b64decode(encrypted_b64)
+        iv = raw[:16]
+        ct = raw[16:]
+        
+        plaintext = None
+        for candidate in key_candidates:
+            if not candidate:
+                continue
+            try:
+                k = hashlib.sha256(candidate.encode()).digest()
+                cipher = AES.new(k, AES.MODE_CBC, iv)
+                decrypted = cipher.decrypt(ct)
+                pad_len = decrypted[-1]
+                if 1 <= pad_len <= 16 and all(b == pad_len for b in decrypted[-pad_len:]):
+                    plaintext = decrypted[:-pad_len].decode('utf-8')
+                    break
+            except Exception:
+                continue
+        
+        if plaintext is None:
+            raise HTTPException(status_code=400, detail="Could not decrypt")
+        
+        # Mark as read
         await db.encrypted_messages.update_one(
             {"message_id": message_id},
             {"$set": {"read": True, "read_at": datetime.now(timezone.utc).isoformat()}}
         )
-
-        return {
-            "message_id": message_id,
-            "encrypted_content": msg["encrypted_content"],
-            "sender": msg["sender_address"],
-            "note": "Decrypt locally using your private key — never send private keys to servers"
-        }
+        
+        return {"message_id": message_id, "plaintext": plaintext, "sender": msg["sender_address"]}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Message decryption error: {e}")
-        raise HTTPException(status_code=500, detail="Decryption failed - check your key")
+        raise HTTPException(status_code=500, detail="Decryption failed")
 
 # --- 5. MULTISIG PRIVACY ---
 class MultisigCreateRequest(BaseModel):
