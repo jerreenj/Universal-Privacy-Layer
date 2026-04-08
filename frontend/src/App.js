@@ -30,18 +30,20 @@ function App() {
 
   return (
     <BrowserRouter>
-      {!granted ? (
-        <AccessGate onGranted={() => setGranted(true)} />
-      ) : (
-        <WalletProvider>
-          <Routes>
-            <Route path="/pricing" element={<PricingPage />} />
-            <Route path="/*" element={<Dashboard />} />
-          </Routes>
-          <Toaster position="bottom-right"
-            toastOptions={{ style: { background: "#000", border: "1px solid #333", color: "#fff" } }} />
-        </WalletProvider>
-      )}
+      <Routes>
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/*" element={
+          !granted ? (
+            <AccessGate onGranted={() => setGranted(true)} />
+          ) : (
+            <WalletProvider>
+              <Dashboard />
+              <Toaster position="bottom-right"
+                toastOptions={{ style: { background: "#000", border: "1px solid #333", color: "#fff" } }} />
+            </WalletProvider>
+          )
+        } />
+      </Routes>
     </BrowserRouter>
   );
 }
