@@ -16,43 +16,30 @@ import PricingPage from "@/pages/Pricing";
 import { AccessGate } from "@/components/auth/AccessGate";
 import { Dashboard } from "@/components/layout/Dashboard";
 
-function PublicApp() {
+function App() {
   const [granted, setGranted] = useState(false);
 
-  // Register callback so the global interceptor can kick user back to gate
   setOnSessionExpired(() => { setGranted(false); });
 
   useEffect(() => {
-    if (!getSessionToken()) return; // no token — show gate immediately
-    // Verify token is valid against a protected endpoint
+    if (!getSessionToken()) return;
     axios.get(`${API}/stats`)
       .then(() => setGranted(true))
-      .catch(() => {
-        // 401 interceptor already cleared the token — just ensure gate shows
-        setGranted(false);
-      });
+      .catch(() => setGranted(false));
   }, []);
 
-  const handleGranted = () => setGranted(true);
+  if (!granted) return <AccessGate onGranted={() => setGranted(true)} />;
 
-  if (!granted) return <AccessGate onGranted={handleGranted} />;
-
-  return (
-    <WalletProvider>
-      <Dashboard />
-      <Toaster position="bottom-right"
-        toastOptions={{ style: { background: "#000", border: "1px solid #333", color: "#fff" } }} />
-    </WalletProvider>
-  );
-}
-
-function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/pricing" element={<PricingPage />} />
-        <Route path="/*" element={<PublicApp />} />
-      </Routes>
+      <WalletProvider>
+        <Routes>
+          <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/*" element={<Dashboard />} />
+        </Routes>
+        <Toaster position="bottom-right"
+          toastOptions={{ style: { background: "#000", border: "1px solid #333", color: "#fff" } }} />
+      </WalletProvider>
     </BrowserRouter>
   );
 }
