@@ -28,18 +28,20 @@ function App() {
       .catch(() => setGranted(false));
   }, []);
 
-  if (!granted) return <AccessGate onGranted={() => setGranted(true)} />;
-
   return (
     <BrowserRouter>
-      <WalletProvider>
-        <Routes>
-          <Route path="/pricing" element={<PricingPage />} />
-          <Route path="/*" element={<Dashboard />} />
-        </Routes>
-        <Toaster position="bottom-right"
-          toastOptions={{ style: { background: "#000", border: "1px solid #333", color: "#fff" } }} />
-      </WalletProvider>
+      {!granted ? (
+        <AccessGate onGranted={() => setGranted(true)} />
+      ) : (
+        <WalletProvider>
+          <Routes>
+            <Route path="/pricing" element={<PricingPage />} />
+            <Route path="/*" element={<Dashboard />} />
+          </Routes>
+          <Toaster position="bottom-right"
+            toastOptions={{ style: { background: "#000", border: "1px solid #333", color: "#fff" } }} />
+        </WalletProvider>
+      )}
     </BrowserRouter>
   );
 }
