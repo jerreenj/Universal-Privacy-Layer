@@ -62,7 +62,7 @@ export function Landing() {
 
       <div className="text-center px-4 md:px-6 mt-6 md:mt-10">
         <h1 className="font-heading text-2xl sm:text-4xl md:text-6xl font-bold tracking-tight text-white mb-3 md:mb-6">
-          Universal Privacy Layer
+          Privacy Cloak
         </h1>
         <p className="text-white/40 text-xs sm:text-sm md:text-base mb-5 md:mb-8 max-w-md mx-auto px-2">
           Private transactions across every chain. One interface, all networks.
