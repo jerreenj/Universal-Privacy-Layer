@@ -148,4 +148,5 @@ credentials.json
 credentials.json
 *.pem
 *.key
-.credentials
+.credential
+
