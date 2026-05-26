@@ -33,3 +33,5 @@ EXPOSE ${PORT}
 
 # Run from backend dir so imports resolve simply
 CMD sh -c "cd /app/backend && uvicorn server:app --host 0.0.0.0 --port ${PORT}"
+
+
