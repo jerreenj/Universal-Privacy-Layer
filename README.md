@@ -8,7 +8,7 @@
 
 # Universal Privacy Layer
 
-### The invisible backbone for on-chain finance.
+### The invisible backbone for On-chain finance.
 
 <br>
 
