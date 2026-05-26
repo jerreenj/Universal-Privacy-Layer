@@ -41,4 +41,6 @@ Production-ready privacy layer for crypto transactions. DeFi + privacy-preservin
 - `address_book`, `zk_commitments`, `messaging_keys`
 
 ## Contact
-- jerreen@jasprlabs.com
+- jerreen@privacycloak.in
+
+
