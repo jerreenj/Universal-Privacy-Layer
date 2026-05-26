@@ -264,3 +264,5 @@ contract Groth16Verifier {
         rate = totalVerifications > 0 ? (successfulVerifications * 100) / totalVerifications : 0;
     }
 }
+
+
