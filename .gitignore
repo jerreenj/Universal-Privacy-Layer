@@ -1,152 +1,54 @@
-# Dependencies
+# ─── Dependencies ────────────────────────────────────────────────
 node_modules/
 __pycache__/
 *.pyc
 venv/
 env/
+.venv/
 
-# Build outputs
+# ─── Build outputs ───────────────────────────────────────────────
 frontend/build/
 *.tsbuildinfo
 
-# Environment — never commit
+# ─── Environment & secrets — NEVER commit ───────────────────────
 .env
 .env.*
+*.env
 backend/.env
 frontend/.env
-
-# Secrets
 *.pem
 *.key
+*.p12
+*.pfx
+credentials.json
+.credentials
+.credential
 mnemonic.txt
 seed.txt
+# Local-only credentials file (keep a template, never the real one)
+memory/test_credentials.local.md
 
-# Deployment internals
+# ─── Deployment internals ───────────────────────────────────────
 contracts/deployed_*.json
 contracts/verifier_addresses.json
 contracts/deploy*.py
 contracts/sui/
 
-# Logs & test artifacts
+# ─── Logs & test artifacts ──────────────────────────────────────
 *.log
 logs/
 test_reports/
 *.xml
 backend_test*
 
-# Editor
+# ─── Editor / OS ─────────────────────────────────────────────────
 .DS_Store
 .vscode/
 .idea/
 *.swp
 
-# Platform
+# ─── Platform & caches ───────────────────────────────────────────
 .emergent/
 .ruff_cache/
-frontend/node_modules/.cache/default-development/6.pack
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/9.pack
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/5.pack
-frontend/node_modules/.cache/default-development/5.pack
-frontend/node_modules/.cache/default-development/3.pack
-frontend/node_modules/.cache/default-development/7.pack
-frontend/node_modules/.cache/default-development/12.pack
-frontend/node_modules/.cache/default-development/0.pack
-frontend/node_modules/.cache/default-development/0.pack
-frontend/node_modules/.cache/default-development/1.pack
-frontend/node_modules/.cache/default-development/2.pack
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/4.pack
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/11.pack
-frontend/node_modules/.cache/default-development/11.pack
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/10.pack
-frontend/node_modules/.cache/default-development/10.pack
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credential
-
+.cache/
+frontend/node_modules/.cache/

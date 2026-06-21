@@ -7,7 +7,7 @@ Production-ready privacy layer for crypto transactions. DeFi + privacy-preservin
 - Frontend: React 18 + Tailwind + ethers.js
 - Backend: FastAPI + MongoDB
 - Crypto: @noble/secp256k1 v3, EIP-5564
-- Hosting: Hostinger VPS (ROTATED-VPS-IP) + Docker + Nginx + Let's Encrypt
+- Hosting: Hostinger VPS (IP stored in password manager) + Docker + Nginx + Let's Encrypt
 - Admin: Retool (connected via SSH tunnel to MongoDB)
 
 ## Implemented

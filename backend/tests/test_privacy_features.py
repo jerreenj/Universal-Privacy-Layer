@@ -18,7 +18,9 @@ BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
     raise RuntimeError("REACT_APP_BACKEND_URL environment variable is required")
 
-ACCESS_CODE = "ROTATED-ACCESS-CODE"
+ACCESS_CODE = os.environ.get('ACCESS_CODE', '')
+if not ACCESS_CODE:
+    raise RuntimeError("ACCESS_CODE environment variable is required (read from your password manager or .env)")
 
 # Test wallet addresses
 TEST_OWNER_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"  # vitalik.eth
