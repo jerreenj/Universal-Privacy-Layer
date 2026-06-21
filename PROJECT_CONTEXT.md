@@ -99,14 +99,16 @@ claims outrun what's actually wired up. Normal for early stage — just don't ov
    - Force-push `main`. (Note: GitHub may cache old commits briefly.)
 
 ### Status
-- [ ] Owner rotated VPS root password
-- [ ] Owner rotated app ACCESS_CODE
-- [ ] Files scrubbed in working tree
-- [ ] `.gitignore` cleaned + credential patterns added
-- [ ] Committed
-- [ ] History rewritten with filter-repo
-- [ ] Force-pushed
-- [ ] GitHub notified (if repo was ever public, GitHub support / secret scanning)
+- [x] Files scrubbed in working tree (4 files cleaned)
+- [x] `.gitignore` cleaned + credential patterns added
+- [x] Committed (commit `edcaf9f`)
+- [x] History rewritten with filter-repo (all 306 commits scrubbed)
+- [x] Force-pushed to origin/main (verified clean)
+- [ ] Owner rotated VPS root password  ← **STILL NEEDED (repo was PUBLIC)**
+- [ ] Owner rotated app ACCESS_CODE     ← **STILL NEEDED**
+- [ ] Owner: notify 4 collaborators to re-clone (history was rewritten)
+- [ ] Owner: consider GitHub support request to purge cached old commits
+      from the public repo (GitHub may retain unreachable objects briefly)
 
 ---
 

@@ -1,0 +1,103 @@
+# =============================================================================
+# Universal Privacy Layer — Push-to-deploy to Azure Container Apps
+# =============================================================================
+# Triggered on every push to `main`. Builds the Docker image, pushes it to Azure
+# Container Registry, and updates the Container App. Authentication is via OIDC
+# federation — NO long-lived secrets are stored in GitHub. The only "secrets" are
+# three non-sensitive IDs configured as repository *variables* (not secrets):
+#
+#   Repository variables (Settings → Secrets and variables → Actions → Variables):
+#     AZURE_CLIENT_ID       — clientId of the uami-github-deploy managed identity
+#     AZURE_TENANT_ID       — your Azure tenant ID
+#     AZURE_SUBSCRIPTION_ID — your Azure subscription ID
+#     ACR_NAME              — e.g. acrprivacycloak<rand>
+#     ACA_RESOURCE_GROUP    — rg-privacycloak
+#     ACA_APP_NAME          — app-privacycloak
+#
+# OIDC must be enabled: Settings → Actions → General → Workflow permissions →
+# "Read and write" + "Allow GitHub Actions to create and approve pull requests".
+# =============================================================================
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:        # also runnable manually from the Actions tab
+
+# Prevent two deploys from racing; an in-flight deploy is cancelled by a newer one.
+concurrency:
+  group: deploy-azure-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write       # required for OIDC auth to Azure
+      contents: read
+
+    steps:
+      # ─── 1. Check out the code ────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ─── 2. Log in to Azure via OIDC (no password, no client secret) ──────
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: false
+
+      # ─── 3. Log in to ACR ──────────────────────────────────────────────────
+      - name: ACR login
+        run: az acr login --name ${{ vars.ACR_NAME }}
+
+      # ─── 4. Build & tag the image ──────────────────────────────────────────
+      - name: Build image
+        run: |
+          docker build \
+            -t ${{ vars.ACR_NAME }}.azurecr.io/privacycloak:${{ env.IMAGE_TAG }} \
+            -t ${{ vars.ACR_NAME }}.azurecr.io/privacycloak:latest \
+            .
+
+      # ─── 5. Push to ACR ────────────────────────────────────────────────────
+      - name: Push image
+        run: |
+          docker push --all-tags ${{ vars.ACR_NAME }}.azurecr.io/privacycloak
+
+      # ─── 6. Update the Container App to the new image ──────────────────────
+      - name: Deploy to Container Apps
+        run: |
+          az containerapp update \
+            --resource-group ${{ vars.ACA_RESOURCE_GROUP }} \
+            --name ${{ vars.ACA_APP_NAME }} \
+            --image ${{ vars.ACR_NAME }}.azurecr.io/privacycloak:${{ env.IMAGE_TAG }}
+
+      # ─── 7. Smoke-test the health endpoint ─────────────────────────────────
+      - name: Health check
+        run: |
+          FQDN=$(az containerapp show \
+            --resource-group ${{ vars.ACA_RESOURCE_GROUP }} \
+            --name ${{ vars.ACA_APP_NAME }} \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "App URL: https://$FQDN"
+          # Give the new revision ~20 seconds to start
+          sleep 20
+          for i in 1 2 3 4 5; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$FQDN/api/health" || echo "000")
+            echo "Attempt $i: HTTP $CODE"
+            if [ "$CODE" = "200" ]; then echo "✅ Healthy"; exit 0; fi
+            sleep 15
+          done
+          echo "❌ Health check failed after 5 attempts"
+          exit 1
+
+      # ─── 8. Log out ─────────────────────────────────────────────────────────
+      - name: Azure logout
+        if: always()
+        run: az logout || true

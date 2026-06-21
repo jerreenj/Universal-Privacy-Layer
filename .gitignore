@@ -41,6 +41,11 @@ test_reports/
 *.xml
 backend_test*
 
+# ─── Database dumps (never commit production data) ─────────────
+*.tgz
+dump/
+upl_database/
+
 # ─── Editor / OS ─────────────────────────────────────────────────
 .DS_Store
 .vscode/
