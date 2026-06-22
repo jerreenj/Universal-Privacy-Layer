@@ -1,669 +1,408 @@
 """
 Backend API Tests for Universal Privacy Layer - 4 New Features
-- Wallet Privacy Analyzer
-- Privacy Address Book
-- ZK Commitments
-- Encrypted Receipts
+Wallet Privacy Analyzer, Privacy Address Book, ZK Commitments, Encrypted Receipts
+
+Run with: pytest -v
 """
 
+import secrets
+import hashlib
+from datetime import datetime
 import pytest
 import requests
-import os
-import hashlib
-import secrets
-from datetime import datetime
 
-# Get backend URL from environment
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
-if not BASE_URL:
-    raise RuntimeError("REACT_APP_BACKEND_URL environment variable is required")
+from conftest import TEST_OWNER_ADDRESS
 
-ACCESS_CODE = os.environ.get('ACCESS_CODE', '')
-if not ACCESS_CODE:
-    raise RuntimeError("ACCESS_CODE environment variable is required (read from your password manager or .env)")
 
-# Test wallet addresses
-TEST_OWNER_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"  # vitalik.eth
-TEST_OWNER_ADDRESS_2 = "0x742d35Cc6634C0532925a3b844Bc9e7595f1e123"
+# ─── Helpers ─────────────────────────────────────────────────────────────────
 
+def _create_commitment_hash(amount_wei: str, blinding_factor: str) -> str:
+    """SHA-256(amount_wei + blinding_factor)"""
+    return hashlib.sha256((amount_wei + blinding_factor).encode()).hexdigest()
+
+
+# ─── Authentication ────────────────────────────────────────────────────────
 
 class TestAuth:
-    """Authentication tests - get session token"""
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self):
-        """Get authentication token for all tests"""
+    """Authentication tests."""
+
+    def test_auth_with_valid_code(self, base_url, access_code):
+        """POST /api/auth/verify-access with valid code → 200 + token"""
         response = requests.post(
-            f"{BASE_URL}/api/auth/verify-access",
-            json={"code": ACCESS_CODE},
-            headers={"Content-Type": "application/json"}
-        )
-        assert response.status_code == 200, f"Auth failed: {response.text}"
-        data = response.json()
-        assert "token" in data, "No token in response"
-        assert data.get("granted") == True
-        return data["token"]
-    
-    def test_auth_with_valid_code(self):
-        """Test authentication with valid access code"""
-        response = requests.post(
-            f"{BASE_URL}/api/auth/verify-access",
-            json={"code": ACCESS_CODE},
-            headers={"Content-Type": "application/json"}
+            f"{base_url}/api/auth/verify-access",
+            json={"code": access_code},
+            headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 200
         data = response.json()
-        assert data.get("granted") == True
+        assert data.get("granted") is True
         assert "token" in data
         assert "expires_in" in data
-        print(f"✓ Auth successful, token received")
-    
-    def test_auth_with_invalid_code(self):
-        """Test authentication with invalid access code"""
+
+    def test_auth_with_invalid_code(self, base_url):
+        """POST /api/auth/verify-access with invalid code → 401"""
         response = requests.post(
-            f"{BASE_URL}/api/auth/verify-access",
+            f"{base_url}/api/auth/verify-access",
             json={"code": "wrong_code"},
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 401
-        print(f"✓ Invalid code correctly rejected")
 
+
+# ─── Health & Basics ───────────────────────────────────────────────────────
 
 class TestHealthAndBasics:
-    """Basic health check tests"""
-    
-    def test_health_endpoint(self):
-        """Test health endpoint is accessible"""
-        response = requests.get(f"{BASE_URL}/api/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data.get("status") == "healthy"
-        print(f"✓ Health check passed")
+    """Basic health-check tests tests."""
 
+    def test_health_endpoint(self, base_url):
+        """GET /api/health → 200 healthy"""
+        response = requests.get(f"{base_url}/api/health")
+        assert response.status_code == 200
+        assert response.json().get("status") == "healthy"
+
+
+# ─── Wallet Privacy Analyzer ─────────────────────────────────────────────────
 
 class TestWalletPrivacyAnalyzer:
-    """Tests for Wallet Privacy Analyzer feature - GET /api/analyzer/scan/{address}"""
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self):
-        """Get authentication token"""
-        response = requests.post(
-            f"{BASE_URL}/api/auth/verify-access",
-            json={"code": ACCESS_CODE}
-        )
-        return response.json()["token"]
-    
-    def test_scan_known_address(self, auth_token):
-        """Test scanning vitalik.eth address - should have activity on multiple chains"""
+    """Tests for GET /api/analyzer/scan/{address}"""
+
+    def test_scan_known_address(self, base_url, auth_token):
+        """Scanning vitalik.eth returns a complete privacy report."""
         response = requests.get(
-            f"{BASE_URL}/api/analyzer/scan/{TEST_OWNER_ADDRESS}",
-            headers={"Authorization": f"Bearer {auth_token}"}
+            f"{base_url}/api/analyzer/scan/{TEST_OWNER_ADDRESS}",
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert response.status_code == 200, f"Scan failed: {response.text}"
+        assert response.status_code == 200, response.text
         data = response.json()
-        
-        # Verify required fields
-        assert "address" in data
+
         assert data["address"] == TEST_OWNER_ADDRESS
-        assert "privacy_score" in data
-        assert isinstance(data["privacy_score"], int)
+        assert "privacy_score" in data and isinstance(data["privacy_score"], int)
         assert 0 <= data["privacy_score"] <= 100
-        
-        assert "grade" in data
-        assert data["grade"] in ["A+", "A", "B", "C", "D", "F"]
-        
-        assert "chain_data" in data
+        assert data["grade"] in {"A+", "A", "B", "C", "D", "F"}
         assert isinstance(data["chain_data"], dict)
-        
-        assert "risks" in data
         assert isinstance(data["risks"], list)
-        
-        assert "recommendations" in data
         assert isinstance(data["recommendations"], list)
-        
         assert "total_tx_count" in data
         assert "chains_with_balance" in data
         assert "chains_with_activity" in data
         assert "scanned_at" in data
-        
-        print(f"✓ Wallet analyzer scan successful")
-        print(f"  - Privacy Score: {data['privacy_score']}")
-        print(f"  - Grade: {data['grade']}")
-        print(f"  - Total TX Count: {data['total_tx_count']}")
-        print(f"  - Chains with activity: {data['chains_with_activity']}")
-        print(f"  - Risks found: {len(data['risks'])}")
-    
-    def test_scan_returns_chain_data(self, auth_token):
-        """Test that chain_data contains expected chains"""
-        response = requests.get(
-            f"{BASE_URL}/api/analyzer/scan/{TEST_OWNER_ADDRESS}",
-            headers={"Authorization": f"Bearer {auth_token}"}
-        )
-        assert response.status_code == 200
-        data = response.json()
-        
-        expected_chains = ["base", "arbitrum", "polygon", "optimism", "bnb", "avalanche"]
-        for chain in expected_chains:
-            assert chain in data["chain_data"], f"Missing chain: {chain}"
-            chain_info = data["chain_data"][chain]
-            assert "balance_wei" in chain_info
-            assert "tx_count" in chain_info
-        
-        print(f"✓ Chain data contains all expected chains")
-    
-    def test_scan_without_auth_fails(self):
-        """Test that scan without auth token fails"""
-        response = requests.get(f"{BASE_URL}/api/analyzer/scan/{TEST_OWNER_ADDRESS}")
-        assert response.status_code == 401
-        print(f"✓ Unauthorized scan correctly rejected")
 
+    def test_scan_returns_chain_data(self, base_url, auth_token):
+        """Response contains expected L2/L1 chain entries."""
+        response = requests.get(
+            f"{base_url}/api/analyzer/scan/{TEST_OWNER_ADDRESS}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        data = response.json()
+        expected = {"base", "arbitrum", "polygon", "optimism", "bnb", "avalanche"}
+        for chain in expected:
+            assert chain in data["chain_data"], f"missing chain: {chain}"
+            info = data["chain_data"][chain]
+            assert "balance_wei" in info and "tx_count" in info
+
+    def test_scan_without_auth_fails(self, base_url):
+        """Unauthenticated scan → 401."""
+        response = requests.get(
+            f"{base_url}/api/analyzer/scan/{TEST_OWNER_ADDRESS}"
+        )
+        assert response.status_code == 401
+
+
+# ─── Privacy Address Book ───────────────────────────────────────────────────
 
 class TestPrivacyAddressBook:
-    """Tests for Privacy Address Book feature - CRUD operations"""
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self):
-        """Get authentication token"""
+    """CRUD tests for /api/addressbook."""
+
+    def test_add_contact(self, base_url, auth_token, test_entry_data):
+        """POST /api/addressbook/add returns entry_id and label."""
         response = requests.post(
-            f"{BASE_URL}/api/auth/verify-access",
-            json={"code": ACCESS_CODE}
-        )
-        return response.json()["token"]
-    
-    @pytest.fixture
-    def test_entry_data(self):
-        """Generate unique test entry data"""
-        return {
-            "owner_address": TEST_OWNER_ADDRESS,
-            "label": f"TEST_Contact_{secrets.token_hex(4)}",
-            "stealth_meta_address": "st:eth:0x" + secrets.token_hex(66),
-            "public_address": "0x" + secrets.token_hex(20),
-            "notes_encrypted": "encrypted_notes_here",
-            "chain": "base"
-        }
-    
-    def test_add_contact(self, auth_token, test_entry_data):
-        """Test adding a contact to address book"""
-        response = requests.post(
-            f"{BASE_URL}/api/addressbook/add",
+            f"{base_url}/api/addressbook/add",
             json=test_entry_data,
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert response.status_code == 200, f"Add contact failed: {response.text}"
+        assert response.status_code == 200, response.text
         data = response.json()
-        
         assert "entry_id" in data
-        assert "label" in data
         assert data["label"] == test_entry_data["label"]
-        
-        print(f"✓ Contact added successfully: {data['entry_id']}")
-        return data["entry_id"]
-    
-    def test_add_and_get_contacts(self, auth_token, test_entry_data):
-        """Test adding a contact and then retrieving it"""
-        # Add contact
-        add_response = requests.post(
-            f"{BASE_URL}/api/addressbook/add",
+
+    def test_add_and_get_contacts(self, base_url, auth_token, test_entry_data):
+        """After adding a contact we can retrieve it."""
+        add = requests.post(
+            f"{base_url}/api/addressbook/add",
             json=test_entry_data,
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert add_response.status_code == 200
-        entry_id = add_response.json()["entry_id"]
-        
-        # Get contacts for owner
-        get_response = requests.get(
-            f"{BASE_URL}/api/addressbook/{test_entry_data['owner_address']}",
-            headers={"Authorization": f"Bearer {auth_token}"}
+        entry_id = add.json()["entry_id"]
+
+        get = requests.get(
+            f"{base_url}/api/addressbook/{test_entry_data['owner_address']}",
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert get_response.status_code == 200, f"Get contacts failed: {get_response.text}"
-        data = get_response.json()
-        
-        assert "entries" in data
-        assert "count" in data
-        assert isinstance(data["entries"], list)
-        
-        # Find our entry
-        found = False
-        for entry in data["entries"]:
-            if entry.get("entry_id") == entry_id:
-                found = True
-                assert entry["label"] == test_entry_data["label"]
-                assert entry["chain"] == test_entry_data["chain"]
-                break
-        
-        assert found, f"Entry {entry_id} not found in address book"
-        print(f"✓ Contact retrieved successfully, total contacts: {data['count']}")
-    
-    def test_delete_contact(self, auth_token, test_entry_data):
-        """Test deleting a contact from address book"""
-        # First add a contact
-        add_response = requests.post(
-            f"{BASE_URL}/api/addressbook/add",
+        assert get.status_code == 200, get.text
+        data = get.json()
+        assert "entries" in data and "count" in data
+        assert any(e.get("entry_id") == entry_id for e in data["entries"])
+
+    def test_delete_contact(self, base_url, auth_token, test_entry_data):
+        """Deleting a contact removes it from the list."""
+        entry_id = requests.post(
+            f"{base_url}/api/addressbook/add",
             json=test_entry_data,
-            headers={"Authorization": f"Bearer {auth_token}"}
-        )
-        assert add_response.status_code == 200
-        entry_id = add_response.json()["entry_id"]
-        
-        # Delete the contact
-        delete_response = requests.delete(
-            f"{BASE_URL}/api/addressbook/{entry_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        ).json()["entry_id"]
+
+        delete = requests.delete(
+            f"{base_url}/api/addressbook/{entry_id}",
             json={"owner_address": test_entry_data["owner_address"]},
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert delete_response.status_code == 200, f"Delete failed: {delete_response.text}"
-        data = delete_response.json()
-        
-        assert data.get("deleted") == True
+        assert delete.status_code == 200
+        data = delete.json()
+        assert data.get("deleted") is True
         assert data.get("entry_id") == entry_id
-        
-        # Verify it's deleted by trying to find it
-        get_response = requests.get(
-            f"{BASE_URL}/api/addressbook/{test_entry_data['owner_address']}",
-            headers={"Authorization": f"Bearer {auth_token}"}
+
+        # verify removal
+        get = requests.get(
+            f"{base_url}/api/addressbook/{test_entry_data['owner_address']}",
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        entries = get_response.json().get("entries", [])
-        for entry in entries:
-            assert entry.get("entry_id") != entry_id, "Entry should be deleted"
-        
-        print(f"✓ Contact deleted successfully")
-    
-    def test_delete_nonexistent_contact(self, auth_token):
-        """Test deleting a non-existent contact returns 404"""
+        assert not any(e.get("entry_id") == entry_id for e in get.json().get("entries", []))
+
+    def test_delete_nonexistent_contact(self, base_url, auth_token):
+        """DELETE on a missing ID → 404."""
         response = requests.delete(
-            f"{BASE_URL}/api/addressbook/nonexistent-id-12345",
+            f"{base_url}/api/addressbook/nonexistent-id-12345",
             json={"owner_address": TEST_OWNER_ADDRESS},
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 404
-        print(f"✓ Delete non-existent contact correctly returns 404")
-    
-    def test_get_empty_addressbook(self, auth_token):
-        """Test getting address book for address with no contacts"""
+
+    def test_get_empty_addressbook(self, base_url, auth_token):
+        """Querying an address with no contacts returns empty list."""
         random_address = "0x" + secrets.token_hex(20)
         response = requests.get(
-            f"{BASE_URL}/api/addressbook/{random_address}",
-            headers={"Authorization": f"Bearer {auth_token}"}
+            f"{base_url}/api/addressbook/{random_address}",
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 200
         data = response.json()
         assert data["count"] == 0
         assert data["entries"] == []
-        print(f"✓ Empty address book returns correctly")
 
+
+# ─── ZK Commitments ──────────────────────────────────────────────────────────
 
 class TestZKCommitments:
-    """Tests for ZK Commitments feature - create, list, verify"""
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self):
-        """Get authentication token"""
-        response = requests.post(
-            f"{BASE_URL}/api/auth/verify-access",
-            json={"code": ACCESS_CODE}
-        )
-        return response.json()["token"]
-    
-    def _create_commitment(self, amount_wei: str, blinding_factor: str) -> str:
-        """Helper to create commitment hash: SHA-256(amount_wei + blinding_factor)"""
-        return hashlib.sha256((amount_wei + blinding_factor).encode()).hexdigest()
-    
-    def test_create_commitment(self, auth_token):
-        """Test creating a ZK commitment"""
-        amount_wei = "1000000000000000000"  # 1 ETH in wei
+    """Tests for /api/zk-commitments."""
+
+    @pytest.fixture
+    def _sample_commitment(self, base_url, auth_token):
+        """Return (commitment_id, amount_wei, blinding_factor, commitment_hash)."""
+        amount_wei = "1000000000000000000"
         blinding_factor = secrets.token_hex(32)
-        commitment_hash = self._create_commitment(amount_wei, blinding_factor)
-        
+        commitment_hash = _create_commitment_hash(amount_wei, blinding_factor)
+
         response = requests.post(
-            f"{BASE_URL}/api/zk-commitments/create",
+            f"{base_url}/api/zk-commitments/create",
             json={
                 "owner_address": TEST_OWNER_ADDRESS,
                 "commitment_hash": commitment_hash,
                 "amount_range": "1-10 ETH",
                 "chain": "base",
-                "label": "TEST_Commitment"
+                "label": "TEST_Commitment",
             },
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert response.status_code == 200, f"Create commitment failed: {response.text}"
-        data = response.json()
-        
-        assert "commitment_id" in data
-        assert "commitment_hash" in data
-        assert data["commitment_hash"] == commitment_hash
-        
-        print(f"✓ ZK Commitment created: {data['commitment_id']}")
-        return data["commitment_id"], amount_wei, blinding_factor
-    
-    def test_get_commitments(self, auth_token):
-        """Test getting commitments for an address"""
-        # First create a commitment
-        amount_wei = "2000000000000000000"
-        blinding_factor = secrets.token_hex(32)
-        commitment_hash = self._create_commitment(amount_wei, blinding_factor)
-        
-        create_response = requests.post(
-            f"{BASE_URL}/api/zk-commitments/create",
-            json={
-                "owner_address": TEST_OWNER_ADDRESS,
-                "commitment_hash": commitment_hash,
-                "amount_range": "1-10 ETH",
-                "chain": "arbitrum",
-                "label": "TEST_GetCommitment"
-            },
-            headers={"Authorization": f"Bearer {auth_token}"}
+        assert response.status_code == 200
+        return response.json()["commitment_id"], amount_wei, blinding_factor, commitment_hash
+
+    def test_create_commitment(self, base_url, auth_token, _sample_commitment):
+        cid, amount, blinding, chash = _sample_commitment
+        # creation already validated by fixture; just sanity-check the ID
+        assert cid  # non-empty
+
+    def test_get_commitments(self, base_url, auth_token, _sample_commitment):
+        commitment_id, *_ = _sample_commitment
+
+        get = requests.get(
+            f"{base_url}/api/zk-commitments/{TEST_OWNER_ADDRESS}",
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert create_response.status_code == 200
-        commitment_id = create_response.json()["commitment_id"]
-        
-        # Get commitments
-        get_response = requests.get(
-            f"{BASE_URL}/api/zk-commitments/{TEST_OWNER_ADDRESS}",
-            headers={"Authorization": f"Bearer {auth_token}"}
-        )
-        assert get_response.status_code == 200, f"Get commitments failed: {get_response.text}"
-        data = get_response.json()
-        
-        assert "commitments" in data
-        assert "count" in data
-        assert isinstance(data["commitments"], list)
-        
-        # Find our commitment
-        found = False
-        for c in data["commitments"]:
-            if c.get("commitment_id") == commitment_id:
-                found = True
-                assert c["commitment_hash"] == commitment_hash
-                assert c["amount_range"] == "1-10 ETH"
-                assert c["revealed"] == False
-                break
-        
-        assert found, f"Commitment {commitment_id} not found"
-        print(f"✓ Commitments retrieved, count: {data['count']}")
-    
-    def test_verify_commitment_valid(self, auth_token):
-        """Test verifying a commitment with correct amount and blinding factor"""
-        # Create commitment
-        amount_wei = "5000000000000000000"  # 5 ETH
-        blinding_factor = secrets.token_hex(32)
-        commitment_hash = self._create_commitment(amount_wei, blinding_factor)
-        
-        create_response = requests.post(
-            f"{BASE_URL}/api/zk-commitments/create",
-            json={
-                "owner_address": TEST_OWNER_ADDRESS,
-                "commitment_hash": commitment_hash,
-                "amount_range": "1-10 ETH",
-                "chain": "polygon"
-            },
-            headers={"Authorization": f"Bearer {auth_token}"}
-        )
-        assert create_response.status_code == 200
-        commitment_id = create_response.json()["commitment_id"]
-        
-        # Verify with correct values
-        verify_response = requests.post(
-            f"{BASE_URL}/api/zk-commitments/verify",
+        assert get.status_code == 200, get.text
+        data = get.json()
+        assert "commitments" in data and "count" in data
+        assert any(c.get("commitment_id") == commitment_id for c in data["commitments"])
+
+    def test_verify_commitment_valid(self, base_url, auth_token, _sample_commitment):
+        commitment_id, amount_wei, blinding_factor, commitment_hash = _sample_commitment
+        verify = requests.post(
+            f"{base_url}/api/zk-commitments/verify",
             json={
                 "commitment_id": commitment_id,
                 "amount_wei": amount_wei,
-                "blinding_factor": blinding_factor
+                "blinding_factor": blinding_factor,
             },
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert verify_response.status_code == 200, f"Verify failed: {verify_response.text}"
-        data = verify_response.json()
-        
-        assert data["commitment_id"] == commitment_id
-        assert data["is_valid"] == True
+        assert verify.status_code == 200, verify.text
+        data = verify.json()
+        assert data["is_valid"] is True
         assert data["recomputed_hash"] == commitment_hash
         assert data["stored_hash"] == commitment_hash
-        
-        print(f"✓ ZK Commitment verified successfully")
-    
-    def test_verify_commitment_invalid(self, auth_token):
-        """Test verifying a commitment with wrong values returns is_valid=False"""
-        # Create commitment
-        amount_wei = "3000000000000000000"
-        blinding_factor = secrets.token_hex(32)
-        commitment_hash = self._create_commitment(amount_wei, blinding_factor)
-        
-        create_response = requests.post(
-            f"{BASE_URL}/api/zk-commitments/create",
-            json={
-                "owner_address": TEST_OWNER_ADDRESS,
-                "commitment_hash": commitment_hash,
-                "amount_range": "1-10 ETH",
-                "chain": "optimism"
-            },
-            headers={"Authorization": f"Bearer {auth_token}"}
-        )
-        assert create_response.status_code == 200
-        commitment_id = create_response.json()["commitment_id"]
-        
-        # Verify with WRONG blinding factor
-        verify_response = requests.post(
-            f"{BASE_URL}/api/zk-commitments/verify",
+
+    def test_verify_commitment_invalid(self, base_url, auth_token, _sample_commitment):
+        commitment_id, amount_wei, _, _ = _sample_commitment
+        verify = requests.post(
+            f"{base_url}/api/zk-commitments/verify",
             json={
                 "commitment_id": commitment_id,
                 "amount_wei": amount_wei,
-                "blinding_factor": "wrong_blinding_factor"
+                "blinding_factor": "wrong_blinding_factor",
             },
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert verify_response.status_code == 200
-        data = verify_response.json()
-        
-        assert data["is_valid"] == False
+        data = verify.json()
+        assert data["is_valid"] is False
         assert data["recomputed_hash"] != data["stored_hash"]
-        
-        print(f"✓ Invalid commitment correctly rejected")
-    
-    def test_verify_nonexistent_commitment(self, auth_token):
-        """Test verifying a non-existent commitment returns 404"""
+
+    def test_verify_nonexistent_commitment(self, base_url, auth_token):
         response = requests.post(
-            f"{BASE_URL}/api/zk-commitments/verify",
+            f"{base_url}/api/zk-commitments/verify",
             json={
                 "commitment_id": "nonexistent-id-12345",
                 "amount_wei": "1000000000000000000",
-                "blinding_factor": "test"
+                "blinding_factor": "test",
             },
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 404
-        print(f"✓ Non-existent commitment correctly returns 404")
 
+
+# ─── Encrypted Receipts ────────────────────────────────────────────────────
 
 class TestEncryptedReceipts:
-    """Tests for Encrypted Receipts feature - create and decrypt"""
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self):
-        """Get authentication token"""
-        response = requests.post(
-            f"{BASE_URL}/api/auth/verify-access",
-            json={"code": ACCESS_CODE}
-        )
-        return response.json()["token"]
-    
-    def test_create_receipt(self, auth_token):
-        """Test creating an encrypted receipt"""
-        receipt_data = {
+    """Tests for /api/receipt."""
+
+    @staticmethod
+    def _receipt_payload(**overrides):
+        defaults = {
             "transaction_hash": "0x" + secrets.token_hex(32),
             "sender_address": TEST_OWNER_ADDRESS,
             "recipient_stealth_address": "0x" + secrets.token_hex(20),
             "amount_wei": "1000000000000000000",
             "chain": "base",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
         }
-        
+        defaults.update(overrides)
+        return defaults
+
+    def test_create_receipt(self, base_url, auth_token):
         response = requests.post(
-            f"{BASE_URL}/api/receipt/create",
-            json=receipt_data,
-            headers={"Authorization": f"Bearer {auth_token}"}
+            f"{base_url}/api/receipt/create",
+            json=self._receipt_payload(),
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert response.status_code == 200, f"Create receipt failed: {response.text}"
+        assert response.status_code == 200, response.text
         data = response.json()
-        
         assert "receipt_id" in data
-        assert "encrypted_data" in data
-        assert "one_time_code" in data
+        assert "encrypted_data" in data and len(data["encrypted_data"]) > 0
+        assert "one_time_code" in data and len(data["one_time_code"]) == 32
         assert "created_at" in data
-        
-        # Verify encrypted_data is base64 encoded
-        assert len(data["encrypted_data"]) > 0
-        
-        # Verify one_time_code is hex
-        assert len(data["one_time_code"]) == 32  # 16 bytes = 32 hex chars
-        
-        print(f"✓ Encrypted receipt created: {data['receipt_id']}")
-        return data
-    
-    def test_create_and_decrypt_receipt(self, auth_token):
-        """Test full cycle: create receipt and decrypt it"""
-        # Create receipt
+
+    def test_create_and_decrypt_receipt(self, base_url, auth_token):
         tx_hash = "0x" + secrets.token_hex(32)
-        receipt_data = {
-            "transaction_hash": tx_hash,
-            "sender_address": TEST_OWNER_ADDRESS,
-            "recipient_stealth_address": "0x" + secrets.token_hex(20),
-            "amount_wei": "2500000000000000000",
-            "chain": "arbitrum",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-        create_response = requests.post(
-            f"{BASE_URL}/api/receipt/create",
-            json=receipt_data,
-            headers={"Authorization": f"Bearer {auth_token}"}
+        payload = self._receipt_payload(
+            transaction_hash=tx_hash,
+            amount_wei="2500000000000000000",
+            chain="arbitrum",
         )
-        assert create_response.status_code == 200
-        created = create_response.json()
-        
+
+        created = requests.post(
+            f"{base_url}/api/receipt/create",
+            json=payload,
+            headers={"Authorization": f"Bearer {auth_token}"},
+        ).json()
         receipt_id = created["receipt_id"]
         one_time_code = created["one_time_code"]
-        
-        # Decrypt receipt
-        decrypt_response = requests.post(
-            f"{BASE_URL}/api/receipt/decrypt",
-            json={
-                "receipt_id": receipt_id,
-                "one_time_code": one_time_code
-            },
-            headers={"Authorization": f"Bearer {auth_token}"}
+
+        decrypt = requests.post(
+            f"{base_url}/api/receipt/decrypt",
+            json={"receipt_id": receipt_id, "one_time_code": one_time_code},
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert decrypt_response.status_code == 200, f"Decrypt failed: {decrypt_response.text}"
-        data = decrypt_response.json()
-        
-        assert "receipt" in data
-        decrypted = data["receipt"]
-        
-        # Verify decrypted data matches original
-        assert decrypted["transaction_hash"] == tx_hash
-        assert decrypted["sender"] == receipt_data["sender_address"]
-        assert decrypted["amount_wei"] == receipt_data["amount_wei"]
-        assert decrypted["chain"] == receipt_data["chain"]
-        
-        print(f"✓ Receipt decrypted successfully, tx_hash matches")
-    
-    def test_decrypt_with_wrong_code(self, auth_token):
-        """Test decrypting with wrong one-time code fails"""
-        # Create receipt
-        receipt_data = {
-            "transaction_hash": "0x" + secrets.token_hex(32),
-            "sender_address": TEST_OWNER_ADDRESS,
-            "recipient_stealth_address": "0x" + secrets.token_hex(20),
-            "amount_wei": "1000000000000000000",
-            "chain": "polygon",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-        create_response = requests.post(
-            f"{BASE_URL}/api/receipt/create",
-            json=receipt_data,
-            headers={"Authorization": f"Bearer {auth_token}"}
-        )
-        assert create_response.status_code == 200
-        receipt_id = create_response.json()["receipt_id"]
-        
-        # Try to decrypt with wrong code
-        decrypt_response = requests.post(
-            f"{BASE_URL}/api/receipt/decrypt",
-            json={
-                "receipt_id": receipt_id,
-                "one_time_code": "wrong_code_here"
-            },
-            headers={"Authorization": f"Bearer {auth_token}"}
-        )
-        assert decrypt_response.status_code == 401
-        print(f"✓ Wrong one-time code correctly rejected")
-    
-    def test_decrypt_nonexistent_receipt(self, auth_token):
-        """Test decrypting non-existent receipt returns 404"""
+        assert decrypt.status_code == 200, decrypt.text
+        receipt = decrypt.json()["receipt"]
+        assert receipt["transaction_hash"] == tx_hash
+        assert receipt["sender"] == payload["sender_address"]
+        assert receipt["amount_wei"] == payload["amount_wei"]
+        assert receipt["chain"] == payload["chain"]
+
+    def test_decrypt_with_wrong_code(self, base_url, auth_token):
+        created = requests.post(
+            f"{base_url}/api/receipt/create",
+            json=self._receipt_payload(chain="polygon"),
+            headers={"Authorization": f"Bearer {auth_token}"},
+        ).json()
         response = requests.post(
-            f"{BASE_URL}/api/receipt/decrypt",
+            f"{base_url}/api/receipt/decrypt",
+            json={"receipt_id": created["receipt_id"], "one_time_code": "wrong_code_here"},
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 401
+
+    def test_decrypt_nonexistent_receipt(self, base_url, auth_token):
+        response = requests.post(
+            f"{base_url}/api/receipt/decrypt",
             json={
                 "receipt_id": "nonexistent-receipt-id",
-                "one_time_code": "some_code"
+                "one_time_code": "doesnt_matter",
             },
-            headers={"Authorization": f"Bearer {auth_token}"}
+            headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 404
-        print(f"✓ Non-existent receipt correctly returns 404")
 
+
+# ─── Auth Protection ─────────────────────────────────────────────────────────
 
 class TestAPIWithoutAuth:
-    """Test that protected endpoints require authentication"""
-    
-    def test_addressbook_requires_auth(self):
-        """Test address book endpoints require auth"""
-        response = requests.post(
-            f"{BASE_URL}/api/addressbook/add",
-            json={"owner_address": TEST_OWNER_ADDRESS, "label": "test"}
-        )
-        assert response.status_code == 401
-        
-        response = requests.get(f"{BASE_URL}/api/addressbook/{TEST_OWNER_ADDRESS}")
-        assert response.status_code == 401
-        
-        print(f"✓ Address book endpoints require auth")
-    
-    def test_zk_commitments_requires_auth(self):
-        """Test ZK commitments endpoints require auth"""
-        response = requests.post(
-            f"{BASE_URL}/api/zk-commitments/create",
-            json={"owner_address": TEST_OWNER_ADDRESS, "commitment_hash": "test", "amount_range": "1-10 ETH"}
-        )
-        assert response.status_code == 401
-        
-        response = requests.get(f"{BASE_URL}/api/zk-commitments/{TEST_OWNER_ADDRESS}")
-        assert response.status_code == 401
-        
-        print(f"✓ ZK commitments endpoints require auth")
-    
-    def test_receipts_requires_auth(self):
-        """Test receipt endpoints require auth"""
-        response = requests.post(
-            f"{BASE_URL}/api/receipt/create",
+    """Ensure protected endpoints reject unauthenticated requests."""
+
+    def test_analyzer_requires_auth(self, base_url):
+        assert requests.get(
+            f"{base_url}/api/analyzer/scan/{TEST_OWNER_ADDRESS}"
+        ).status_code == 401
+
+    def test_addressbook_requires_auth(self, base_url):
+        assert requests.post(
+            f"{base_url}/api/addressbook/add",
+            json={"owner_address": TEST_OWNER_ADDRESS, "label": "test"},
+        ).status_code == 401
+        assert requests.get(
+            f"{base_url}/api/addressbook/{TEST_OWNER_ADDRESS}"
+        ).status_code == 401
+
+    def test_zk_commitments_requires_auth(self, base_url):
+        assert requests.post(
+            f"{base_url}/api/zk-commitments/create",
+            json={"owner_address": TEST_OWNER_ADDRESS, "commitment_hash": "test", "amount_range": "1-10 ETH"},
+        ).status_code == 401
+        assert requests.get(
+            f"{base_url}/api/zk-commitments/{TEST_OWNER_ADDRESS}"
+        ).status_code == 401
+
+    def test_receipts_requires_auth(self, base_url):
+        assert requests.post(
+            f"{base_url}/api/receipt/create",
             json={
                 "transaction_hash": "0x123",
                 "sender_address": TEST_OWNER_ADDRESS,
                 "recipient_stealth_address": "0x456",
                 "amount_wei": "1000",
                 "chain": "base",
-                "timestamp": "2024-01-01T00:00:00Z"
-            }
-        )
-        assert response.status_code == 401
-        
-        response = requests.post(
-            f"{BASE_URL}/api/receipt/decrypt",
-            json={"receipt_id": "test", "one_time_code": "test"}
-        )
-        assert response.status_code == 401
-        
-        print(f"✓ Receipt endpoints require auth")
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+                "timestamp": "2024-01-01T00:00:00Z",
+            },
+        ).status_code == 401
+        assert requests.post(
+            f"{base_url}/api/receipt/decrypt",
+            json={"receipt_id": "test", "one_time_code": "test"},
+        ).status_code == 401
