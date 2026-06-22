@@ -36,11 +36,11 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch event - network first, fallback to cache
+// Fetch event - cache-first for static assets, network-first for HTML
 self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (event.request.method !== 'GET') return;
-  
+
   // Skip API calls - always fetch from network
   if (event.request.url.includes('/api/')) {
     return;
@@ -51,29 +51,54 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const url = new URL(event.request.url);
+  const isStaticAsset =
+    /\.(?:js|css|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|ico|json|wasm)$/.test(url.pathname);
+
+  // Navigation requests (HTML pages): network-first so users always get
+  // the latest markup, falling back to cache when offline.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const responseClone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
+          return response;
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/')))
+    );
+    return;
+  }
+
+  // Static assets: cache-first for instant repeat loads. Revalidate in the
+  // background so the cache stays fresh without blocking the response.
+  if (isStaticAsset) {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        const fetchPromise = fetch(event.request)
+          .then((response) => {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
+            return response;
+          })
+          .catch(() => cachedResponse);
+        return cachedResponse || fetchPromise;
+      })
+    );
+    return;
+  }
+
+  // Everything else: network-first, fallback to cache.
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Clone response to store in cache
         const responseClone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseClone);
-        });
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
         return response;
       })
-      .catch(() => {
-        // Network failed, try cache
-        return caches.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          // Return offline page for navigation requests
-          if (event.request.mode === 'navigate') {
-            return caches.match('/');
-          }
-          return new Response('Offline', { status: 503 });
-        });
-      })
+      .catch(() =>
+        caches.match(event.request).then((cachedResponse) => cachedResponse || new Response('Offline', { status: 503 }))
+      )
   );
 });
 

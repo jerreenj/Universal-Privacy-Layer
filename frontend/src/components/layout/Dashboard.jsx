@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
@@ -9,29 +9,66 @@ import { useWallet } from "@/context/WalletContext";
 import { BackButton } from "@/components/common/BackButton";
 import { Navbar } from "@/components/layout/Navbar";
 import { Landing } from "@/components/layout/Landing";
-import { StealthContent } from "@/components/features/StealthContent";
-import { SendContent } from "@/components/features/SendContent";
-import { SwapContent } from "@/components/features/SwapContent";
-import { UniswapPrivateSwap } from "@/components/features/UniswapPrivateSwap";
-import { HyperliquidPrivateTrading } from "@/components/features/HyperliquidPrivateTrading";
-import { PolymarketPrivateBetting } from "@/components/features/PolymarketPrivateBetting";
-import { HiddenBalanceDashboard } from "@/components/features/HiddenBalanceDashboard";
-import { TransactionHistory } from "@/components/features/TransactionHistory";
-import { DualSeedSetup } from "@/components/features/DualSeedSetup";
-import { NFTPrivacy } from "@/components/features/NFTPrivacy";
-import { TokenApprovalPrivacy } from "@/components/features/TokenApprovalPrivacy";
-import { ContractPrivacy } from "@/components/features/ContractPrivacy";
-import { ChainsStatus } from "@/components/features/ChainsStatus";
-import { ZKPProofs } from "@/components/features/ZKPProofs";
-import { OnChainRelayer } from "@/components/features/OnChainRelayer";
-import { CrossChainSplit } from "@/components/features/CrossChainSplit";
-import { EncryptedMessaging } from "@/components/features/EncryptedMessaging";
-import { MultisigPrivacy } from "@/components/features/MultisigPrivacy";
-import { DeveloperAPI } from "@/pages/DeveloperAPI";
-import { WalletPrivacyAnalyzer } from "@/components/features/WalletPrivacyAnalyzer";
-import { EncryptedReceipts } from "@/components/features/EncryptedReceipts";
-import { PrivacyAddressBook } from "@/components/features/PrivacyAddressBook";
-import { ZKCommitments } from "@/components/features/ZKCommitments";
+
+/* Lazy-loaded feature components – each becomes a separate JS chunk. */
+const StealthContent          = lazy(() => import("@/components/features/StealthContent"));
+const SendContent               = lazy(() => import("@/components/features/SendContent"));
+const SwapContent               = lazy(() => import("@/components/features/SwapContent"));
+const UniswapPrivateSwap        = lazy(() => import("@/components/features/UniswapPrivateSwap"));
+const HyperliquidPrivateTrading = lazy(() => import("@/components/features/HyperliquidPrivateTrading"));
+const PolymarketPrivateBetting  = lazy(() => import("@/components/features/PolymarketPrivateBetting"));
+const HiddenBalanceDashboard    = lazy(() => import("@/components/features/HiddenBalanceDashboard"));
+const TransactionHistory        = lazy(() => import("@/components/features/TransactionHistory"));
+const DualSeedSetup             = lazy(() => import("@/components/features/DualSeedSetup"));
+const NFTPrivacy                = lazy(() => import("@/components/features/NFTPrivacy"));
+const TokenApprovalPrivacy      = lazy(() => import("@/components/features/TokenApprovalPrivacy"));
+const ContractPrivacy           = lazy(() => import("@/components/features/ContractPrivacy"));
+const ChainsStatus              = lazy(() => import("@/components/features/ChainsStatus"));
+const ZKPProofs                 = lazy(() => import("@/components/features/ZKPProofs"));
+const OnChainRelayer            = lazy(() => import("@/components/features/OnChainRelayer"));
+const CrossChainSplit           = lazy(() => import("@/components/features/CrossChainSplit"));
+const EncryptedMessaging        = lazy(() => import("@/components/features/EncryptedMessaging"));
+const MultisigPrivacy           = lazy(() => import("@/components/features/MultisigPrivacy"));
+const DeveloperAPI              = lazy(() => import("@/pages/DeveloperAPI"));
+const WalletPrivacyAnalyzer     = lazy(() => import("@/components/features/WalletPrivacyAnalyzer"));
+const EncryptedReceipts         = lazy(() => import("@/components/features/EncryptedReceipts"));
+const PrivacyAddressBook        = lazy(() => import("@/components/features/PrivacyAddressBook"));
+const ZKCommitments             = lazy(() => import("@/components/features/ZKCommitments"));
+
+/* Page metadata – references the lazy Component *type*, not a rendered element. */
+const pages = {
+  receive:     { title: "Private Receive",             Component: StealthContent },
+  send:        { title: "Private Send",                Component: SendContent },
+  swap:        { title: "Private Swap",                Component: SwapContent },
+  uniswap:     { title: "Uniswap V3 Private Swap",     Component: UniswapPrivateSwap },
+  hyperliquid: { title: "Hyperliquid Private Trading", Component: HyperliquidPrivateTrading },
+  polymarket:  { title: "Polymarket Private Betting",  Component: PolymarketPrivateBetting },
+  balance:     { title: "Hidden Balance",              Component: HiddenBalanceDashboard },
+  history:     { title: "Transaction History",         Component: TransactionHistory },
+  wallet:      { title: "Dual Seed Setup",             Component: DualSeedSetup },
+  nft:         { title: "NFT Privacy",                 Component: NFTPrivacy },
+  approval:    { title: "Token Approval Privacy",      Component: TokenApprovalPrivacy },
+  contract:    { title: "Contract Privacy",            Component: ContractPrivacy },
+  chains:      { title: "Chain Status",                Component: ChainsStatus },
+  zkp:         { title: "ZKP Proofs",                  Component: ZKPProofs },
+  relayer:     { title: "On-Chain Relayer",            Component: OnChainRelayer },
+  split:       { title: "Cross-Chain Split",           Component: CrossChainSplit },
+  messaging:   { title: "Encrypted Messaging",         Component: EncryptedMessaging },
+  multisig:    { title: "Multisig Privacy",            Component: MultisigPrivacy },
+  developer:   { title: "Developer API",               Component: DeveloperAPI },
+  analyzer:    { title: "Wallet Privacy Analyzer",     Component: WalletPrivacyAnalyzer },
+  receipts:    { title: "Encrypted Receipts",          Component: EncryptedReceipts },
+  addressbook: { title: "Privacy Address Book",        Component: PrivacyAddressBook },
+  zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments },
+};
+
+function LoadingFallback() {
+  return (
+    <div className="flex items-center justify-center py-20">
+      <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+    </div>
+  );
+}
 
 export function Dashboard() {
   const { address, balance, chain, fetchBalance, hiddenBalance } = useWallet();
@@ -41,42 +78,23 @@ export function Dashboard() {
 
   if (!address) return <Landing />;
 
-  const refresh = async () => { setRefreshing(true); await fetchBalance(); setRefreshing(false); };
-
-  const pages = {
-    receive: { title: "Private Receive", component: <StealthContent /> },
-    send: { title: "Private Send", component: <SendContent /> },
-    swap: { title: "Private Swap", component: <SwapContent /> },
-    uniswap: { title: "Uniswap V3 Private Swap", component: <UniswapPrivateSwap /> },
-    hyperliquid: { title: "Hyperliquid Private Trading", component: <HyperliquidPrivateTrading /> },
-    polymarket: { title: "Polymarket Private Betting", component: <PolymarketPrivateBetting /> },
-    balance: { title: "Hidden Balance", component: <HiddenBalanceDashboard /> },
-    history: { title: "Transaction History", component: <TransactionHistory /> },
-    wallet: { title: "Dual Seed Setup", component: <DualSeedSetup /> },
-    nft: { title: "NFT Privacy", component: <NFTPrivacy /> },
-    approval: { title: "Token Approval Privacy", component: <TokenApprovalPrivacy /> },
-    contract: { title: "Contract Privacy", component: <ContractPrivacy /> },
-    chains: { title: "Chain Status", component: <ChainsStatus /> },
-    zkp: { title: "ZKP Proofs", component: <ZKPProofs /> },
-    relayer: { title: "On-Chain Relayer", component: <OnChainRelayer /> },
-    split: { title: "Cross-Chain Split", component: <CrossChainSplit /> },
-    messaging: { title: "Encrypted Messaging", component: <EncryptedMessaging /> },
-    multisig: { title: "Multisig Privacy", component: <MultisigPrivacy /> },
-    developer: { title: "Developer API", component: <DeveloperAPI /> },
-    analyzer: { title: "Wallet Privacy Analyzer", component: <WalletPrivacyAnalyzer /> },
-    receipts: { title: "Encrypted Receipts", component: <EncryptedReceipts /> },
-    addressbook: { title: "Privacy Address Book", component: <PrivacyAddressBook /> },
-    zkcommit: { title: "ZK Commitments", component: <ZKCommitments /> },
+  const refresh = async () => {
+    setRefreshing(true);
+    await fetchBalance();
+    setRefreshing(false);
   };
 
   if (page !== "home" && pages[page]) {
+    const { title, Component } = pages[page];
     return (
       <div className="min-h-screen bg-black pt-16 md:pt-20 px-4 md:px-6">
         <Navbar />
         <div className="max-w-2xl mx-auto py-6 md:py-10">
           <BackButton onClick={() => setPage("home")} />
-          <h1 className="text-2xl md:text-3xl font-bold mb-6">{pages[page].title}</h1>
-          {pages[page].component}
+          <h1 className="text-2xl md:text-3xl font-bold mb-6">{title}</h1>
+          <Suspense fallback={<LoadingFallback />}>
+            <Component />
+          </Suspense>
         </div>
       </div>
     );
