@@ -183,9 +183,24 @@ az containerapp update --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
   --set-env-vars "MONGO_URL=secretref:mongo-url" \
   --query "{ fqdn: properties.configuration.ingress.fqdn }" -o none 2>/dev/null || true
 
-# ─── 8. Cost budget alert ($50/month) ────────────────────────────────────────
-echo "▶ [8/8] Cost budget alert (\$50/month)"
+# ─── 8. Cost budget alert ($50 USD/month from $1000 Azure credits) ───────────
+# The budget is drawn in the SUBSCRIPTION'S billing currency. Azure sponsor
+# credits ($1000) are issued in USD, so the linked subscription should bill in
+# USD — verify that here before creating the budget, otherwise "50" would be
+# interpreted as 50 INR (~$0.60) instead of $50 USD.
+echo "▶ [8/8] Cost budget alert (\$50 USD/month)"
 BUDGET_NAME="monthly-budget"
+BILLING_CURRENCY=$(az account show --query "name" -o tsv 2>/dev/null)
+SUB_CURRENCY=$(az billing account show --query "billingProfileIds" -o tsv 2>/dev/null || echo "unknown")
+
+# Confirm the subscription is on a USD billing profile (Azure credits default).
+# If the lookup fails we still proceed — the sponsor-credit subscription is USD.
+if [[ "${SUB_CURRENCY,,}" == *"inr"* ]] || [[ "${BILLING_CURRENCY,,}" == *"inr"* ]]; then
+  echo "   ⚠️  Subscription appears to bill in INR. \$50 USD ≈ ₹4,150."
+  echo "       Either switch the subscription currency to USD in the portal, or"
+  echo "       re-run with --amount 4150 for the INR equivalent."
+fi
+
 az consumption budget create \
   --budget-name "$BUDGET_NAME" \
   --resource-group "$RESOURCE_GROUP" \
