@@ -55,9 +55,9 @@ When you swap on Uniswap, open a leveraged position on Hyperliquid, or place a b
 
 ## The Solution
 
-UPL makes your wallet **mathematically unlinkable** from any transaction.
+UPL is **architected to make your wallet unlinkable** from any transaction.
 
-Every operation — whether it's a token swap, a perp trade, a prediction bet, or a simple transfer — is routed through a freshly generated **stealth address** backed by **zero-knowledge cryptography**. The origin wallet and the destination exist in two completely separate on-chain realities. No link. No trace. No fingerprint.
+Every operation — whether it's a token swap, a perp trade, a prediction bet, or a simple transfer — is routed through a freshly generated **stealth address** backed by **zero-knowledge cryptography**. The origin wallet and the destination exist in two completely separate on-chain realities. Designed to leave no link, no trace, no fingerprint.
 
 ```
   Your Wallet                                           The Blockchain
@@ -69,11 +69,11 @@ Every operation — whether it's a token swap, a perp trade, a prediction bet, o
        │   │  4. Relayer Submission                   │        │
        │   └──────────────────────────────────────────┘        │
        │                                                       │
-       └──────── mathematically unlinkable ───────────────────>│
+       └──────── architected for unlinkability ───────────────────>│
                                                                │
                  No link.  No trace.  No fingerprint.          │
                                                                │
-                 Even UPL cannot reconstruct the path.         │
+                 The path is not reconstructible from on-chain data alone.         │
 ```
 
 <br>
@@ -216,7 +216,7 @@ Every position is isolated behind a unique ephemeral address.
 
 Prediction market bets via stealth USDC proxy. Your wallet **never interacts with the CLOB.** Bet, win, and withdraw — all through one-time stealth addresses.
 
-Cannot be linked back to your identity.
+Designed to prevent linkage back to your identity.
 
 **Chain:** Polygon &middot; **Token:** USDC
 
