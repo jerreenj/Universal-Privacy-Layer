@@ -1,0 +1,85 @@
+# CI gate for the Sui Move package (contracts/sui).
+#
+# This is the S2.3 deliverable of the UPL "make Sui real & visible" plan.
+# It mirrors how the Sui grants team's own repos gate Move packages: build the
+# package, run the unit-test suite, and fail the PR on any non-zero exit.
+# The workflow runs on every push and pull_request touching the Sui package
+# (or the workflow file itself) and can be dispatched manually for a one-off
+# signal (useful when re-validating an external-framework rev bump).
+#
+# It uses the official Mysten Labs `sui` Docker image so the build is
+# reproducible without cargo/sui toolchain setup, and pins the tag so a
+# future mainnet/testnet split doesn't silently change what the gate runs
+# against. Testnet framework rev is what `Move.toml` already pins.
+
+name: Move (Sui) build + test
+
+on:
+  push:
+    branches:
+      - main
+      - 'p2/**'
+    paths:
+      - 'contracts/sui/**'
+      - '.github/workflows/move-build-test.yml'
+  pull_request:
+    paths:
+      - 'contracts/sui/**'
+      - '.github/workflows/move-build-test.yml'
+  workflow_dispatch:
+
+# Cancel any superseded run on the same ref — Move builds aren't free and the
+# grants team does not want a queue stacking up on rapid iteration pushes.
+concurrency:
+  group: move-build-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: sui move build + sui move test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/sui
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install the Sui CLI (testnet)
+        # Install the `sui` binary from the latest testnet release asset,
+        # matching `Move.toml`'s `Sui = { ..., rev = "framework/testnet" }`.
+        # Pinning avoids the framework/toolchain skew that would otherwise
+        # make `tx_context::dummy()`-style tests flaky across releases.
+        #
+        # The asset naming encodes the version (e.g.
+        # `sui-testnet-v1.74.0-ubuntu-x86_64.tgz`), so we resolve the tag from
+        # the GitHub API and download the matching archive. Ubuntu-x86_64 is
+        # what `ubuntu-latest` runners provide.
+        run: |
+          set -euo pipefail
+          TAG="$(curl -sSf -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/MystenLabs/sui/releases/latest \
+            | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+            | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+          echo "Resolved latest testnet tag: ${TAG}"
+          ASSET="sui-${TAG}-ubuntu-x86_64.tgz"
+          URL="https://github.com/MystenLabs/sui/releases/download/${TAG}/${ASSET}"
+          echo "Downloading ${URL}"
+          curl -L -sSf "${URL}" -o /tmp/sui.tgz
+          mkdir -p /tmp/sui-bin
+          tar -xzf /tmp/sui.tgz -C /tmp/sui-bin
+          # The archive ships a `sui` binary at its root; locate it defensively.
+          SUI_BIN="$(find /tmp/sui-bin -type f -name sui | head -1)"
+          chmod +x "${SUI_BIN}"
+          ln -sf "${SUI_BIN}" /tmp/sui
+          /tmp/sui --version
+
+      - name: Build the Move package
+        run: /tmp/sui move build
+
+      - name: Run the Move unit tests
+        # The full expected-success exit gate. The suite is 123 tests across the
+        # 12 modules; exit 0 == all green. No coverage step here — the framework
+        # rev doesn't ship a stable `move coverage` we'd want to pin in CI yet.
+        run: /tmp/sui move test
