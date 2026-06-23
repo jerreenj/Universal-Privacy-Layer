@@ -167,7 +167,7 @@ module upl::announcement_indexer_tests {
     #[test, expected_failure(abort_code = 2)]
     fun scan_limit_zero_aborts() {
         let mut ctx = tx_context::dummy();
-        let indexer = idx::new_test_indexer(&mut ctx);
+        let mut indexer = idx::new_test_indexer(&mut ctx);
         idx::advance_cursor(&mut indexer, 10);
         let _ = idx::scan(&indexer, 0, 0);
         idx::destroy_test_indexer(indexer);

@@ -132,7 +132,7 @@ module upl::timelock_cap_tests {
         // Take the parked cap from the timelock's address.
         let parked_cap = test_scenario::take_from_address<TestCap>(
             &scenario,
-            object::uid_to_address(&timelock.id),
+            tl::timelock_address(&timelock),
         );
         // Attempt withdraw (clock still at 1_000_000 < 1_010_000).
         tl::withdraw<TestCap>(&mut timelock, parked_cap, &clock, scenario.ctx());
@@ -159,7 +159,7 @@ module upl::timelock_cap_tests {
         scenario.next_tx(@0xC);
         let parked_cap = test_scenario::take_from_address<TestCap>(
             &scenario,
-            object::uid_to_address(&timelock.id),
+            tl::timelock_address(&timelock),
         );
         tl::withdraw<TestCap>(&mut timelock, parked_cap, &clock, scenario.ctx());
 
@@ -188,7 +188,7 @@ module upl::timelock_cap_tests {
 
         let parked_cap = test_scenario::take_from_address<TestCap>(
             &scenario,
-            object::uid_to_address(&timelock.id),
+            tl::timelock_address(&timelock),
         );
         tl::withdraw<TestCap>(&mut timelock, parked_cap, &clock, scenario.ctx());
 
@@ -216,7 +216,7 @@ module upl::timelock_cap_tests {
         // Cancel in the same tx (depositor is @0xA).
         let parked_cap = test_scenario::take_from_address<TestCap>(
             &scenario,
-            object::uid_to_address(&timelock.id),
+            tl::timelock_address(&timelock),
         );
         tl::cancel<TestCap>(&mut timelock, parked_cap, scenario.ctx());
 
@@ -242,7 +242,7 @@ module upl::timelock_cap_tests {
         scenario.next_tx(@0xC);
         let parked_cap = test_scenario::take_from_address<TestCap>(
             &scenario,
-            object::uid_to_address(&timelock.id),
+            tl::timelock_address(&timelock),
         );
         tl::cancel<TestCap>(&mut timelock, parked_cap, scenario.ctx());
 

@@ -342,6 +342,13 @@ module upl::timelock_cap {
         object::delete(id);
     }
 
+    /// Return the object address of a TimelockCap. Tests need this to
+    /// `take_from_address` the parked cap.
+    #[test_only]
+    public fun timelock_address(timelock: &TimelockCap): address {
+        object::uid_to_address(&timelock.id)
+    }
+
     /// A throwaway `key + store` test object used to exercise the generic
     /// `deposit<T>` / `withdraw<T>` / `cancel<T>`.
     #[test_only]
