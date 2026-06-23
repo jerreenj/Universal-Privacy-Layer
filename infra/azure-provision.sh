@@ -184,23 +184,36 @@ az containerapp update --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
   --query "{ fqdn: properties.configuration.ingress.fqdn }" -o none 2>/dev/null || true
 
 # ─── 8. Cost budget alert ($50 USD/month from $1000 Azure credits) ───────────
-# The budget is drawn in the SUBSCRIPTION'S billing currency. Azure sponsor
-# credits ($1000) are issued in USD, so the linked subscription should bill in
-# USD — verify that here before creating the budget, otherwise "50" would be
-# interpreted as 50 INR (~$0.60) instead of $50 USD.
+# The budget amount is denominated in the subscription's BILLING currency, not
+# USD. Azure sponsor credits ($1000) are issued in USD, so the linked
+# subscription *should* bill in USD — verify that here before creating the
+# budget, otherwise "--amount 50" silently creates a budget of ₹50 (~$0.60)
+# instead of $50 USD, which would never trigger against real usage.
 echo "▶ [8/8] Cost budget alert (\$50 USD/month)"
 BUDGET_NAME="monthly-budget"
-BILLING_CURRENCY=$(az account show --query "name" -o tsv 2>/dev/null)
-SUB_CURRENCY=$(az billing account show --query "billingProfileIds" -o tsv 2>/dev/null || echo "unknown")
 
-# Confirm the subscription is on a USD billing profile (Azure credits default).
-# If the lookup fails we still proceed — the sponsor-credit subscription is USD.
-if [[ "${SUB_CURRENCY,,}" == *"inr"* ]] || [[ "${BILLING_CURRENCY,,}" == *"inr"* ]]; then
-  echo "   ⚠️  Subscription appears to bill in INR. \$50 USD ≈ ₹4,150."
-  echo "       Either switch the subscription currency to USD in the portal, or"
-  echo "       re-run with --amount 4150 for the INR equivalent."
+# Currency lives on the billing PROFILE (not on the account/subscription).
+# For MCA / individual accounts `az billing account list` returns a billing
+# account whose profiles expose `currency` (e.g. USD, INR, EUR).
+BILLING_ACCT=$(az billing account list --query "[0].name" -o tsv 2>/dev/null)
+BILLING_CURRENCY="unknown"
+if [[ -n "$BILLING_ACCT" ]]; then
+  BILLING_CURRENCY=$(az billing profile list --account-name "$BILLING_ACCT" \
+    --query "[0].currency" -o tsv 2>/dev/null || echo "unknown")
 fi
 
+echo "   Billing currency: $BILLING_CURRENCY"
+if [[ "${BILLING_CURRENCY,,}" != "usd" ]]; then
+  echo "   ⚠️  Subscription bills in ${BILLING_CURRENCY}, not USD."
+  echo "       --amount 50 would be interpreted as 50 ${BILLING_CURRENCY}, not \$50 USD."
+  echo "       Either switch the subscription's billing profile currency to USD in"
+  echo "       the Azure portal, or — if you intend a $50-equivalent budget — set"
+  echo "       BUDGET_AMOUNT to the converted equivalent before re-running."
+  echo "   Aborting BEFORE any resource is provisioned. No budget was created."
+  exit 1
+fi
+
+# Only reached on a confirmed-USD billing profile.
 az consumption budget create \
   --budget-name "$BUDGET_NAME" \
   --resource-group "$RESOURCE_GROUP" \
