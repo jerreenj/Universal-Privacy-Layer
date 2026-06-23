@@ -47,15 +47,32 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install the Sui CLI (testnet)
-        # We install the `sui` binary via the one-line installer pinned to the
-        # `testnet` release branch, matching `Move.toml`'s
-        # `Sui = { ..., rev = "framework/testnet" }`. Pinning avoids the
-        # framework/toolchain skew that would otherwise make
-        # `tx_context::dummy()`-style tests flaky across releases.
+        # Install the `sui` binary from the latest testnet release asset,
+        # matching `Move.toml`'s `Sui = { ..., rev = "framework/testnet" }`.
+        # Pinning avoids the framework/toolchain skew that would otherwise
+        # make `tx_context::dummy()`-style tests flaky across releases.
+        #
+        # The asset naming encodes the version (e.g.
+        # `sui-testnet-v1.74.0-ubuntu-x86_64.tgz`), so we resolve the tag from
+        # the GitHub API and download the matching archive. Ubuntu-x86_64 is
+        # what `ubuntu-latest` runners provide.
         run: |
-          curl -L -sSf https://github.com/MystenLabs/sui/releases/latest/download/sui-testnet-linux-x86_64 \
-            -o /tmp/sui
-          chmod +x /tmp/sui
+          set -euo pipefail
+          TAG="$(curl -sSf -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/MystenLabs/sui/releases/latest \
+            | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+            | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+          echo "Resolved latest testnet tag: ${TAG}"
+          ASSET="sui-${TAG}-ubuntu-x86_64.tgz"
+          URL="https://github.com/MystenLabs/sui/releases/download/${TAG}/${ASSET}"
+          echo "Downloading ${URL}"
+          curl -L -sSf "${URL}" -o /tmp/sui.tgz
+          mkdir -p /tmp/sui-bin
+          tar -xzf /tmp/sui.tgz -C /tmp/sui-bin
+          # The archive ships a `sui` binary at its root; locate it defensively.
+          SUI_BIN="$(find /tmp/sui-bin -type f -name sui | head -1)"
+          chmod +x "${SUI_BIN}"
+          ln -sf "${SUI_BIN}" /tmp/sui
           /tmp/sui --version
 
       - name: Build the Move package
