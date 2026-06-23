@@ -1,9 +1,15 @@
 import { useState, useEffect, createContext, useContext, useCallback } from "react";
-import { ethers } from "ethers";
-import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import axios from "axios";
 import { toast } from "sonner";
 import { CHAINS, VM, API } from "@/config/chains";
+
+// NOTE: `ethers` and `@solana/web3.js` are NOT statically imported here. Both are
+// large (ethers bundles lots of crypto; @solana/web3.js pulls in bs58/secp256k1/
+// hashes) and were dragging main-thread parse/eval time at startup, showing up as
+// high TBT. They are now dynamic-imported inside connectEVM / connectSolana /
+// fetchBalance — so a visitor who never connects a wallet never downloads them,
+// and the initial route stays light. Sui uses plain fetch, so it needs no SDK.
+const LAMPORTS_PER_SOL = 1_000_000_000; // 1 SOL = 10^9 lamports (constant from @solana/web3.js)
 
 const WalletContext = createContext();
 export const useWallet = () => useContext(WalletContext);
@@ -43,6 +49,7 @@ export function WalletProvider({ children }) {
     setConnecting(true);
     try {
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      const { ethers } = await import("ethers");
       const provider = new ethers.BrowserProvider(window.ethereum);
       setAddress(accounts[0]);
       setSigner(await provider.getSigner());
@@ -57,6 +64,7 @@ export function WalletProvider({ children }) {
     setConnecting(true);
     try {
       const resp = await phantom.connect();
+      const { Connection } = await import("@solana/web3.js");
       setAddress(resp.publicKey.toBase58());
       setSigner(phantom);
       setSolConn(new Connection(CHAINS.solana.rpcUrl, "confirmed"));
@@ -118,10 +126,12 @@ export function WalletProvider({ children }) {
     if (!address) return;
     try {
       if (vm === VM.EVM) {
+        const { ethers } = await import("ethers");
         const provider = new ethers.JsonRpcProvider(CHAINS[chain].rpcUrl);
         const bal = await provider.getBalance(address);
         setBalance({ formatted: parseFloat(ethers.formatEther(bal)).toFixed(6), symbol: CHAINS[chain].symbol });
       } else if (vm === VM.SOLANA) {
+        const { Connection, PublicKey } = await import("@solana/web3.js");
         const conn = solConn || new Connection(CHAINS.solana.rpcUrl, "confirmed");
         const bal = await conn.getBalance(new PublicKey(address));
         setBalance({ formatted: (bal / LAMPORTS_PER_SOL).toFixed(6), symbol: "SOL" });

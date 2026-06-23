@@ -69,8 +69,10 @@ export function EncryptedMessaging() {
     return () => { cancelled = true; };
   }, [signer, address, stealthAddr, msgKeys, deriving]);
 
-  // Decrypt a single message — try client-side first, then server fallback
-  const tryDecrypt = async (m) => {
+  // Decrypt a single message — try client-side first, then server fallback.
+  // Wrapped in useCallback so loadInbox (which depends on it) keeps a stable
+  // identity instead of being recreated every render.
+  const tryDecrypt = useCallback(async (m) => {
     // E2E messages: client-side only
     if (m.e2e && m.ciphertext && m.ephemeral_pub && m.nonce && msgKeys) {
       const plain = await decryptMessage(m.ciphertext, m.ephemeral_pub, m.nonce, msgKeys.privateKey);
@@ -87,7 +89,7 @@ export function EncryptedMessaging() {
       } catch {}
     }
     return null;
-  };
+  }, [address, msgKeys]);
 
   const loadInbox = useCallback(async () => {
     if (!address) return;
@@ -103,7 +105,7 @@ export function EncryptedMessaging() {
       }
       setDecrypted(dec);
     } catch {}
-  }, [address, msgKeys]);
+  }, [address, tryDecrypt]);
 
   // Load inbox on mount AND on tab switch
   useEffect(() => {

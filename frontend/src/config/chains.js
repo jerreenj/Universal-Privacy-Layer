@@ -1,4 +1,10 @@
-import { clusterApiUrl } from "@solana/web3.js";
+// NOTE: do NOT `import { clusterApiUrl } from "@solana/web3.js"` here. This
+// config module is imported by WalletContext and the landing page on startup,
+// so a static import would drag the whole @solana/web3.js SDK (bs58, secp256k1,
+// hashes…) into the main bundle and defeat the dynamic-import in
+// WalletContext.connectSolana. clusterApiUrl("mainnet-beta") resolves to this
+// exact string, so we inline it instead.
+const SOLANA_MAINNET_RPC = "https://api.mainnet-beta.solana.com";
 
 export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -21,7 +27,7 @@ export const CHAINS = {
   bnb:          { vm: VM.EVM,    name: "BNB Chain",    chainId: "0x38",   chainIdDec: 56,     rpcUrl: "https://bsc-dataseed1.binance.org/",        explorer: "https://bscscan.com",                     symbol: "BNB",  color: "#F3BA2F", live: true,  contracts: EVM_CONTRACTS },
   avalanche:    { vm: VM.EVM,    name: "Avalanche",    chainId: "0xa86a", chainIdDec: 43114,  rpcUrl: "https://api.avax.network/ext/bc/C/rpc",     explorer: "https://snowtrace.io",                    symbol: "AVAX", color: "#E84142", live: true,  contracts: EVM_CONTRACTS },
   hyperliquid:  { vm: VM.EVM,    name: "Hyperliquid",  chainId: "0x3e7",  chainIdDec: 999,    rpcUrl: "https://rpc.hyperliquid.xyz/evm",           explorer: "https://purrsec.com",                     symbol: "HYPE", color: "#00FF88", live: true,  contracts: EVM_CONTRACTS },
-  solana:       { vm: VM.SOLANA, name: "Solana",       chainId: null,     chainIdDec: null,   rpcUrl: clusterApiUrl("mainnet-beta"),                explorer: "https://solscan.io",                      symbol: "SOL",  color: "#9945FF", live: false, comingSoon: true, contracts: { programId: null } },
+  solana:       { vm: VM.SOLANA, name: "Solana",       chainId: null,     chainIdDec: null,   rpcUrl: SOLANA_MAINNET_RPC,                          explorer: "https://solscan.io",                      symbol: "SOL",  color: "#9945FF", live: false, comingSoon: true, contracts: { programId: null } },
   sui:          { vm: VM.SUI,    name: "Sui",          chainId: null,     chainIdDec: null,   rpcUrl: "https://fullnode.mainnet.sui.io:443",       explorer: "https://suiexplorer.com",                 symbol: "SUI",  color: "#6FBCF0", live: false, comingSoon: true, contracts: { packageId: null } },
 };
 
