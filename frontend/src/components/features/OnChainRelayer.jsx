@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { ethers } from "ethers";
-import { Lock, Zap, Loader2, ExternalLink } from "lucide-react";
+import { Lock, PenLine, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -11,42 +11,55 @@ export function OnChainRelayer() {
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
-  const [txData, setTxData] = useState(null);
-  const [txHash, setTxHash] = useState(null);
+  const [intent, setIntent] = useState(null);       // EIP-712 payload + quote from /relayer/prepare-tx
+  const [signature, setSignature] = useState(null);  // user's off-chain signature over the intent
   const [relayerStats, setRelayerStats] = useState(null);
 
   useEffect(() => {
     axios.get(`${API}/relayer/stats/${chain}`).then(r => setRelayerStats(r.data)).catch(() => {});
   }, [chain]);
 
-  const prepareRelayTx = async () => {
+  const prepareRelayIntent = async () => {
     if (!address) return toast.error("Connect wallet first");
     if (!to || !amount) return toast.error("Enter recipient and amount");
     setLoading(true);
     try {
+      // Ephemeral key + view tag are generated client-side; only the ephemeral
+      // *public* commitment and the 1-byte tag ever leave the browser. The
+      // recipient derives the stealth private key client-side from these + its
+      // own view key (EIP-5564) — the server never holds a stealth private key.
       const ephemeralKey = "0x" + Array(64).fill(0).map(() => Math.floor(Math.random() * 16).toString(16)).join('');
       const viewTag = Math.floor(Math.random() * 256);
       const res = await axios.post(`${API}/relayer/prepare-tx`, {
         from_address: address, stealth_address: to, amount_wei: ethers.parseEther(amount).toString(),
         ephemeral_key: ephemeralKey, view_tag: viewTag, chain
       });
-      setTxData(res.data);
-      toast.success("Transaction prepared!");
-    } catch { toast.error("Failed to prepare transaction"); }
+      setIntent(res.data);
+      setSignature(null);
+      toast.success("Relay intent prepared — sign next");
+    } catch { toast.error("Failed to prepare relay intent"); }
     setLoading(false);
   };
 
-  const executeRelayTx = async () => {
-    if (!txData || !signer) return;
+  const signRelayIntent = async () => {
+    if (!intent || !signer) return;
     setLoading(true);
     try {
-      const tx = await signer.sendTransaction({ to: txData.to, value: txData.value, data: txData.data, gasLimit: txData.gas });
-      setTxHash(tx.hash);
-      toast.success("Transaction sent through relayer!");
-      await tx.wait();
-      toast.success("Confirmed on-chain!");
+      // The user SIGNS the EIP-712 intent off-chain. They do NOT send a tx.
+      // PrivacyRelayer.sol's `relay()` is `onlyRelayer`, so the user calling it
+      // directly would revert AND leak the user's wallet as the on-chain sender.
+      // Instead the relayer service (P1.10) verifies this signature and submits
+      // `relay()` on the user's behalf — the user's wallet never appears as
+      // msg.sender. ethers v6 `signTypedData` expects `types` WITHOUT the
+      // `EIP712Domain` entry (it injects it), which is how the backend sends it.
+      const { domain, types, message } = intent.intent;
+      const sig = await signer.signTypedData(domain, types, message);
+      setSignature(sig);
+      toast.success("Intent signed — relayer will submit relay()");
+      // Balance only changes once the relayer actually settles the tx (P1.10),
+      // but refresh so the UI reflects any pending state.
       fetchBalance();
-    } catch (e) { toast.error(e.message?.slice(0, 60) || "Failed"); }
+    } catch (e) { toast.error(e.message?.slice(0, 80) || "Signing failed"); }
     setLoading(false);
   };
 
@@ -69,31 +82,45 @@ export function OnChainRelayer() {
         <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0"
           className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
       </div>
-      {!txData ? (
-        <button onClick={prepareRelayTx} disabled={loading}
+      {!intent ? (
+        <button onClick={prepareRelayIntent} disabled={loading}
           className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
           {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lock className="w-5 h-5" />}
-          Prepare Relayer Transaction
+          Prepare Relayer Intent
         </button>
       ) : (
         <div className="space-y-3">
           <div className="bg-white/5 border border-white/10 p-3 space-y-1 text-xs">
-            <div className="flex justify-between"><span className="text-white/50">Relayer:</span><span className="font-mono">{txData.relayer_contract?.slice(0, 12)}...</span></div>
-            <div className="flex justify-between"><span className="text-white/50">Fee:</span><span className="text-yellow-400">{txData.fee_bps / 100}% ({ethers.formatEther(txData.fee_amount || '0').slice(0, 8)})</span></div>
-            <div className="flex justify-between"><span className="text-white/50">Net Amount:</span><span className="text-green-400">{ethers.formatEther(txData.net_amount || '0').slice(0, 10)}</span></div>
+            <div className="flex justify-between"><span className="text-white/50">Relayer:</span><span className="font-mono">{intent.relayer_contract?.slice(0, 12)}...</span></div>
+            <div className="flex justify-between"><span className="text-white/50">Fee:</span><span className="text-yellow-400">{intent.fee_bps / 100}% ({ethers.formatEther(intent.fee_amount || '0').slice(0, 8)})</span></div>
+            <div className="flex justify-between"><span className="text-white/50">Net Amount:</span><span className="text-green-400">{ethers.formatEther(intent.net_amount || '0').slice(0, 10)}</span></div>
+            <div className="flex justify-between"><span className="text-white/50">Intent expires:</span><span className="font-mono text-white/70">{new Date((intent.submission?.expires_at || 0) * 1000).toLocaleTimeString()}</span></div>
           </div>
-          <button onClick={executeRelayTx} disabled={loading}
-            className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
-            Execute Through Relayer
+          {!signature ? (
+            <button onClick={signRelayIntent} disabled={loading}
+              className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <PenLine className="w-5 h-5" />}
+              Sign Intent (off-chain)
+            </button>
+          ) : (
+            <div className="bg-emerald-500/10 border border-emerald-500/30 p-3 text-xs text-emerald-300 space-y-1">
+              <div className="font-semibold">Intent signed — relayer taking over.</div>
+              <div className="text-emerald-300/80">{intent.submission?.note}</div>
+              <div className="mt-1 font-mono break-all text-white/60">sig: {signature.slice(0, 18)}…{signature.slice(-8)}</div>
+            </div>
+          )}
+          <button onClick={() => { setIntent(null); setSignature(null); }}
+            className="w-full text-xs text-white/40 hover:text-white/70 underline">
+            Discard and start over
           </button>
         </div>
       )}
-      {txHash && (
-        <a href={`${CHAINS[chain].explorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
-          className="flex items-center justify-center gap-2 text-sm text-gray-400 hover:text-white">
-          View on explorer <ExternalLink className="w-4 h-4" />
-        </a>
+      {!signature && (
+        <p className="text-[11px] text-white/40 leading-relaxed">
+          You sign an EIP-712 intent — you never broadcast a transaction. The relayer verifies your
+          signature and submits <code className="text-white/60">relay()</code> on-chain, so your wallet
+          never appears as the sender.
+        </p>
       )}
     </div>
   );
