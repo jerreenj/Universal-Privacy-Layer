@@ -2,8 +2,13 @@
 FROM node:22-alpine AS frontend-build
 
 WORKDIR /build/frontend
-COPY frontend/package.json frontend/yarn.lock* ./
-RUN yarn install --frozen-lockfile 2>/dev/null || yarn install
+COPY frontend/package.json frontend/yarn.lock ./
+# --frozen-lockfile: fail the build if package.json and yarn.lock are out of
+# sync, rather than silently re-resolving (which made every build
+# non-reproducible and let deps drift). Remove the previous
+# `2>/dev/null || yarn install` fallback for the same reason — it masked
+# real drift by doing a fresh resolve.
+RUN yarn install --frozen-lockfile
 
 COPY frontend/ ./
 
