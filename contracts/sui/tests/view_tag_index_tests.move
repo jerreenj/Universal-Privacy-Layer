@@ -139,13 +139,13 @@ module upl::view_tag_index_tests {
         let mut ctx = tx_context::dummy();
         let index = vti::new_test_index(&mut ctx);
 
-        let result = vti::page(&index, x"zz", 0, 10);
+        let result = vti::page(&index, x"aa", 0, 10);
         assert!(result.is_empty());
 
         // first_id / last_id on unknown tag → None.
-        let f = vti::first_id(&index, x"zz");
+        let f = vti::first_id(&index, x"aa");
         assert!(f.is_none());
-        let l = vti::last_id(&index, x"zz");
+        let l = vti::last_id(&index, x"aa");
         assert!(l.is_none());
 
         vti::destroy_test_index(index);
