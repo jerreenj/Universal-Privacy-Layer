@@ -141,7 +141,7 @@ module upl::fee_splitter {
         assert!(!vec_set::contains(&splitter.payees, &payee), EPayeeAlreadyExists);
 
         // Verify the new total does not exceed FEE_DENOMINATOR.
-        let current_total = _weights_sum(&splitter.weights);
+        let current_total = weights_sum(&splitter.weights);
         assert!(current_total + weight <= FEE_DENOMINATOR, EWeightsMustSumToDenominator);
 
         vec_set::insert(&mut splitter.payees, payee);
@@ -160,7 +160,7 @@ module upl::fee_splitter {
     ) {
         assert!(vec_set::contains(&splitter.payees, &payee), EPayeeNotFound);
         vec_set::remove(&mut splitter.payees, &payee);
-        let _old_weight = vec_map::remove(&mut splitter.weights, &payee);
+        let (_, _old_weight) = vec_map::remove(&mut splitter.weights, &payee);
         event::emit(PayeeRemoved { payee });
     }
 
@@ -207,7 +207,7 @@ module upl::fee_splitter {
     /// `AdminCap`-gated: anyone may deposit fees (e.g. a treasury top-up or an
     /// external donation — the balance only ever leaves via `distribute` which
     /// IS admin-gated).
-    public entry fun deposit(
+    public fun deposit(
         splitter: &mut FeeSplitter,
         payment: Coin<SUI>,
     ) {
@@ -236,12 +236,12 @@ module upl::fee_splitter {
         if (total == 0) { return }; // no-op on empty accumulator
 
         // Iterate payees, compute each share, split out, transfer.
-        let payees_vec = vec_set::to_vector(&splitter.payees);
-        let n = vector::length(&payees_vec);
+        let payees_vec = vec_set::keys(&splitter.payees);
+        let n = vector::length(payees_vec);
         let mut i = 0;
         while (i < n) {
             let payee = *vector::borrow(&payees_vec, i);
-            let weight = *vec_map::borrow(&splitter.weights, &payee);
+            let weight = *vec_map::get(&splitter.weights, &payee);
             let share = total * weight / FEE_DENOMINATOR;
             // Forbidding 0-shares prevents a payee getting nothing when they
             // deserve something (the accumulator is just too small). The admin
@@ -285,26 +285,26 @@ module upl::fee_splitter {
     /// Weight (bps) for `payee`. Aborts with `EPayeeNotFound` if not a payee.
     public fun weight(splitter: &FeeSplitter, payee: &address): u64 {
         assert!(vec_set::contains(&splitter.payees, payee), EPayeeNotFound);
-        *vec_map::borrow(&splitter.weights, payee)
+        *vec_map::get(&splitter.weights, payee)
     }
 
     /// Sum of all weights. Should equal `FEE_DENOMINATOR == 10000` after a
     /// valid `set_weights` call; may be less before `set_weights` is first
     /// called after adding payees.
     public fun weights_sum(splitter: &FeeSplitter): u64 {
-        _weights_sum(&splitter.weights)
+        weights_sum_map(&splitter.weights)
     }
 
     // ─── Internal ──────────────────────────────────────────────────────────
     /// Sum all values in a `VecMap<address, u64>`. Used for invariant checks.
-    fun _weights_sum(map: &VecMap<address, u64>): u64 {
+    fun weights_sum_map(map: &VecMap<address, u64>): u64 {
         let keys = vec_map::keys(map);
         let n = vector::length(&keys);
         let mut sum = 0;
         let mut i = 0;
         while (i < n) {
             let k = vector::borrow(&keys, i);
-            sum = sum + *vec_map::borrow(map, k);
+            sum = sum + *vec_map::get(map, k);
             i = i + 1;
         };
         sum
