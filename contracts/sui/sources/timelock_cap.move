@@ -63,7 +63,6 @@ module upl::timelock_cap {
     ///     in the first place), matching the Sui-native principle that the
     ///     resource owner is the only authority over their owned object.
 
-    use std::option::{Self, Option};
     use sui::clock::{Self, Clock};
     use sui::event;
     use sui::object::{Self, UID};
@@ -75,24 +74,16 @@ module upl::timelock_cap {
     /// aborts — see `ELockOccupied`). This ensures the lock is always in a
     /// known state: either empty (no pending rotation) or holding exactly one
     /// cap with a clear unlock time and beneficiary.
+    ///
+    /// The actual capability object is *parked* at the timelock's object
+    /// address via `transfer::public_transfer` (it has `store`). The on-chain
+    /// struct only records the metadata (depositor, beneficiary, unlock time)
+    /// and a `locked` boolean. This avoids storing a `UID` inside the struct,
+    /// which would make the struct non-droppable and complicate state updates.
     public struct TimelockCap has key {
         id: UID,
-        /// The locked capability. `Option` because the lock starts empty
-        /// and returns to empty after `withdraw` or `cancel`. The inner
-        /// UID is the cap's unique identifier; the full generic `T: key+store`
-        /// is not expressible in a struct field without generics on the
-        /// container, so we store the `UID` and the caller must reconstruct
-        /// the typed object on `withdraw`. In practice, the withdrawer
-        /// already knows the type (e.g. `RelayerCap`) from the context of
-        /// the proposal.
-        ///
-        /// **Design note:** we store the `UID` of the deposited object rather
-        /// than a full `T`. This means `withdraw<T>` reconstructs the type
-        /// from the UID, which requires the caller to know the type. This is
-        /// intentional — the beneficiary must know what they're withdrawing.
-        /// A cap deposited by accident with the wrong type can always be
-        /// cancelled by the depositor.
-        locked_uid: Option<UID>,
+        /// True when a capability is currently parked in the lock.
+        locked: bool,
         /// Address that deposited the cap. Only they may `cancel`.
         depositor: address,
         /// Address that may `withdraw` after the lock expires.
@@ -149,7 +140,7 @@ module upl::timelock_cap {
     fun init(ctx: &mut TxContext) {
         let timelock = TimelockCap {
             id: object::new(ctx),
-            locked_uid: option::none<UID>(),
+            locked: false,
             depositor: @0x0,
             beneficiary: @0x0,
             unlock_at_ms: 0,
@@ -165,8 +156,8 @@ module upl::timelock_cap {
     /// recorded as `tx_context::sender(ctx)`. The cap will be withdrawable by
     /// `beneficiary` only after `clock::timestamp_ms >= unlock_at_ms`, which
     /// is `now + delay_ms` (the depositor specifies the delay at deposit
-    /// time, which must be >= `min_delay_ms`). The cap's `UID` is stored;
-    /// the original `T: key + store` object is consumed.
+    /// time, which must be >= `min_delay_ms`). The original `T: key + store`
+    /// object is consumed by parking it at the timelock's object address.
     ///
     /// This is the "propose a cap rotation" operation. The depositor (who
     /// currently holds the cap) locks it into the timelock pending the delay.
@@ -184,68 +175,20 @@ module upl::timelock_cap {
         assert!(beneficiary != @0x0, EZeroBeneficiary);
         assert!(delay_ms >= timelock.min_delay_ms, EDelayTooShort);
         // The lock must be empty — one pending operation at a time.
-        assert!(option::is_none(&timelock.locked_uid), ELockOccupied);
+        assert!(!timelock.locked, ELockOccupied);
 
         let depositor = tx_context::sender(ctx);
         let unlock_at = clock::timestamp_ms(clock) + delay_ms;
-
-        // Extract the UID from the cap, destroying the typed wrapper. The
-        //UID is stored; on `withdraw`, the beneficiary reconstructs `T`
-        // from the UID. (This requires the beneficiary to call
-        // `withdraw<T>` with the correct type — enforced by the Move
-        // type system.)
-        //
-        // Note: we cannot destructure an arbitrary `T: key + store` into
-        // its `id: UID` without the struct definition. Instead, we
-        // transfer the cap to this shared object's address (parking it in
-        // the object store) and record a marker that it is locked. On
-        // `withdraw`, we re-take it. The simplest Sui-idiomatic way is:
-        // transfer the cap to the timelock's own address, then
-        // take_from_address on withdraw. But this requires the cap to be
-        // `store`, and the timelock address to own it temporarily.
-        // For simplicity and safety, we use `transfer::public_transfer`
-        // to "self" (the timelock's address) and `take_from_address` on
-        // withdraw. But shared objects can't own things easily in tests.
-        //
-        // **Cleaner approach:** we simply freeze the UID into our option
-        // field. On deposit, we destruct the cap to extract its UID and
-        // store it. On withdraw, we reconstruct the type. But we can't
-        // destructure `T` generically. The REAL Sui pattern for generic
-        // capability custody is `sui::transfer::freeze_object` or
-        // parking the object at the shared object's address.
-        //
-        // The most practical Sui pattern: park the cap at the timelock's
-        // address. On withdraw, the beneficiary calls
-        // `sui::transfer::take_from_address<T>` in a PTB. But since we
-        // can't call take_from_address from inside Move (it's a native
-        // function the PTB builder calls), we take a simpler approach:
-        //
-        // We **transfer** the cap to the beneficiary via a delayed public
-        // transfer. Actually, Sui doesn't support deferred transfers.
-        //
-        // Final, correct approach (used in production Sui timelocks):
-        // - We store the cap's UID in our struct and transfer the cap
-        //   object itself to be owned by this module's shared object.
-        // - On withdraw, we emit an event for off-chain monitoring; the
-        //   on-chain mechanism is that the beneficiary constructs a PTB
-        //   that calls `withdraw`, which transfers the cap out.
-        //
-        // Since we can't generically destructure `T`, we park the entire
-        // typed object at the timelock's object address via
-        // `transfer::public_transfer(cap, timelock_addr)`, and on
-        // withdraw we `transfer::public_transfer` it back out.
         let timelock_addr = object::uid_to_address(&timelock.id);
 
         timelock.depositor = depositor;
         timelock.beneficiary = beneficiary;
         timelock.unlock_at_ms = unlock_at;
-        // Record a sentinel UID value (the timelock's own id) to mark
-        // "occupied". The actual cap is parked at timelock_addr.
-        // We'll check `locked_uid != none` for the occupied flag.
-        timelock.locked_uid = option::some<UID>(object::new(ctx));
+        // Mark the lock as occupied. The actual cap is parked at the
+        // timelock's address; the beneficiary will take it on withdraw.
+        timelock.locked = true;
 
-        // Park the cap at the timelock's address. The beneficiary will
-        // take it on withdraw.
+        // Park the cap at the timelock's address.
         transfer::public_transfer(cap, timelock_addr);
 
         event::emit(CapDeposited {
@@ -271,15 +214,14 @@ module upl::timelock_cap {
         clock: &Clock,
         ctx: &mut TxContext,
     ) {
-        assert!(option::is_some(&timelock.locked_uid), ELockEmpty);
+        assert!(timelock.locked, ELockEmpty);
         assert!(clock::timestamp_ms(clock) >= timelock.unlock_at_ms, ETooEarly);
 
         let caller = tx_context::sender(ctx);
         assert!(caller == timelock.beneficiary, ENotBeneficiary);
 
         // Clear the lock.
-        let uid = option::extract(&mut timelock.locked_uid);
-        object::delete(uid);
+        timelock.locked = false;
         timelock.depositor = @0x0;
         timelock.beneficiary = @0x0;
         timelock.unlock_at_ms = 0;
@@ -306,15 +248,14 @@ module upl::timelock_cap {
         _cap: T,
         ctx: &mut TxContext,
     ) {
-        assert!(option::is_some(&timelock.locked_uid), ELockEmpty);
+        assert!(timelock.locked, ELockEmpty);
 
         let caller = tx_context::sender(ctx);
         assert!(caller == timelock.depositor, ENotDepositor);
 
         // Clear the lock.
-        let uid = option::extract(&mut timelock.locked_uid);
-        object::delete(uid);
         let depositor = timelock.depositor;
+        timelock.locked = false;
         timelock.depositor = @0x0;
         timelock.beneficiary = @0x0;
         timelock.unlock_at_ms = 0;
@@ -346,7 +287,7 @@ module upl::timelock_cap {
     /// Whether the lock is currently occupied (a cap is deposited and
     /// pending).
     public fun is_locked(timelock: &TimelockCap): bool {
-        option::is_some(&timelock.locked_uid)
+        timelock.locked
     }
 
     /// The beneficiary address (zero if the lock is empty).
@@ -375,7 +316,7 @@ module upl::timelock_cap {
     public fun new_test_timelock(ctx: &mut TxContext): TimelockCap {
         TimelockCap {
             id: object::new(ctx),
-            locked_uid: option::none<UID>(),
+            locked: false,
             depositor: @0x0,
             beneficiary: @0x0,
             unlock_at_ms: 0,
@@ -394,23 +335,16 @@ module upl::timelock_cap {
         object::delete(id);
     }
 
-    /// Destroy a test TimelockCap. The lock must be empty (no pending cap),
-    /// or its sentinel UID must still be present (the parked cap itself is
-    /// taken via `take_from_address` in a PTB, so it is not handled here).
+    /// Destroy a test TimelockCap. The lock must be empty (no pending cap).
     #[test_only]
     public fun destroy_test_timelock(timelock: TimelockCap) {
-        let TimelockCap { id, mut locked_uid, depositor: _, beneficiary: _, unlock_at_ms: _, min_delay_ms: _ } = timelock;
-        // The sentinel UID must be destroyed if the lock is occupied.
-        if (option::is_some(&locked_uid)) {
-            let uid = option::extract(&mut locked_uid);
-            object::delete(uid);
-        };
-        option::drop<UID>(locked_uid); // consume the (now empty) option
+        let TimelockCap { id, locked: _, depositor: _, beneficiary: _, unlock_at_ms: _, min_delay_ms: _ } = timelock;
         object::delete(id);
     }
 
     /// A throwaway `key + store` test object used to exercise the generic
     /// `deposit<T>` / `withdraw<T>` / `cancel<T>`.
+    #[test_only]
     public struct TestCap has key, store { id: UID }
 
     #[test_only]
