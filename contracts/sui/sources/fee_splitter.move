@@ -141,7 +141,7 @@ module upl::fee_splitter {
         assert!(!vec_set::contains(&splitter.payees, &payee), EPayeeAlreadyExists);
 
         // Verify the new total does not exceed FEE_DENOMINATOR.
-        let current_total = weights_sum(&splitter.weights);
+        let current_total = weights_sum_map(&splitter.weights);
         assert!(current_total + weight <= FEE_DENOMINATOR, EWeightsMustSumToDenominator);
 
         vec_set::insert(&mut splitter.payees, payee);
@@ -240,7 +240,7 @@ module upl::fee_splitter {
         let n = vector::length(payees_vec);
         let mut i = 0;
         while (i < n) {
-            let payee = *vector::borrow(&payees_vec, i);
+            let payee = *vector::borrow(payees_vec, i);
             let weight = *vec_map::get(&splitter.weights, &payee);
             let share = total * weight / FEE_DENOMINATOR;
             // Forbidding 0-shares prevents a payee getting nothing when they

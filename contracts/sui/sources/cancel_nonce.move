@@ -127,10 +127,10 @@ module upl::cancel_nonce {
         ctx: &TxContext,
     ): u64 {
         let sender = tx_context::sender(ctx);
-        let current = _get_or_zero(&registry.nonces, sender);
+        let current = get_or_zero(&registry.nonces, sender);
         assert!(current == expected, ENonceMismatch);
         let new_nonce = expected + 1;
-        _set(&mut registry.nonces, sender, new_nonce);
+        set_nonce(&mut registry.nonces, sender, new_nonce);
         event::emit(NonceConsumed { address: sender, nonce: expected });
         expected
     }
@@ -151,10 +151,10 @@ module upl::cancel_nonce {
         ctx: &TxContext,
     ) {
         let sender = tx_context::sender(ctx);
-        let current = _get_or_zero(&registry.nonces, sender);
+        let current = get_or_zero(&registry.nonces, sender);
         if (target < current) { return }; // no-op: already past target
         let old = current;
-        _set(&mut registry.nonces, sender, target + 1);
+        set_nonce(&mut registry.nonces, sender, target + 1);
         event::emit(NonceCancelled { address: sender, old_nonce: old, new_nonce: target + 1 });
     }
 
@@ -163,7 +163,7 @@ module upl::cancel_nonce {
     /// cancelled a nonce. A nonce value of N means all nonces < N have been
     /// consumed/cancelled, and the next expected nonce is N.
     public fun nonce(registry: &CancelNonce, addr: address): u64 {
-        _get_or_zero(&registry.nonces, addr)
+        get_or_zero(&registry.nonces, addr)
     }
 
     /// Whether `addr` has ever had a nonce recorded (distinct from "the
@@ -178,7 +178,7 @@ module upl::cancel_nonce {
 
     // ─── Internal ──────────────────────────────────────────────────────────
     /// Read the nonce for `addr`, returning 0 if the address has no entry.
-    fun _get_or_zero(nonces: &Table<address, u64>, addr: address): u64 {
+    fun get_or_zero(nonces: &Table<address, u64>, addr: address): u64 {
         if (table::contains(nonces, addr)) {
             *table::borrow(nonces, addr)
         } else {
@@ -187,7 +187,7 @@ module upl::cancel_nonce {
     }
 
     /// Set the nonce for `addr` to `value`, inserting if not present.
-    fun _set(nonces: &mut Table<address, u64>, addr: address, value: u64) {
+    fun set_nonce(nonces: &mut Table<address, u64>, addr: address, value: u64) {
         if (table::contains(nonces, addr)) {
             let slot = table::borrow_mut(nonces, addr);
             *slot = value;
