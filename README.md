@@ -266,11 +266,9 @@ Universal-Privacy-Layer/
 │   │   └── Security Middleware         CORS, headers, rate limiting, input sanitization
 │   └── requirements.txt
 │
-├── contracts/                          Solidity ^0.8.19 · EVM Smart Contracts
-│   ├── PrivacyRelayer.sol              Gasless transaction relay with fee abstraction
+├── contracts/                          Solidity ^0.8.20 · EVM Smart Contracts
+│   ├── PrivacyRelayer.sol              Gas-only meta-tx forwarder (onlyRelayer, EIP-712 intent)
 │   ├── StealthAddressRegistry.sol      On-chain stealth announcement registry (EIP-5564)
-│   ├── UPLVerifier.sol                 ZK proof verification wrapper with batch support
-│   ├── Groth16Verifier.sol             Circom-generated Groth16 proof verifier
 │   └── UniswapPrivacyWrapper.sol       Stealth-routed Uniswap V3 swap interactions
 │
 ├── frontend/                           React 18 · Tailwind CSS · ethers.js · Web3Modal
@@ -346,11 +344,17 @@ Universal-Privacy-Layer/
 
 | Contract | Purpose | Key Mechanism |
 |:---------|:--------|:-------------|
-| `PrivacyRelayer.sol` | Submits transactions on behalf of users. Wallet never appears as `msg.sender`. | Meta-transaction relay with gas abstraction |
-| `StealthAddressRegistry.sol` | On-chain registry where stealth payment announcements are published. | EIP-5564 compliant ephemeral public key announcements |
-| `UPLVerifier.sol` | Wrapper for verifying zero-knowledge proofs on-chain. Supports batch verification. | Groth16 proof verification with public input validation |
-| `Groth16Verifier.sol` | Auto-generated from Circom circuits. Performs the actual elliptic curve pairing checks. | BN254 elliptic curve pairing-based verification |
+| `PrivacyRelayer.sol` | Gas-only meta-tx forwarder. The relayer service (not the user) calls `relay()`; the user's wallet never appears as `msg.sender`. | `onlyRelayer` + EIP-712 signed intent + fee skim |
+| `StealthAddressRegistry.sol` | On-chain registry where stealth payment announcements are published. | EIP-5564 ephemeral pub-key announcements + offset-by-1 view-tag lookup |
 | `UniswapPrivacyWrapper.sol` | Routes Uniswap V3 swaps through stealth proxies. Output lands in a fresh address. | Proxy pattern with stealth address output routing |
+
+> **ZK verifiers:** `Groth16Verifier.sol` and `UPLVerifier.sol` were removed in P1.3
+> (PR #2, commit `db089bc`) — the verifying-key constants set `DELTA == GAMMA`,
+> which would silently accept forged proofs. A real `snarkjs`-generated Groth16
+> verifier backed by a .circom circuit + a trusted-setup ceremony is the gated
+> Phase 3 deliverable. On-chain ZKP verification in the backend
+> (`/api/zkp/verify-onchain`, `/api/zkp/verifier-info/{chain}`) returns HTTP 501
+> until then — see `backend/server.py` (`ZKP_VERIFIER_PHASED_OUT`).
 
 <br>
 

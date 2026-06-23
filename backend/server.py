@@ -172,24 +172,35 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestSizeLimitMiddleware)
 
-# ZKP Verifier addresses (deployed on all chains)
-ZKP_VERIFIER_ADDRESSES = {
-    "base": "0x98940B431d829832d2Ad5eB0812824A3C40D1bF1",
-    "arbitrum": "0xbdFc25A62dcCFbc710072Ae2EaE5c3a57674bDad",
-    "optimism": "0xD04f9cE68CfF7C0FD6d631794964784B99423943",
-    "bnb": "0xD04f9cE68CfF7C0FD6d631794964784B99423943",
-    "avalanche": "0xD04f9cE68CfF7C0FD6d631794964784B99423943",
-    "hyperliquid": "0xD04f9cE68CfF7C0FD6d631794964784B99423943",
-    "polygon": "0xD04f9cE68CfF7C0FD6d631794964784B99423943"
-}
-
-# ZKP Verifier ABI
-ZKP_VERIFIER_ABI = [
-    {"inputs":[{"name":"a","type":"uint256[2]"},{"name":"b","type":"uint256[2][2]"},{"name":"c","type":"uint256[2]"},{"name":"input","type":"uint256[2]"}],"name":"verifyProof","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
-    {"inputs":[{"name":"a","type":"uint256[2]"},{"name":"b","type":"uint256[2][2]"},{"name":"c","type":"uint256[2]"},{"name":"input","type":"uint256[2]"}],"name":"verifyProofView","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
-    {"inputs":[{"name":"nullifier","type":"bytes32"}],"name":"isNullifierUsed","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
-    {"inputs":[],"name":"getStats","outputs":[{"name":"","type":"uint256"},{"name":"","type":"uint256"},{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
-]
+# ─── ZKP verifier status (post-P1.3 follow-up audit) ─────────────────────────
+# A previous revision of this file shipped hard-coded "ZKP verifier" addresses on
+# 6 chains plus a Groth16-shaped ABI, and the /zkp/verify-onchain + /zkp/verifier-info
+# endpoints eth_call'd into them. That was unsafe wiring:
+#
+#   - The verifier Solidity the project *owned* (`Groth16Verifier.sol`,
+#     `UPLVerifier.sol`) was deleted in P1.3 (PR #2, db089bc) because its
+#     verifying-key constants set DELTA == GAMMA, an unsoundness that would
+#     accept forged proofs. Cannot be fixed without a real .circom circuit +
+#     trusted-setup + snarkjs-generated verifier — that is the gated Phase 3
+#     deliverable, NOT a P1 deliverable.
+#   - The hard-coded addresses we kept on eth_calling instead point at real
+#     third-party ~2.2 KB Groth16 verifier contracts we do NOT deploy or own
+#     (verified: eth_getCode returns deployed bytecode at all six addresses on
+#     their respective chains, none of which expose our 4-byte selectors). Calling
+#     into code we never audited and never deployed was a soundness+hygiene gap
+#     that PR #2's "delete the verifiers we own" step intended to retire but left
+#     dangling through this glue.
+#
+# Resolution: keep the routes (existing clients like the frontend `ZKPProofs.jsx`
+# POST to /zkp/generate-inputs and /zkp/submit-proof for the *local* format-only
+# pre-check; removing those would break the UI), but retire anything that pretends
+# to verify a proof against a contract. /zkp/verify-onchain and /zkp/verifier-info
+# now return HTTP 501 with a "deferred to Phase 3" body; /zkp/submit-proof keeps
+# doing its format-only verification and no longer returns `verifier_contracts`
+# (the table is gone). When Phase 3 lands a real, project-owned, snarkjs-exported
+# verifier, this constant replaces the placeholder and the endpoints are
+# re-enabled backed by our own deployment.
+ZKP_VERIFIER_PHASED_OUT = True
 
 # Chain configurations - MAINNET
 CHAIN_CONFIG = {
@@ -1284,7 +1295,12 @@ async def submit_zkp_proof(request: ZKPProofRequest):
             )
             return {"proof_id": proof_id, "status": "invalid", "message": "Invalid proof format"}
         
-        # Mark as format_verified (actual on-chain verification requires calling verifyProofView)
+        # Mark as format_verified only. On-chain verification is disabled until
+        # Phase 3 ships a real, project-owned, snarkjs-exported Groth16 verifier
+        # (P1.3 deleted the unsound UPL/Groth16 verifiers we owned — see the
+        # ZKP_VERIFIER_PHASED_OUT note above). The previous revision attached a
+        # `verifier_contracts` table pointing at third-party addresses we never
+        # deployed or audited; that dangling reference is intentionally dropped.
         await db.zkp_proofs.update_one(
             {"proof_id": proof_id},
             {"$set": {"status": "format_verified", "verified_at": datetime.now(timezone.utc).isoformat()}}
@@ -1293,8 +1309,12 @@ async def submit_zkp_proof(request: ZKPProofRequest):
         return {
             "proof_id": proof_id,
             "status": "format_verified",
-            "message": "Proof format valid. Call /zkp/verify-onchain to verify on-chain.",
-            "verifier_contracts": ZKP_VERIFIER_ADDRESSES
+            "message": (
+                "Proof format valid. On-chain verification is deferred to Phase 3 "
+                "(a real Groth16 verifier + trusted setup are prerequisites — see "
+                "PR #2 / db089bc for why the prior verifier code was removed)."
+            ),
+            "onchain_verification": "deferred_to_phase_3"
         }
     except Exception as e:
         logger.error(f"ZKP proof submission error: {e}")
@@ -1302,101 +1322,42 @@ async def submit_zkp_proof(request: ZKPProofRequest):
 
 @api_router.post("/zkp/verify-onchain")
 async def verify_proof_onchain(request: ZKPVerifyOnChainRequest):
-    """Verify a ZKP proof using the on-chain verifier contract"""
-    try:
-        chain = request.chain
-        if chain not in ZKP_VERIFIER_ADDRESSES:
-            raise HTTPException(status_code=400, detail=f"Chain {chain} not supported")
-        
-        config = CHAIN_CONFIG.get(chain)
-        if not config:
-            raise HTTPException(status_code=400, detail=f"Chain {chain} not configured")
-        
-        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
-        verifier_address = ZKP_VERIFIER_ADDRESSES[chain]
-        verifier = w3.eth.contract(
-            address=Web3.to_checksum_address(verifier_address),
-            abi=ZKP_VERIFIER_ABI
+    """Verify a ZKP proof on-chain — DISABLED pending Phase 3.
+
+    A previous revision of this endpoint eth_call'd a hard-coded Groth16 verifier
+    address per chain. P1.3 (PR #2, db089bc) removed the project-owned verifier
+    Solidity because its verifying-key constants set DELTA == GAMMA (would accept
+    forged proofs); the hard-coded addresses this endpoint then fell back to
+    calling are real third-party ~2.2 KB verifier contracts we never deploy or
+    audit, which is an unsafe dependency. On-chain ZKP verification is therefore
+    intentionally unreachable until Phase 3 ship a project-owned, snarkjs-exported,
+    trusted-setup-backed verifier. The endpoint is retained (HTTP 501) so clients
+    that call it still get a structured response instead of a 404, and so the
+    contract surface for re-enabling it later is obvious.
+    """
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "On-chain ZKP verification is deferred to Phase 3. The project-owned "
+            "Groth16 verifier was removed in P1.3 (PR #2) as unsound; calling "
+            "third-party verifier contracts we don't own was retired in this "
+            "audit follow-up. See PROJECT_CONTEXT.md and the ZKP roadmap entry."
         )
-        
-        # Convert proof to integers
-        a = [int(x, 16) if x.startswith('0x') else int(x) for x in request.proof_a]
-        b = [[int(x, 16) if x.startswith('0x') else int(x) for x in row] for row in request.proof_b]
-        c = [int(x, 16) if x.startswith('0x') else int(x) for x in request.proof_c]
-        inputs = [int(x, 16) if x.startswith('0x') else int(x) for x in request.public_inputs[:2]]
-        
-        # Pad inputs to 2 if needed
-        while len(inputs) < 2:
-            inputs.append(0)
-        
-        # Call view function to verify
-        try:
-            is_valid = verifier.functions.verifyProofView(a, b, c, inputs).call()
-        except Exception as e:
-            logger.warning(f"On-chain verification call failed: {e}")
-            is_valid = False
-        
-        # Get verifier stats
-        try:
-            total, successful, rate = verifier.functions.getStats().call()
-        except Exception:
-            total, successful, rate = 0, 0, 0
-        
-        return {
-            "chain": chain,
-            "verifier_address": verifier_address,
-            "is_valid": is_valid,
-            "verification_type": "on-chain",
-            "verifier_stats": {
-                "total_verifications": total,
-                "successful_verifications": successful,
-                "success_rate": rate
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"On-chain verification error: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred")
+    )
 
 @api_router.get("/zkp/verifier-info/{chain}")
 async def get_verifier_info(chain: str):
-    """Get ZKP verifier contract info for a chain"""
-    try:
-        if chain not in ZKP_VERIFIER_ADDRESSES:
-            raise HTTPException(status_code=400, detail=f"Chain {chain} not supported")
-        
-        config = CHAIN_CONFIG.get(chain)
-        if not config:
-            raise HTTPException(status_code=400, detail=f"Chain {chain} not configured")
-        
-        verifier_address = ZKP_VERIFIER_ADDRESSES[chain]
-        
-        try:
-            w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
-            verifier = w3.eth.contract(
-                address=Web3.to_checksum_address(verifier_address),
-                abi=ZKP_VERIFIER_ABI
-            )
-            total, successful, rate = verifier.functions.getStats().call()
-        except Exception:
-            total, successful, rate = 0, 0, 0
-        
-        return {
-            "chain": chain,
-            "verifier_address": verifier_address,
-            "explorer_url": f"{config['explorer']}/address/{verifier_address}",
-            "stats": {
-                "total_verifications": total,
-                "successful_verifications": successful,
-                "success_rate": rate
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Verifier info error: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred")
+    """ZKP verifier info — DISABLED pending Phase 3 (see verify_proof_onchain)."""
+    if chain not in CHAIN_CONFIG:
+        raise HTTPException(status_code=400, detail=f"Chain {chain} not configured")
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "ZKP verifier info is deferred to Phase 3. The project-owned verifier "
+            "Solidity was removed in P1.3 (PR #2) as unsound; no project-owned "
+            "verifier is currently deployed, so no on-chain stats are available."
+        )
+    )
 
 @api_router.get("/zkp/proof/{proof_id}")
 async def get_zkp_proof(proof_id: str):
