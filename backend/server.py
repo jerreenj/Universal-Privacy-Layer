@@ -1413,13 +1413,44 @@ async def get_zkp_proof(proof_id: str):
         raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # --- 2. PRIVATE RELAYER ON-CHAIN ---
+# ABI surface is reconciled 1:1 with PrivacyRelayer.sol (P1.1). The relayer is a
+# GAS-ONLY META-TX FORWARDER: `relay()` is guarded by the `onlyRelayer` modifier,
+# so ONLY the relayer service wallet may call it. The user NEVER sends the
+# `relay()` tx themselves — doing so would (a) revert with "Not authorised
+# relayer" and (b) leak the privacy model by putting the user's wallet on-chain
+# as the transfer's `msg.sender`. Instead the user signs an EIP-712 *intent*
+# off-chain (see `prepare_relayer_intent` below); the relayer service (P1.10)
+# verifies that signature and submits `relay()` on the user's behalf.
 PRIVACY_RELAYER_ABI = [
     {"inputs":[{"name":"recipient","type":"address"},{"name":"ephemeralKey","type":"bytes32"},{"name":"viewTag","type":"uint8"}],"name":"relay","outputs":[],"stateMutability":"payable","type":"function"},
     {"inputs":[],"name":"feeBps","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
     {"inputs":[],"name":"totalRelayed","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
 ]
 
-class RelayerTxRequest(BaseModel):
+# EIP-712 typed data the user signs to authorise a private relay. The relayer
+# service (P1.10) verifies this signature before submitting `relay()`, so the
+# relayer can prove to the chain/fees logic that the user consented to this
+# exact transfer — without the user ever broadcasting a tx. `nonce` makes the
+# intent single-use (replay protection); `deadline` bounds how long the relayer
+# may hold a signed intent before it expires.
+RELAY_INTENT_TYPE = {
+    "RelayIntent": [
+        {"name": "recipient", "type": "address"},
+        {"name": "ephemeralKey", "type": "bytes32"},
+        {"name": "viewTag", "type": "uint8"},
+        {"name": "amount", "type": "uint256"},
+        {"name": "nonce", "type": "uint256"},
+        {"name": "deadline", "type": "uint256"}
+    ]
+}
+RELAY_INTENT_NAME = "UPL PrivacyRelayer"
+RELAY_INTENT_VERSION = "1"
+# Intent validity window the relayer will honour a signed intent for. Long
+# enough for a user to be slow Signing, short enough that a leaked-but-unused
+# signature is not a dangling authorization.
+RELAY_INTENT_TTL_SECONDS = 600  # 10 minutes
+
+class RelayerIntentRequest(BaseModel):
     from_address: str
     stealth_address: str
     amount_wei: str
@@ -1427,70 +1458,144 @@ class RelayerTxRequest(BaseModel):
     view_tag: int
     chain: str = "base"
 
+# Kept for backwards-compat with any client still POSTing the old shape; the
+# endpoint below routes on whichever name is present.
+class RelayerTxRequest(RelayerIntentRequest):
+    pass
+
+def _relayer_intent_domain(chain_id: int, relayer_address: str) -> dict:
+    """EIP-712 domain for `relay()` intents. `verifyingContract` is the
+    PrivacyRelayer so signers can see exactly which contract authorises the
+    spend, and so the relayer's off-chain verifier and any future on-chain
+    verifier share one canonical domain."""
+    return {
+        "name": RELAY_INTENT_NAME,
+        "version": RELAY_INTENT_VERSION,
+        "chainId": chain_id,
+        "verifyingContract": Web3.to_checksum_address(relayer_address),
+    }
+
+def _hex_to_bytes32(hexish: str) -> bytes:
+    """Coerce a 0x-prefixed or bare hex string into exactly 32 bytes, left-0
+    padding short inputs and truncating over-long ones. Matches the
+    PrivacyRelayer.sol `ephemeralKey bytes32` commit semantics."""
+    raw = hexish[2:] if hexish.startswith("0x") else hexish
+    b = bytes.fromhex(raw) if raw else b""
+    if len(b) >= 32:
+        return b[:32]
+    return b.rjust(32, b"\x00")
+
+def _relayer_address_for(chain: str) -> Optional[str]:
+    """Resolve the deployed PrivacyRelayer address for a chain from
+    UPL_CONTRACTS. Returns None if the chain has no deployment yet (so the
+    caller can 400 cleanly rather than guessing). The hardcoded
+    '0x0A81...c' literal is gone from this path — P1.5 moves the whole table
+    to deployed_base.json; until then the table is the one source of truth."""
+    cfg = UPL_CONTRACTS.get(chain)
+    if not cfg:
+        return None
+    addr = cfg.get("privacy_relayer")
+    return addr if addr and addr.lower() != "0x0" else None
+
 @api_router.post("/relayer/prepare-tx")
-async def prepare_relayer_transaction(request: RelayerTxRequest):
-    """Prepare a transaction to go through the on-chain PrivacyRelayer"""
+async def prepare_relayer_transaction(request: RelayerIntentRequest):
+    """Prepare an EIP-712 relay *intent* for the user to SIGN (not send).
+
+    Reconciled with PrivacyRelayer.sol (P1.1): because `relay()` is
+    `onlyRelayer`, the user cannot call it directly. This endpoint no longer
+    returns a `to`/`data`/`value` tx for the user to broadcast — that path was
+    guaranteed to revert and leaked the user's wallet on-chain as the transfer
+    originator. Instead it returns the typed-data payload the user signs
+    off-chain, plus the fee quote the frontend already renders. The relayer
+    service (P1.10) verifies the signature and submits `relay()` itself.
+
+    The response keeps `relayer_contract`, `fee_bps`, `fee_amount`, `net_amount`
+    for the existing UI; it REPLACES the executable-tx fields with `intent`
+    (the EIP-712 typed data + domain) and `submission` (status note).
+    """
     try:
         config = CHAIN_CONFIG.get(request.chain)
         if not config:
             raise HTTPException(status_code=400, detail="Invalid chain")
-        
+
+        relayer_address = _relayer_address_for(request.chain)
+        if not relayer_address:
+            raise HTTPException(
+                status_code=503,
+                detail=f"PrivacyRelayer not deployed on chain '{request.chain}'"
+            )
+
         w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
-        relayer_address = "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c"
-        
-        # Get current fee
-        relayer = w3.eth.contract(address=Web3.to_checksum_address(relayer_address), abi=PRIVACY_RELAYER_ABI)
+        relayer = w3.eth.contract(
+            address=Web3.to_checksum_address(relayer_address),
+            abi=PRIVACY_RELAYER_ABI,
+        )
+
+        # Live fee from the contract; fall back to the matching contract default
+        # only if the RPC call fails (e.g. node rate-limited), never silently.
         try:
             fee_bps = relayer.functions.feeBps().call()
-        except Exception:
-            fee_bps = 5  # Default 0.05%
-        
+        except Exception as e:
+            logger.warning(f"feeBps on-chain read failed for {request.chain}: {e}; using contract default 5")
+            fee_bps = 5  # matches PrivacyRelayer.sol _feeBps default
+
         amount = int(request.amount_wei)
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="amount_wei must be > 0")
         fee_amount = (amount * fee_bps) // 10000
-        
-        # Encode function call
-        ephemeral_bytes = bytes.fromhex(request.ephemeral_key[2:] if request.ephemeral_key.startswith("0x") else request.ephemeral_key)
-        ephemeral_bytes32 = ephemeral_bytes[:32].ljust(32, b'\x00')
-        
-        tx_data = relayer.encodeABI(
-            fn_name="relay",
-            args=[
-                Web3.to_checksum_address(request.stealth_address),
-                ephemeral_bytes32,
-                request.view_tag
-            ]
-        )
-        
-        # Get gas estimate
-        try:
-            gas_estimate = w3.eth.estimate_gas({
-                'to': relayer_address,
-                'value': amount,
-                'data': tx_data,
-                'from': Web3.to_checksum_address(request.from_address)
-            })
-        except Exception:
-            gas_estimate = 100000
-        
-        gas_price = w3.eth.gas_price
-        
+        net_amount = amount - fee_amount
+
+        ephemeral_bytes32 = _hex_to_bytes32(request.ephemeral_key)
+
+        # Single-use intent: nonce is server-chosen entropy so two identical
+        # transfers by the same user produce unlinkable intents, and a signed
+        # intent can't be replayed by a malicious relayer. `secrets` is already
+        # imported at the top of this module.
+        nonce = secrets.randbits(256)
+        deadline = int(_time.time()) + RELAY_INTENT_TTL_SECONDS
+
+        domain = _relayer_intent_domain(config["chain_id"], relayer_address)
+        message = {
+            "recipient": Web3.to_checksum_address(request.stealth_address),
+            "ephemeralKey": "0x" + ephemeral_bytes32.hex(),
+            "viewTag": int(request.view_tag) & 0xFF,
+            "amount": amount,
+            "nonce": nonce,
+            "deadline": deadline,
+        }
+
         return {
-            "to": relayer_address,
-            "value": str(amount),
-            "data": tx_data,
-            "gas": gas_estimate,
-            "gasPrice": str(gas_price),
             "chain": request.chain,
             "chainId": config["chain_id"],
+            "relayer_contract": relayer_address,
             "fee_bps": fee_bps,
             "fee_amount": str(fee_amount),
-            "net_amount": str(amount - fee_amount),
-            "relayer_contract": relayer_address
+            "net_amount": str(net_amount),
+            # EIP-712 payload the wallet signs. The frontend passes this to
+            # `signer.signTypedData(domain, types, message)` (ethers v6) or the
+            # wallet's `eth_signTypedData_v4` RPC. The signature is then handed
+            # to the relayer service (P1.10), never broadcast by the user.
+            "intent": {
+                "domain": domain,
+                "types": RELAY_INTENT_TYPE,
+                "primaryType": "RelayIntent",
+                "message": message,
+            },
+            "submission": {
+                "mode": "relayer-submit",
+                "signed_by": request.from_address,
+                "expires_at": deadline,
+                "note": (
+                    "Sign the intent with your wallet. The relayer service verifies "
+                    "your signature and submits relay() on-chain — your wallet never "
+                    "appears as msg.sender. (Relayer submitter is wired in P1.10.)"
+                ),
+            },
         }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Relayer tx preparation error: {e}")
+        logger.error(f"Relayer intent preparation error: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.get("/relayer/stats/{chain}")
@@ -1501,17 +1606,23 @@ async def get_relayer_stats(chain: str):
         if not config:
             raise HTTPException(status_code=400, detail="Invalid chain")
         
+        relayer_address = _relayer_address_for(chain)
+        if not relayer_address:
+            raise HTTPException(
+                status_code=503,
+                detail=f"PrivacyRelayer not deployed on chain '{chain}'"
+            )
+
         w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
-        relayer_address = "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c"
         relayer = w3.eth.contract(address=Web3.to_checksum_address(relayer_address), abi=PRIVACY_RELAYER_ABI)
-        
+
         try:
             total_relayed = relayer.functions.totalRelayed().call()
             fee_bps = relayer.functions.feeBps().call()
         except Exception:
             total_relayed = 0
             fee_bps = 5
-        
+
         return {
             "chain": chain,
             "relayer_address": relayer_address,
@@ -3402,6 +3513,159 @@ async def get_announcements(chain: str = "all", limit: int = 500):
         query, {"_id": 0}
     ).sort("created_at", -1).limit(min(limit, 1000)).to_list(min(limit, 1000))
     return {"announcements": docs, "count": len(docs)}
+
+# --- On-chain StealthAddressRegistry reads (P1.2) -------------------------
+# ABI reconciled 1:1 with StealthAddressRegistry.sol. The Mongo store above is
+# the legacy off-chain announcement path that P1.11 will migrate onto
+# `announce()` on-chain; the endpoints below read the *real* on-chain registry
+# so the fixed `getByViewTag` is observable from the API today, not just written
+# in Solidity. They are read-only — the write path (relayer -> announce()) is
+# owned by P1.10/P1.11.
+STEALTH_REGISTRY_ABI = [
+    {"inputs":[{"name":"ephemeralPubKeyX","type":"bytes32"},{"name":"ephemeralPubKeyY","type":"bytes32"},{"name":"viewTag","type":"bytes32"},{"name":"stealthHash","type":"bytes32"}],"name":"announce","outputs":[],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[{"name":"index","type":"uint256"}],"name":"getAnnouncement","outputs":[{"name":"ephemeralPubKeyX","type":"bytes32"},{"name":"ephemeralPubKeyY","type":"bytes32"},{"name":"viewTag","type":"bytes32"},{"name":"announcer","type":"address"},{"name":"timestamp","type":"uint64"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"viewTag","type":"bytes32"}],"name":"getByViewTag","outputs":[{"name":"ephemeralPubKeyX","type":"bytes32"},{"name":"ephemeralPubKeyY","type":"bytes32"},{"name":"timestamp","type":"uint64"},{"name":"announcer","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"fromTs","type":"uint64"},{"name":"toTs","type":"uint64"}],"name":"scanRange","outputs":[{"name":"ephemeralPubKeyX","type":"bytes32[]"},{"name":"ephemeralPubKeyY","type":"bytes32[]"},{"name":"viewTags","type":"bytes32[]"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"announcementCount","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+]
+
+def _stealth_registry_for(chain: str):
+    """Resolve the deployed StealthAddressRegistry for a chain and return a
+    ready-to-call web3 contract instance, or raise HTTPException(503) if there
+    is no deployment yet."""
+    config = CHAIN_CONFIG.get(chain)
+    if not config:
+        raise HTTPException(status_code=400, detail="Invalid chain")
+    cfg = UPL_CONTRACTS.get(chain, {})
+    addr = cfg.get("stealth_registry")
+    if not addr or addr.lower() == "0x0":
+        raise HTTPException(
+            status_code=503,
+            detail=f"StealthAddressRegistry not deployed on chain '{chain}'"
+        )
+    w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+    return w3, w3.eth.contract(
+        address=Web3.to_checksum_address(addr),
+        abi=STEALTH_REGISTRY_ABI,
+    )
+
+def _view_tag_to_bytes32(view_tag: str) -> bytes:
+    """Coerce a recipient-supplied view tag into the bytes32 form the registry
+    stores: the canonical 1-byte EIP-5564 tag left-padded to bytes32 (see
+    StealthAddressRegistry.sol). This MUST match the form the relayer wrote via
+    `announce()`, otherwise the fixed `getByViewTag` lookup misses.
+
+    Accepts (in priority order):
+      - 0x-prefixed hex, e.g. "0xab" / "0xAB"           -> tag byte 0xAB
+      - bare hex of 1..2 hex chars, e.g. "ab", "f", "0" -> tag byte that hex value
+      - decimal int, e.g. "42" / "255"                   -> tag byte that int value
+    Anything that can't be parsed or is out of the 0..255 byte range -> 0.
+    The Mongo StealthAnnouncement model stores view_tag as 2-char hex, so hex
+    is the canonical wire form and is tried first.
+    """
+    if view_tag is None:
+        return bytes(32)
+    s = str(view_tag).strip().lower()
+    if not s:
+        return bytes(32)
+    if s.startswith("0x"):
+        s = s[2:]
+    val = None
+    try:
+        # Hex first (canonical wire form). 1..2 hex chars === exactly one byte.
+        if s and all(c in "0123456789abcdef" for c in s) and len(s) <= 2:
+            val = int(s, 16)
+        else:
+            val = int(s, 10)
+    except (ValueError, TypeError):
+        val = None
+    if val is None or not (0 <= val <= 0xFF):
+        return bytes(32)
+    return bytes(31) + bytes([val])
+
+@api_router.get("/stealth/onchain/{chain}/by-view-tag/{view_tag}")
+async def get_stealth_announcement_by_view_tag(chain: str, view_tag: str):
+    """O(1) read of the FIRST on-chain announcement for a view tag.
+
+    Exercises the P1.2 fix directly: the registry stores
+    `viewTagIndex[viewTag] = real_index + 1`, so `0` is an unambiguous
+    'not found' sentinel (it used to silently collide with announcement #0).
+    The contract reverts on not-found; we surface that as 404.
+    """
+    try:
+        _, registry = _stealth_registry_for(chain)
+        tag_b32 = _view_tag_to_bytes32(view_tag)
+        try:
+            x, y, ts, announcer = registry.functions.getByViewTag(tag_b32).call()
+        except Exception:
+            raise HTTPException(status_code=404, detail="View tag not found on-chain")
+        return {
+            "chain": chain,
+            "view_tag": "0x" + tag_b32.hex(),
+            "found": True,
+            "announcement": {
+                "ephemeral_pub_key_x": "0x" + x.hex(),
+                "ephemeral_pub_key_y": "0x" + y.hex(),
+                "ephemeral_pub_key": "0x" + (x.hex() + y.hex()),
+                "timestamp": ts,
+                "announcer": announcer,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"On-chain getByViewTag error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+@api_router.get("/stealth/onchain/{chain}/scan")
+async def scan_stealth_announcements(chain: str, from_ts: int = 0, to_ts: int = 0):
+    """Range scan of on-chain announcements for EIP-5564 client-side detection.
+
+    Returns the ephemeral pubkey halves + view tags for every announcement in
+    [from_ts, to_ts] (inclusive). The recipient's client (frontend
+    `utils/stealth.js`) runs the view-tag filter then full DH on these; the
+    contract and this endpoint never see a stealth private key.
+    """
+    try:
+        _, registry = _stealth_registry_for(chain)
+        # `block.timestamp` is uint64 seconds; default to a permissive window
+        # (epoch -> now) when the caller omits bounds.
+        f = int(from_ts) if from_ts and from_ts > 0 else 0
+        t = int(to_ts) if to_ts and to_ts > 0 else (2**64 - 1)
+        if f > t:
+            raise HTTPException(status_code=400, detail="from_ts > to_ts")
+        xs, ys, tags = registry.functions.scanRange(f, t).call()
+        items = [
+            {
+                "ephemeral_pub_key_x": "0x" + xs[i].hex(),
+                "ephemeral_pub_key_y": "0x" + ys[i].hex(),
+                "ephemeral_pub_key": "0x" + (xs[i].hex() + ys[i].hex()),
+                "view_tag": "0x" + tags[i].hex(),
+            }
+            for i in range(len(xs))
+        ]
+        return {"chain": chain, "from_ts": f, "to_ts": t, "count": len(items), "announcements": items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"On-chain scanRange error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+@api_router.get("/stealth/onchain/{chain}/count")
+async def get_stealth_announcement_count(chain: str):
+    """Live on-chain announcement count for a chain (sanity / UI badge)."""
+    try:
+        _, registry = _stealth_registry_for(chain)
+        try:
+            count = registry.functions.announcementCount().call()
+        except Exception:
+            count = 0
+        return {"chain": chain, "announcement_count": count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"On-chain announcementCount error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 @api_router.post("/stealth/check-balance")
 async def check_stealth_balance(addresses: List[str] = Body(..., embed=True), chain: str = Body(..., embed=True)):
