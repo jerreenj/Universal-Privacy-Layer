@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "Schema reference for deployed_base.json — the file P1.9 writes after",
+    "deploying PrivacyRelayer, StealthAddressRegistry, and UniswapPrivacyWrapper",
+    "to Base mainnet. The backend's P1.5 loader (see _load_deployed_addresses()",
+    "in backend/server.py) reads a file at this exact shape from",
+    "contracts/deployed_base.json (git-ignored; this .example is the committed",
+    "documentation of the contract). Copy this file to deployed_base.json and",
+    "fill the addresses, or set UPL_DEPLOYED_BASE_JSON to point elsewhere for",
+    "tests. Only keys listed per chain are read; unknown chains/keys are ignored.",
+    "",
+    "Per-chain address keys the loader overrides:",
+    "  privacy_relayer   — PrivacyRelayer.sol      (override only; static placeholder stays otherwise)",
+    "  stealth_registry  — StealthAddressRegistry.sol (override only)",
+    "  uniswap_wrapper   — UniswapPrivacyWrapper.sol (optional; None/unset => not deployed)",
+    "",
+    "Provenance keys (logged at startup, not used for routing):",
+    "  chainId, deployedAt (ISO-8601), commit (git sha of the deploy run).",
+    "",
+    "Normalization in the loader: null / \"\" / \"0x0\" / zero-address all map",
+    "to None, i.e. 'not deployed on this chain'. A real checksummed address",
+    "(0x-prefixed, 40 hex chars) overrides the static placeholder as-is — the",
+    "loader does NOT call Web3.to_checksum_address; P1.9 must write a checksummed",
+    "address (Hardhat's contract.address is already checksummed)."
+  ],
+  "base": {
+    "chainId": 8453,
+    "deployedAt": "2026-06-30T00:00:00.000Z",
+    "commit": "<git sha of the P1.9 deploy run>",
+    "privacy_relayer": "0x0000000000000000000000000000000000000000",
+    "stealth_registry": "0x0000000000000000000000000000000000000000",
+    "uniswap_wrapper": "0x0000000000000000000000000000000000000000"
+  }
+}

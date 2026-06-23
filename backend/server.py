@@ -278,7 +278,7 @@ CHAIN_CONFIG = {
 
 # UPL Contracts — known deployments per chain.
 #
-# Status (post P1.3 audit + P1.4 wiring, 2026-06-23):
+# Status (post P1.3 audit + P1.4 wiring + P1.5 loader, 2026-06-23):
 #   - privacy_relayer / stealth_registry: the addresses here are PLACEHOLDERS. They
 #     predate the reconciled PrivacyRelayer.sol (P1.1) and StealthAddressRegistry.sol
 #     (P1.2) and, per the P1.3 audit on-chain probe, are NOT the bytecode of those
@@ -287,10 +287,12 @@ CHAIN_CONFIG = {
 #     6+ each and don't inherit Ownable). The reconciled read-paths
 #     (`_relayer_address_for`, the relayer stats endpoint, the stealth-registry
 #     reads) are correct against the contract surface and will return real data as
-#     soon as real deployments land. P1.6 adds the Hardhat/Foundry deploy + ABI
+#     as soon as real deployments land. P1.6 adds the Hardhat/Foundry deploy + ABI
 #     export; P1.9 deploys the real contract bytecode to Base mainnet and writes
-#     deployed_base.json; P1.5 will then make this table load from that file (this
-#     static table is replaced, not edited, by P1.5).
+#     `contracts/deployed_base.json`; P1.5 (this code, below the literal) loads that
+#     file at import time and OVERRIDES these placeholder addresses with the real
+#     ones, chain-by-chain, so the table stays the single source of truth in code
+#     while real deployments stay git-ignored and environment-local.
 #   - uniswap_wrapper: None on every chain — the UniswapPrivacyWrapper contract
 #     (contracts/UniswapPrivacyWrapper.sol) is written and reconciled but NOT yet
 #     deployed (P1.9). The wrapper ABI and a `_uniswap_wrapper_address_for(chain)`
@@ -303,7 +305,122 @@ CHAIN_CONFIG = {
 #     of the user calling the raw Uniswap Router) is the separate P1.13 step.
 #     We deliberately do NOT pre-fill a fake address here — the P1.3 audit
 #     retired exactly that pattern for the ZK verifier glue.
-UPL_CONTRACTS = {
+#
+# Loader (P1.5): the static literal below is the FALLBACK base. After it is bound,
+# `_load_deployed_addresses()` reads `contracts/deployed_base.json` (git-ignored;
+# written by P1.9's Hardhat deploy, schema documented by the committed
+# `contracts/deployed_base.json.example`) and overrides the per-chain contract
+# addresses it contains — chain-by-chain, address-by-address — leaving the
+# `explorer` and any unmentioned fields untouched. If the file is absent (today:
+# P1.9 hasn't deployed yet) the static placeholders win and behavior is
+# unchanged from P1.4. A startup log line reports, per chain, whether each UPL
+# contract came from the file ("deployed") or the static table ("placeholder" /
+# "not-deployed") so the relayer stats / stealth-registry read-paths can tell at
+# a glance whether they'll hit real bytecode. The file's path is overridable via
+# `UPL_DEPLOYED_BASE_JSON` (absolute or relative-to-ROOT_DIR) so tests can point
+# the loader at a fixture without monkey-patching this module.
+def _load_deployed_addresses(static_contracts: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Return a *copy* of `static_contracts` with per-chain UPL contract addresses
+    overridden from `contracts/deployed_base.json` if present.
+
+    Schema the loader expects (written by P1.9, see
+    `contracts/deployed_base.json.example`):
+        {
+          "<chain>": {                      # e.g. "base"
+            "chainId": 8453,                # provenance; logged, not used for routing
+            "deployedAt": "2026-...",       # ISO-8601; logged only
+            "commit": "1c338bf",            # deploy commit; logged only
+            "privacy_relayer": "0x...",     # overrides static placeholder
+            "stealth_registry": "0x...",   # overrides static placeholder
+            "uniswap_wrapper": "0x..."      # optional; overrides None
+          }
+        }
+    Unknown chains in the file are ignored (they don't exist in CHAIN_CONFIG so
+    routing would 400 anyway); unknown contract keys per chain are ignored too.
+    `explorer`/`chainId`/`deployedAt`/`commit` are passed through unchanged so
+    callers that read them off UPL_CONTRACTS keep working. The override is shallow
+    per-chain — we never replace a whole chain dict, only individual address
+    fields — so a partial file (e.g. only `privacy_relayer` deployed) overrides
+    only that field and leaves `stealth_registry` on its placeholder.
+
+    Address validation: a value is accepted only if it is a 0x-prefixed string
+    of exactly 40 hex chars (Hardhat's `contract.address` is checksummed, so
+    P1.9's output passes this). `None` / `""` / `"0x0"` / the zero address are
+    normalized to `None`. Anything else (int, float, missing-prefix, wrong
+    length) is logged as a WARNING and left on its static placeholder — a
+    malformed deployed_base.json must NOT inject a value into UPL_CONTRACTS
+    that later `Web3.to_checksum_address(addr)` would surface as a confusing
+    downstream error rather than a clear "bad file" message.
+    """
+    def _resolve_path() -> Optional[Path]:
+        raw = os.environ.get("UPL_DEPLOYED_BASE_JSON")
+        if not raw:
+            return ROOT_DIR.parent / "contracts" / "deployed_base.json"
+        p = Path(raw)
+        return p if p.is_absolute() else (ROOT_DIR / p)
+
+    out = {chain: dict(cfg) for chain, cfg in static_contracts.items()}  # shallow copy per chain
+    path = _resolve_path()
+    if not path.exists():
+        logging.info("UPL contracts: no deployed_base.json at %s — using static placeholders (P1.9 not run yet).", path)
+        return out
+    try:
+        with open(path, encoding="utf-8") as fh:
+            deployed = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.warning("UPL contracts: failed to read %s (%s) — using static placeholders.", path, exc)
+        return out
+    if not isinstance(deployed, dict):
+        logging.warning("UPL contracts: %s is not a JSON object — ignoring, using static placeholders.", path)
+        return out
+
+    ADDRESS_KEYS = ("privacy_relayer", "stealth_registry", "uniswap_wrapper")
+    provenance_keys = ("chainId", "deployedAt", "commit")
+    for chain, overrides in deployed.items():
+        base = out.get(chain)
+        if base is None:
+            logging.warning("UPL contracts: deployed_base.json lists unknown chain '%s' (not in CHAIN_CONFIG) — skipping.", chain)
+            continue
+        if not isinstance(overrides, dict):
+            logging.warning("UPL contracts: deployed_base.json['%s'] is not an object — skipping chain.", chain)
+            continue
+        for k in provenance_keys:
+            if k in overrides and overrides[k] is not None:
+                base[k] = overrides[k]
+        applied = []
+        skipped = []
+        for k in ADDRESS_KEYS:
+            if k not in overrides:
+                continue
+            val = overrides[k]
+            # Normalize: None / "" / "0x0" / zero-address all mean
+            # "not deployed on this chain".
+            if val in (None, "", "0x0", "0x0000000000000000000000000000000000000000"):
+                base[k] = None
+                applied.append(f"{k}=None")
+                continue
+            # Reject anything that isn't a 0x-prefixed 40-hex-char address — a
+            # malformed deployed_base.json must NOT inject an int/float/stray
+            # value into UPL_CONTRACTS where a later
+            # Web3.to_checksum_address(addr) would surface the bad shape as a
+            # confusing downstream error. P1.9 (Hardhat) writes checksummed
+            # addresses; anything else here is a hand-edit bug we want loud.
+            if not (isinstance(val, str)
+                    and re.match(r"^0x[a-fA-F0-9]{40}$", val)):
+                skipped.append(f"{k}={val!r}")
+                continue
+            base[k] = val
+            applied.append(f"{k}={val}")
+        if applied:
+            logging.info("UPL contracts: %s overridden from deployed_base.json — %s",
+                         chain, ", ".join(applied))
+        if skipped:
+            logging.warning("UPL contracts: deployed_base.json['%s'] has malformed addresses (%s) — ignored those, kept static placeholders for them.",
+                             chain, ", ".join(skipped))
+    return out
+
+
+_UPL_CONTRACTS_STATIC = {
     "base": {
         "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
         "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
@@ -347,6 +464,14 @@ UPL_CONTRACTS = {
         "explorer": "https://purrsec.com"
     }
 }
+
+# P1.5: feed the static fallback through the loader so real deployments land in
+# `UPL_CONTRACTS` (the name every read-path uses). With no `deployed_base.json`
+# present this is a no-op copy — the static placeholders win, behavior matches
+# P1.4 exactly, and the deploy stays safe. The env var `UPL_DEPLOYED_BASE_JSON`
+# (absolute or ROOT_DIR-relative) overrides the default path for tests.
+UPL_CONTRACTS = _load_deployed_addresses(_UPL_CONTRACTS_STATIC)
+
 
 # Token configurations per chain
 TOKENS = {
