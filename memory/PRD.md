@@ -7,7 +7,7 @@ Production-ready privacy layer for crypto transactions. DeFi + privacy-preservin
 - Frontend: React 18 + Tailwind + ethers.js
 - Backend: FastAPI + MongoDB
 - Crypto: @noble/secp256k1 v3, EIP-5564
-- Hosting: Hostinger VPS (IP stored in password manager) + Docker + Nginx + Let's Encrypt
+- Hosting: VPS (IP stored in password manager) + Docker + Nginx + Let's Encrypt
 - Admin: Retool (connected via SSH tunnel to MongoDB)
 
 ## Implemented
@@ -17,7 +17,7 @@ Production-ready privacy layer for crypto transactions. DeFi + privacy-preservin
 - [x] Private DeFi (Uniswap V3, Hyperliquid, Polymarket)
 - [x] Crypto-only payments (QR, MetaMask, manual)
 - [x] Pricing page (Phantom $50, Specter $4,999, Wraith $24,999)
-- [x] Deployed to Hostinger VPS with HTTPS + Let's Encrypt
+- [x] Deployed to VPS with HTTPS + Let's Encrypt
 - [x] Wallet Privacy Analyzer — 6 EVM chains, privacy score 0-100 (2026-03-28)
 - [x] Encrypted Receipts — AES-256-GCM, one-time code decryption (2026-03-28)
 - [x] Privacy Address Book — Encrypted contacts, full CRUD (2026-03-28)

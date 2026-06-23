@@ -142,8 +142,9 @@ right-size or investigate a traffic spike.
 4. **Roll back** (above) if needed.
 5. **Tell ZCode** with a screenshot of whatever error you see.
 
-The VPS at Hostinger is kept as a **hot backup** until you're confident Azure is
-solid. If Azure has a disaster, you can repoint DNS back to the VPS in minutes.
+The VPS at your hosting provider is kept as a **hot backup** until you're
+confident Azure is solid. If Azure has a disaster, you can repoint DNS back to
+the VPS in minutes.
 
 ---
 
