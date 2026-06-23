@@ -72,10 +72,14 @@ module upl::view_tag_index_tests {
         let mut ctx = tx_context::dummy();
         let mut index = vti::new_test_index(&mut ctx);
 
-        vti::record(&mut index, x"ab", 0);
-        vti::record(&mut index, x"cd", 1);
-        vti::record(&mut index, x"ab", 2);
-        vti::record(&mut index, x"cd", 3);
+        // Announcement ids are 1-based in production (the registry's first
+        // announce is id 1), and `page`'s `after_id` uses `0` as the
+        // "first page" sentinel — so ids here are 1-based to match that
+        // invariant (see `page`'s docstring: "pass 0 for the first page").
+        vti::record(&mut index, x"ab", 1);
+        vti::record(&mut index, x"cd", 2);
+        vti::record(&mut index, x"ab", 3);
+        vti::record(&mut index, x"cd", 4);
 
         assert!(vti::total_indexed(&index) == 4);
         assert!(vti::bucket_length(&index, x"ab") == 2);
@@ -83,13 +87,13 @@ module upl::view_tag_index_tests {
 
         let ab_page = vti::page(&index, x"ab", 0, 10);
         assert!(ab_page.length() == 2);
-        assert!(*ab_page.borrow(0) == 0);
-        assert!(*ab_page.borrow(1) == 2);
+        assert!(*ab_page.borrow(0) == 1);
+        assert!(*ab_page.borrow(1) == 3);
 
         let cd_page = vti::page(&index, x"cd", 0, 10);
         assert!(cd_page.length() == 2);
-        assert!(*cd_page.borrow(0) == 1);
-        assert!(*cd_page.borrow(1) == 3);
+        assert!(*cd_page.borrow(0) == 2);
+        assert!(*cd_page.borrow(1) == 4);
 
         vti::destroy_test_index(index);
     }
@@ -190,24 +194,24 @@ module upl::view_tag_index_tests {
         let mut ctx = tx_context::dummy();
         let mut index = vti::new_test_index(&mut ctx);
 
-        // Insert 300 ids under "ab": 0..299.
-        let mut i = 0;
-        while (i < 300) {
+        // Insert 300 ids under "ab": 1..300 (1-based, see `multi_record...`).
+        let mut i = 1;
+        while (i <= 300) {
             vti::record(&mut index, x"ab", i);
             i = i + 1;
         };
 
-        // Request limit=1000 → clamped to 256, returns 256 ids.
+        // Request limit=1000 → clamped to 256, returns 256 ids (1..256).
         let page = vti::page(&index, x"ab", 0, 1000);
         assert!(page.length() == 256);
-        assert!(*page.borrow(0) == 0);
-        assert!(*page.borrow(255) == 255);
+        assert!(*page.borrow(0) == 1);
+        assert!(*page.borrow(255) == 256);
 
-        // Continue from id 255, again limit=1000 → 44 remaining.
-        let page2 = vti::page(&index, x"ab", 255, 1000);
+        // Continue from id 256, again limit=1000 → 44 remaining (257..300).
+        let page2 = vti::page(&index, x"ab", 256, 1000);
         assert!(page2.length() == 44);
-        assert!(*page2.borrow(0) == 256);
-        assert!(*page2.borrow(43) == 299);
+        assert!(*page2.borrow(0) == 257);
+        assert!(*page2.borrow(43) == 300);
 
         vti::destroy_test_index(index);
     }

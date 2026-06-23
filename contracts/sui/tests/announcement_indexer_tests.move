@@ -173,12 +173,12 @@ module upl::announcement_indexer_tests {
         idx::destroy_test_indexer(indexer);
     }
 
-    /// Multi-page cursor iteration: advance cursor to 20, then scan 5+5+5+5+1.
+    /// Multi-page cursor iteration: advance cursor to 21, then scan 5+5+5+5+1.
     #[test]
     fun multi_page_cursor_scan() {
         let mut ctx = tx_context::dummy();
         let mut indexer = idx::new_test_indexer(&mut ctx);
-        idx::advance_cursor(&mut indexer, 20);
+        idx::advance_cursor(&mut indexer, 21);
 
         let mut after = 0;
         let mut all_ids = vector::empty<u64>();
@@ -226,11 +226,16 @@ module upl::announcement_indexer_tests {
         // Page 5 — only 1 id left.
         let p5 = idx::scan(&indexer, after, 5);
         assert!(p5.length() == 1);
-
-        // Verify all 20 ids.
-        assert!(all_ids.length() == 20);
         i = 0;
-        while (i < 20) {
+        while (i < p5.length()) {
+            vector::push_back(&mut all_ids, *p5.borrow(i));
+            i = i + 1;
+        };
+
+        // Verify all 21 ids.
+        assert!(all_ids.length() == 21);
+        i = 0;
+        while (i < 21) {
             assert!(*all_ids.borrow(i) == (i + 1));
             i = i + 1;
         };

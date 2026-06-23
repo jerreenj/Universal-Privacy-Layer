@@ -213,7 +213,12 @@ module upl::timelock_cap_tests {
         tl::deposit<TestCap>(&mut timelock, @0xB, 10_000, cap, &clock, scenario.ctx());
         assert!(tl::is_locked(&timelock));
 
-        // Cancel in the same tx (depositor is @0xA).
+        // The cap was parked at the timelock's address during `deposit`. Sui's
+        // test_scenario only makes objects addressable via `take_from_address`
+        // once they have been transferred by a *completed* tx — within the same
+        // tx, the address index has not been updated. So we move to a new tx
+        // (still under the depositor @0xA) before recovering and cancelling.
+        scenario.next_tx(@0xA);
         let parked_cap = test_scenario::take_from_address<TestCap>(
             &scenario,
             tl::timelock_address(&timelock),
