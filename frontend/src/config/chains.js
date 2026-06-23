@@ -13,9 +13,10 @@ export const API = `${BACKEND_URL}/api`;
 export const VM = { EVM: "evm", SOLANA: "solana", SUI: "sui" };
 
 // EVM contract addresses (same on all 7 EVM chains)
+// TODO: replace with real deployed addresses after on-chain deployment (P1.5/P1.9)
 export const EVM_CONTRACTS = {
-  privacyRelayer: "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
-  stealthRegistry: "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
+  privacyRelayer: "0x0000000000000000000000000000000000000000",
+  stealthRegistry: "0x0000000000000000000000000000000000000000",
 };
 
 // Chain registry

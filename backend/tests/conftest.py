@@ -8,7 +8,7 @@ import requests
 
 BASE_URL = os.environ.get(
     "REACT_APP_BACKEND_URL",
-    "https://stealth-shield-4.preview.emergentagent.com",
+    "http://localhost:8001",
 ).rstrip("/")
 
 ACCESS_CODE = os.environ.get("ACCESS_CODE", "")

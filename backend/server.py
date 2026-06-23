@@ -422,44 +422,44 @@ def _load_deployed_addresses(static_contracts: Dict[str, Dict[str, Any]]) -> Dic
 
 _UPL_CONTRACTS_STATIC = {
     "base": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "privacy_relayer": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
+        "stealth_registry": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://basescan.org"
     },
     "arbitrum": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "privacy_relayer": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
+        "stealth_registry": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://arbiscan.io"
     },
     "polygon": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "privacy_relayer": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
+        "stealth_registry": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://polygonscan.com"
     },
     "optimism": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "privacy_relayer": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
+        "stealth_registry": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://optimistic.etherscan.io"
     },
     "bnb": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "privacy_relayer": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
+        "stealth_registry": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://bscscan.com"
     },
     "avalanche": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "privacy_relayer": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
+        "stealth_registry": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://snowtrace.io"
     },
     "hyperliquid": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "privacy_relayer": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
+        "stealth_registry": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://purrsec.com"
     }
@@ -682,13 +682,13 @@ async def get_tokens(chain: str):
 @api_router.get("/deployer-info")
 async def get_deployer_info():
     """Get deployer wallet info for all live chains"""
-    deployer = "0x77483a981724fDa225EF78D8d3CF3c57a30193da"
+    deployer = os.environ.get("DEPLOYER_ADDRESS", "0x0000000000000000000000000000000000000000")
     return {
         "deployer_address": deployer,
-        "contracts_address": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+        "contracts_address": "0x0000000000000000000000000000000000000000",
         "deployed_on": ["base", "arbitrum", "polygon", "optimism"],
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4"
+        "privacy_relayer": "0x0000000000000000000000000000000000000000",
+        "stealth_registry": "0x0000000000000000000000000000000000000000"
     }
 
 # Swap Quote API
@@ -1341,8 +1341,8 @@ async def get_platform_stats():
             "total_receipts": total_receipts,
             "live_chains": list(CHAIN_CONFIG.keys()),
             "contracts": {
-                "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
-                "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4"
+                "privacy_relayer": "0x0000000000000000000000000000000000000000",
+                "stealth_registry": "0x0000000000000000000000000000000000000000"
             }
         }
     except Exception as e:
@@ -1832,7 +1832,7 @@ async def prepare_cross_chain_split(request: CrossChainSplitRequest):
                 "percentage": pct,
                 "ephemeral_key": ephemeral_key,
                 "view_tag": view_tag,
-                "relayer_contract": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
+                "relayer_contract": "0x0000000000000000000000000000000000000000",
                 "status": "pending"
             })
         
@@ -3855,7 +3855,7 @@ async def check_stealth_balance(addresses: List[str] = Body(..., embed=True), ch
 # PAYMENTS — Direct Crypto (send to wallet)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-PAYOUT_WALLET = os.environ.get("PAYOUT_WALLET", "0x7fccA87D0e7C5839D40AA24F5B6885e856fF5D6e")
+PAYOUT_WALLET = os.environ.get("PAYOUT_WALLET", "")
 
 PLANS = {
     "phantom_trial": {"name": "Phantom — 14-Day Trial", "amount_usd": 50, "currency": "usd"},

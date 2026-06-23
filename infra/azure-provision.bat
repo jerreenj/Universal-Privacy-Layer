@@ -9,11 +9,13 @@ REM ============================================================================
 setlocal EnableDelayedExpansion
 
 REM === CONFIGURATION ===
-set SUBSCRIPTION_ID=801d842d-4158-4a3f-a0af-a07999f91e1e
-set TENANT_ID=9562edec-bed5-43af-b2f6-8eaac78f7ba1
+REM IMPORTANT: set these to YOUR Azure values before running.
+REM They are read from environment variables by the .sh version.
+set SUBSCRIPTION_ID=<YOUR_SUBSCRIPTION_ID>
+set TENANT_ID=<YOUR_TENANT_ID>
 set RESOURCE_GROUP=rg-privacycloak
 set LOCATION=eastus
-set RAND=801d842d
+set RAND=<UNIQUE_SUFFIX>
 set COSMOS_ACCOUNT=cospcloak%RAND%azure
 set ACR_NAME=acrprivacycloak%RAND%
 set LAW_NAME=log-privacycloak

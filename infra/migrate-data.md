@@ -1,4 +1,4 @@
-# Data Migration — Hostinger VPS MongoDB → Azure Cosmos DB
+# Data Migration — VPS MongoDB → Azure Cosmos DB
 
 > **Goal:** Move all 24 collections of `upl_database` from the live VPS to Azure
 > Cosmos DB with **zero data loss**. Verified by per-collection document counts.
@@ -10,15 +10,14 @@
 ## Prerequisites
 
 - Phase 1 (Azure provisioning) must be complete — you'll have a Cosmos account name.
-- The VPS must be reachable. You can use the Hostinger web terminal (no SSH client needed).
+- The VPS must be reachable via your hosting provider's web terminal or SSH.
 
 ---
 
 ## Phase A — Export from the VPS (YOU do this, ~5 min)
 
 ### A1. Open the VPS terminal
-Hostinger dashboard → your VPS → **"VNC"/"Terminal"** (web-based shell), or SSH in.
-Log in as `root`.
+Use your hosting provider's dashboard to access the web-based terminal, or SSH in.
 
 ### A2. Make sure `mongodump` is installed
 ```bash
@@ -60,13 +59,13 @@ du -sh /root/dump/upl_database/          # total size
 ```bash
 cd /root/dump && tar czf /tmp/dump.tgz upl_database/
 ls -lh /tmp/dump.tgz    # check size
-# Then download via Hostinger's file manager (Browser → File Manager),
+# Then download via your hosting provider's file manager (Browser → File Manager),
 # or use scp from your own machine:
 #   scp root@<VPS_IP>:/tmp/dump.tgz .
 ```
 
 **Option 2 (larger dump): download directly**
-Use Hostinger's **File Manager** (Browser UI) to navigate to `/tmp/dump.tgz`
+Use your hosting provider's **File Manager** (Browser UI) to navigate to `/tmp/dump.tgz`
 and click Download, or run this on your **local** machine:
 ```bash
 scp root@<VPS-IP>:/tmp/dump.tgz C:\Users\AGBS Studio\ZCodeProject\
