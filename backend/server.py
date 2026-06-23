@@ -276,49 +276,74 @@ CHAIN_CONFIG = {
     }
 }
 
-# UPL Contracts - DEPLOYED ON ALL 4 MAINNETS
-# Same addresses across all chains (deterministic deployer nonce)
+# UPL Contracts — known deployments per chain.
+#
+# Status (post P1.3 audit + P1.4 wiring, 2026-06-23):
+#   - privacy_relayer / stealth_registry: the addresses here are PLACEHOLDERS. They
+#     predate the reconciled PrivacyRelayer.sol (P1.1) and StealthAddressRegistry.sol
+#     (P1.2) and, per the P1.3 audit on-chain probe, are NOT the bytecode of those
+#     contracts (the deployed "relayer" is 251 B with 2 selectors and the deployed
+#     "registry" is 418 B with 3 selectors including owner(); our contracts expose
+#     6+ each and don't inherit Ownable). The reconciled read-paths
+#     (`_relayer_address_for`, the relayer stats endpoint, the stealth-registry
+#     reads) are correct against the contract surface and will return real data as
+#     soon as real deployments land. P1.6 adds the Hardhat/Foundry deploy + ABI
+#     export; P1.9 deploys the real contract bytecode to Base mainnet and writes
+#     deployed_base.json; P1.5 will then make this table load from that file (this
+#     static table is replaced, not edited, by P1.5).
+#   - uniswap_wrapper: None on every chain — the UniswapPrivacyWrapper contract
+#     (contracts/UniswapPrivacyWrapper.sol) is written and reconciled but NOT yet
+#     deployed (P1.9). The wrapper ABI and a `_uniswap_wrapper_address_for(chain)`
+#     resolver are defined just below `PRIVACY_RELAYER_ABI` so the wrapper is a
+#     first-class UPL contract: its surface is matched 1:1 to the Solidity, and a
+#     read-path can resolve it once an address is filled in. Until then, the
+#     `/uniswap/quote` endpoint keeps quoting via the raw Uniswap V3 Quoter
+#     (UNISWAP_V3_CONTRACTS below) and the privacy fee is computed off-chain;
+#     routing the *execution* of the swap through privateSwapETHForToken (instead
+#     of the user calling the raw Uniswap Router) is the separate P1.13 step.
+#     We deliberately do NOT pre-fill a fake address here — the P1.3 audit
+#     retired exactly that pattern for the ZK verifier glue.
 UPL_CONTRACTS = {
     "base": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
-        "uniswap_wrapper": None,
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://basescan.org"
     },
     "arbitrum": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
-        "uniswap_wrapper": None,
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://arbiscan.io"
     },
     "polygon": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
-        "uniswap_wrapper": None,
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://polygonscan.com"
     },
     "optimism": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
-        "uniswap_wrapper": None,
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://optimistic.etherscan.io"
     },
     "bnb": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
-        "uniswap_wrapper": None,
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://bscscan.com"
     },
     "avalanche": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
-        "uniswap_wrapper": None,
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://snowtrace.io"
     },
     "hyperliquid": {
-        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",
-        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",
-        "uniswap_wrapper": None,
+        "privacy_relayer": "0x0A81ea0f61fF91E1E0F54A8A645E7174a1FEfB5c",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "stealth_registry": "0xf2E7A6734E58774A8417c176AaE3898667699Ff4",  # PLACEHOLDER (see header) — replaced by P1.5/P1.9
+        "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
         "explorer": "https://purrsec.com"
     }
 }
@@ -1388,6 +1413,32 @@ PRIVACY_RELAYER_ABI = [
     {"inputs":[],"name":"totalRelayed","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
 ]
 
+# UniswapPrivacyWrapper.sol ABI — reconciled 1:1 with the Solidity surface
+# (P1.4). This is the contract whose `privateSwapETHForToken` /
+# `privateSwapTokenForETH` / `privateSwapTokenForToken` the relayer will route
+# real private swaps through once it is deployed (P1.9) and the execution path
+# moves off the raw Uniswap Router (P1.13). Four public reads (`swapRouter`,
+# `WETH`, `feeRate`, `feeRecipient`) plus the `FEE_DENOMINATOR` constant are
+# exposed so a read-path can quote the on-chain fee rate and prove the wrapper
+# bytecode at a claimed address is really ours (selector sweep, same probe the
+# P1.3 audit ran against the relayer/registry). The `PrivateSwap(bytes32
+# indexed, uint256)` event and `receive()` are intentionally NOT in this ABI
+# list — neither is callable as a function from the backend, and including
+# them would only inflate eth_call selectors. This ABI is *declared* here so
+# the wrapper is a first-class UPL contract today; no endpoint eth_call's into
+# it yet because there is no deployed address to call (UPL_CONTRACTS has
+# `uniswap_wrapper: None` on every chain).
+UNISWAP_PRIVACY_WRAPPER_ABI = [
+    {"inputs":[{"name":"tokenOut","type":"address"},{"name":"fee","type":"uint24"},{"name":"amountOutMinimum","type":"uint256"},{"name":"recipient","type":"address"},{"name":"deadline","type":"uint256"}],"name":"privateSwapETHForToken","outputs":[{"name":"amountOut","type":"uint256"}],"stateMutability":"payable","type":"function"},
+    {"inputs":[{"name":"tokenIn","type":"address"},{"name":"amountIn","type":"uint256"},{"name":"fee","type":"uint24"},{"name":"amountOutMinimum","type":"uint256"},{"name":"recipient","type":"address"},{"name":"deadline","type":"uint256"}],"name":"privateSwapTokenForETH","outputs":[{"name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[{"name":"tokenIn","type":"address"},{"name":"tokenOut","type":"address"},{"name":"amountIn","type":"uint256"},{"name":"fee","type":"uint24"},{"name":"amountOutMinimum","type":"uint256"},{"name":"recipient","type":"address"},{"name":"deadline","type":"uint256"}],"name":"privateSwapTokenForToken","outputs":[{"name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[],"name":"swapRouter","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"WETH","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"feeRate","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"feeRecipient","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"FEE_DENOMINATOR","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+]
+
 # EIP-712 typed data the user signs to authorise a private relay. The relayer
 # service (P1.10) verifies this signature before submitting `relay()`, so the
 # relayer can prove to the chain/fees logic that the user consented to this
@@ -1456,6 +1507,22 @@ def _relayer_address_for(chain: str) -> Optional[str]:
     if not cfg:
         return None
     addr = cfg.get("privacy_relayer")
+    return addr if addr and addr.lower() != "0x0" else None
+
+
+def _uniswap_wrapper_address_for(chain: str) -> Optional[str]:
+    """Resolve the deployed UniswapPrivacyWrapper address for a chain from
+    UPL_CONTRACTS. Mirrors `_relayer_address_for` (P1.1). Returns None when the
+    wrapper has not been deployed on this chain yet — which is the case on
+    every chain today (the row is `uniswap_wrapper: None`, see the UPL_CONTRACTS
+    header). Callers use the None to 503 cleanly rather than eth_call'ing into
+    an address we cannot prove is ours; the same anti-pattern the P1.3 audit
+    retired for the dead ZK verifier glue. P1.9 fills real addresses here and
+    P1.13 moves swap execution behind `privateSwapETHForToken`."""
+    cfg = UPL_CONTRACTS.get(chain)
+    if not cfg:
+        return None
+    addr = cfg.get("uniswap_wrapper")
     return addr if addr and addr.lower() != "0x0" else None
 
 @api_router.post("/relayer/prepare-tx")
