@@ -233,11 +233,11 @@ module upl::relayer_registry_tests {
         let mut registry = rr::new_test_registry(&mut ctx);
         let admin = rr::new_test_admin_cap(&mut ctx);
 
-        rr::approve(&admin, &mut registry, @0xA, x"old", &clock);
-        assert!(rr::endpoint_hash(&registry, @0xA) == x"old");
+        rr::approve(&admin, &mut registry, @0xA, x"6f6c64", &clock);
+        assert!(rr::endpoint_hash(&registry, @0xA) == x"6f6c64");
 
-        rr::update_endpoint(&admin, &mut registry, @0xA, x"new");
-        assert!(rr::endpoint_hash(&registry, @0xA) == x"new");
+        rr::update_endpoint(&admin, &mut registry, @0xA, x"6e6577");
+        assert!(rr::endpoint_hash(&registry, @0xA) == x"6e6577");
 
         rr::destroy_test_admin_cap(admin);
         rr::destroy_test_registry(registry);
@@ -251,7 +251,7 @@ module upl::relayer_registry_tests {
         let mut ctx = tx_context::dummy();
         let mut registry = rr::new_test_registry(&mut ctx);
         let admin = rr::new_test_admin_cap(&mut ctx);
-        rr::update_endpoint(&admin, &mut registry, @0xDEAD, x"new");
+        rr::update_endpoint(&admin, &mut registry, @0xDEAD, x"6e6577");
         rr::destroy_test_admin_cap(admin);
         rr::destroy_test_registry(registry);
     }
@@ -299,7 +299,7 @@ module upl::relayer_registry_tests {
         let admin = rr::new_test_admin_cap(&mut ctx);
 
         // Approve
-        rr::approve(&admin, &mut registry, @0xA, x"v1", &clock);
+        rr::approve(&admin, &mut registry, @0xA, x"7631", &clock);
         assert!(rr::active_count(&registry) == 1);
         assert!(rr::total_registered(&registry) == 1);
 
@@ -316,8 +316,8 @@ module upl::relayer_registry_tests {
         assert!(rr::is_active(&registry, @0xA));
 
         // Update endpoint
-        rr::update_endpoint(&admin, &mut registry, @0xA, x"v2");
-        assert!(rr::endpoint_hash(&registry, @0xA) == x"v2");
+        rr::update_endpoint(&admin, &mut registry, @0xA, x"7632");
+        assert!(rr::endpoint_hash(&registry, @0xA) == x"7632");
 
         rr::destroy_test_admin_cap(admin);
         rr::destroy_test_registry(registry);
