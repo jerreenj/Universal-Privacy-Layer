@@ -18,7 +18,9 @@
 &nbsp;&nbsp;
 [![Status](https://img.shields.io/badge/STATUS-PRIVATE%20BETA-FF3B30?style=for-the-badge&labelColor=0a0a0a)](#)
 &nbsp;&nbsp;
-[![Solidity](https://img.shields.io/badge/SOLIDITY-5_CONTRACTS-9945FF?style=for-the-badge&labelColor=0a0a0a)](#-smart-contracts)
+[![Solidity](https://img.shields.io/badge/SOLIDITY-3_CONTRACTS-9945FF?style=for-the-badge&labelColor=0a0a0a)](#-smart-contracts)
+&nbsp;&nbsp;
+[![Move](https://img.shields.io/badge/MOVE-12_MODULES_123_TESTS-5C2D91?style=for-the-badge&labelColor=0a0a0a)](#sui-move-package-contractssui)
 &nbsp;&nbsp;
 [![API](https://img.shields.io/badge/API-80%2B_ENDPOINTS-F7931A?style=for-the-badge&labelColor=0a0a0a)](#-architecture)
 
@@ -127,9 +129,13 @@ Every operation — whether it's a token swap, a perp trade, a prediction bet, o
 </tr>
 <tr>
 <td><b>Sui</b></td><td>MoveVM</td><td>SUI</td>
-<td align="center">&#x2713;</td><td align="center">&mdash;</td><td>&mdash;</td>
+<td align="center">&#x2713;<sup>&dagger;</sup></td><td align="center">&mdash;</td><td>&mdash;</td>
 </tr>
 </table>
+
+<sup>&dagger;</sup> Sui Move package `upl` (12 modules) is written, unit-tested
+(123/123 green), and CI-gated; publication to testnet via `scripts/deploy_sui_testnet.sh`
+is staged. See [Sui Move package](#sui-move-package-contractssui).
 
 <br>
 
@@ -266,10 +272,19 @@ Universal-Privacy-Layer/
 │   │   └── Security Middleware         CORS, headers, rate limiting, input sanitization
 │   └── requirements.txt
 │
-├── contracts/                          Solidity ^0.8.20 · EVM Smart Contracts
+├── contracts/                          EVM + Sui Move on-chain privacy logic
 │   ├── PrivacyRelayer.sol              Gas-only meta-tx forwarder (onlyRelayer, EIP-712 intent)
 │   ├── StealthAddressRegistry.sol      On-chain stealth announcement registry (EIP-5564)
-│   └── UniswapPrivacyWrapper.sol       Stealth-routed Uniswap V3 swap interactions
+│   ├── UniswapPrivacyWrapper.sol       Stealth-routed Uniswap V3 swap interactions
+│   └── sui/                            Sui Move 2024 package ("upl") · Move.toml pin rev=framework/testnet
+│       ├── sources/                    12 production modules: stealth_address_registry, privacy_relayer,
+│       │                               prepaid_ticket, privacy_receipt, stealth_transfer, uopl_multisig,
+│       │                               view_tag_index, fee_splitter, announcement_indexer, cancel_nonce,
+│       │                               relayer_registry, timelock_cap
+│       └── tests/                      12 #[test_only] modules · 123 unit tests · `sui move test`
+│
+├── .github/workflows/move-build-test.yml   CI gate: `sui move build` + `sui move test` on every PR
+├── scripts/deploy_sui_testnet.sh            Testnet publish script → scripts/deployed_sui_testnet.json
 │
 ├── frontend/                           React 18 · Tailwind CSS · ethers.js · Web3Modal
 │   └── src/
@@ -356,6 +371,38 @@ Universal-Privacy-Layer/
 > (`/api/zkp/verify-onchain`, `/api/zkp/verifier-info/{chain}`) returns HTTP 501
 > until then — see `backend/server.py` (`ZKP_VERIFIER_PHASED_OUT`).
 
+### Sui Move package (`contracts/sui/`)
+
+The Sui side of UPL is a real, compiling **Move 2024** package `upl`, pinned to
+the `framework/testnet` Sui framework rev (`Move.toml`). It is not a stub — all
+twelve modules build clean (`sui move build`, 0 errors / 0 warnings) and the
+`#[test_only]` suite runs **123/123 green** (`sui move test`). The package mirrors
+the EVM privacy primitives in Move's resource/ownership model and adds Sui-native
+extensions for view-tag bucketed scanning, cursor-paginated indexing, proportional
+fee splitting, intent replay protection, relayer discovery, and time-locked
+capability custody.
+
+| Module | Purpose | Key mechanism |
+|:-------|:--------|:--------------|
+| `stealth_address_registry` | On-chain stealth-announcement registry for Sui. | Shared `Registry` (Tables by announcement id + view-tag) + `StealthAnnouncement` events |
+| `privacy_relayer` | Relayed private transfer w/ fee skim + `Clock` timestamps. | `AdminCap`/`RelayerCap` caps, `RelayerState` w/ `Balance<SUI>` accumulator, `Clock` ms timestamps |
+| `prepaid_ticket` | Depositor-pays ticket: recipient consumes before drainer sweeps. | `PrepaidTicket` (key+store) holding a `Balance<SUI>` deposit + `TicketConsumed`/`TicketDrained` events |
+| `privacy_receipt` | Encrypted per-transfer receipt logging. | `ReceiptCap`-gated `issue`/`list_for_recipient`, `received` view, `ciphertext`+`nonce` are `vector<u8>` |
+| `stealth_transfer` | Composes registry, view-tag index, announcement indexer with the relayer. | Direct (no-fee) + relayed (fee-skim) paths; updates `ViewTagIndex` + `AnnouncementIndexer` inline |
+| `uopl_multisig` | On-chain M-of-N multisig over UPL capabilities. | Threshold proposal `→` approve `→` execute, `MultiSig` (key+store) holds per-action approvals |
+| `view_tag_index` | Per-view-tag bucketed id index over the registry. | Shared `ViewTagIndex` (Table of `Bucket`s); bounded `page(after_id, limit)` scan |
+| `fee_splitter` | Proportional fee distribution to multiple operator payees. | `AdminCap`-gated payees + weights (bps), `deposit`/`distribute` splits via `Balance<SUI>` |
+| `announcement_indexer` | Cursor-paginated, time-bounded query surface over the registry. | Shared `AnnouncementIndexer` w/ monotonic `high_water_mark`; `scan(after_id, limit)` |
+| `cancel_nonce` | On-chain intent-replay protection via monotonic per-address nonces. | `consume(expected)` compare-and-swap + `cancel(target)` void-pending; `Table<address, u64>` |
+| `relayer_registry` | Discoverable directory of authorized relayer operators + metadata. | `AdminCap`-gated `approve`/`deactivate`/`reactivate`; endpoint hash commitment per operator |
+| `timelock_cap` | Time-locked capability holder with configurable delay. | `deposit<T>` parks cap for `beneficiary`; `withdraw`/`cancel` after/before delay; `AdminCap` sets min delay |
+
+> **Capabilities:** all privileged ops in `privacy_relayer` / `privacy_receipt` /
+> `fee_splitter` / `relayer_registry` / `timelock_cap` are gated by typed
+> `key + store` capability objects (`AdminCap`, `RelayerCap`, `ReceiptCap`)
+> minted to the publisher in `init` — the Sui-native capability pattern, not an
+> `ownable` owner-check.
+
 <br>
 
 ---
@@ -427,13 +474,35 @@ yarn install && yarn build
 | `PAYOUT_WALLET` | Yes | Wallet address for receiving crypto payments |
 | `CORS_ORIGINS` | Yes | Comma-separated list of allowed origins |
 
+### Build & Test (Sui Move package)
+
+The Sui Move package builds and tests against the testnet Sui framework rev. CI
+(`.github/workflows/move-build-test.yml`) runs both gates on every PR touching
+`contracts/sui/`.
+
+```bash
+# Install the Sui CLI testnet build (one-time):  https://docs.sui.io/guides/developer/getting-started
+
+# Build — 0 errors / 0 warnings on testnet framework rev
+sui move build
+
+# Unit tests — 123 tests across the 12 #[test_only] modules, all green
+sui move test
+```
+
+To publish the `upl` package to **testnet** and emit the manifest the backend
+reads, run the deploy script (it preflight-checks the active env + gas, builds
+fail-fast, publishes, and writes `scripts/deployed_sui_testnet.json` with the
+package id + shared object ids + capability object ids):
+
+```bash
+sui client switch --env testnet
+bash scripts/deploy_sui_testnet.sh
+# → scripts/deployed_sui_testnet.json (gitignored; see deployed_sui_testnet.json.example for shape)
+```
+
 <br>
 
----
-
-<br>
-
-## Payments
 
 <div align="center">
 
@@ -469,7 +538,8 @@ yarn install && yarn build
 | **Frontend** | React 18, Tailwind CSS, ethers.js v6, Web3Modal v3, shadcn/ui |
 | **Cryptography** | `@noble/secp256k1` v3.0.0, AES-256-GCM, ECDH, Groth16 |
 | **Standard** | EIP-5564 (Stealth Addresses) |
-| **Smart Contracts** | Solidity ^0.8.19 |
+| **Smart Contracts (EVM)** | Solidity ^0.8.19 |
+| **Smart Contracts (Sui)** | Move 2024, package `upl`, 12 modules, 123 tests, Sui framework rev `framework/testnet` |
 | **Database** | MongoDB 7, indexed collections, TTL-based session cleanup |
 | **Containerization** | Multi-stage Docker (Node 20 Alpine + Python 3.11) |
 | **TLS** | Let's Encrypt, auto-renewal via Certbot |

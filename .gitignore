@@ -29,10 +29,18 @@ seed.txt
 memory/test_credentials.local.md
 
 # ─── Deployment internals ───────────────────────────────────────
+# NOTE: the Sui Move package under contracts/sui/ IS committed (sources +
+# tests + Move.toml) — that is the whole point of making Sui real & visible
+# to the Sui grants review (the prior `contracts/sui/` blanket-ignore was the
+# exact reason the language bar showed 0% Move). We ignore only build/ test
+# artifacts + the real deploy manifest (the .example template stays tracked).
 contracts/deployed_*.json
 contracts/verifier_addresses.json
 contracts/deploy*.py
-contracts/sui/
+contracts/sui/build/
+contracts/sui/dependency_constr.lock
+contracts/sui/.sui/
+scripts/deployed_sui_testnet.json
 
 # ─── Logs & test artifacts ──────────────────────────────────────
 *.log

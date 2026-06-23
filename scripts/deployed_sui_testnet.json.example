@@ -1,0 +1,25 @@
+{
+  "network": "testnet",
+  "sui_cli_version": "sui 1.73.2-testnet",
+  "published_at": "2026-06-23T18:00:00Z",
+  "package_id": "0xREPLACE_WITH_REAL_PACKAGE_ID_FROM_PUBLISH",
+  "modules": [
+    "stealth_address_registry",
+    "privacy_relayer",
+    "prepaid_ticket",
+    "privacy_receipt",
+    "stealth_transfer",
+    "uopl_multisig"
+  ],
+  "shared_objects": {
+    "registry": "0xREPLACE_WITH_REGISTRY_OBJECT_ID",
+    "relayer_state": "0xREPLACE_WITH_RELAYER_STATE_OBJECT_ID"
+  },
+  "owned_capabilities": {
+    "admin_cap": "0xREPLACE_WITH_ADMIN_CAP_ID",
+    "relayer_cap": "0xREPLACE_WITH_RELAYER_CAP_ID",
+    "receipt_cap": "0xREPLACE_WITH_RECEIPT_CAP_ID",
+    "upgrade_cap": "0xREPLACE_WITH_UPGRADE_CAP_ID"
+  },
+  "publisher_address": "0xREPLACE_WITH_DEPLOYER_ADDRESS"
+}
