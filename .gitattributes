@@ -39,6 +39,12 @@
 # doesn't dominate the bar. Add per-tree lines here as the repo grows.
 infra/terraform-modules/** linguist-vendored=true
 
+# ─── Frontend: exclude from language bar ──────────────────────────────────
+# The repo is a smart-contract project (Move + Solidity). The Next.js frontend
+# is an application layer, not the core protocol code. Marking it vendored keeps
+# the GitHub language bar focused on the protocol layer.
+frontend/** linguist-vendored=true
+
 # ─── Line endings / binary marks for hygiene ─────────────────────────────────
 *.sh text eol=lf
 *.move text eol=lf
