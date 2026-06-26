@@ -81,7 +81,7 @@ def rate_limit(request: StarletteRequest, max_calls: int = 20, window: int = 60)
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # Public endpoints that don't require a session token
-    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access", "/api/payments/info", "/api/payments/submit", "/api/payments/email"}
+    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access"}
     PUBLIC_PREFIXES = ()
 
     async def dispatch(self, request: StarletteRequest, call_next):
@@ -3850,102 +3850,6 @@ async def check_stealth_balance(addresses: List[str] = Body(..., embed=True), ch
                 results[addr] = "0"
     return {"balances": results, "chain": chain}
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PAYMENTS — Direct Crypto (send to wallet)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-PAYOUT_WALLET = os.environ.get("PAYOUT_WALLET", "")
-
-PLANS = {
-    "phantom_trial": {"name": "Phantom — 14-Day Trial", "amount_usd": 50, "currency": "usd"},
-    "phantom": {"name": "Phantom Monthly", "amount_usd": 499, "currency": "usd"},
-    "specter": {"name": "Specter Monthly", "amount_usd": 4999, "currency": "usd"},
-    "specter_annual": {"name": "Specter Annual", "amount_usd": 3999, "currency": "usd"},
-    "wraith": {"name": "Wraith Monthly", "amount_usd": 24999, "currency": "usd"},
-    "wraith_annual": {"name": "Wraith Annual", "amount_usd": 19999, "currency": "usd"},
-}
-
-ACCEPTED_TOKENS = [
-    {"symbol": "ETH", "name": "Ethereum", "chains": ["Ethereum", "Base", "Arbitrum", "Optimism"]},
-    {"symbol": "USDC", "name": "USD Coin", "chains": ["Ethereum", "Base", "Arbitrum", "Polygon", "Optimism"]},
-    {"symbol": "USDT", "name": "Tether", "chains": ["Ethereum", "Polygon", "BNB Chain", "Arbitrum"]},
-    {"symbol": "DAI", "name": "Dai", "chains": ["Ethereum", "Base", "Polygon"]},
-    {"symbol": "MATIC", "name": "Polygon", "chains": ["Polygon"]},
-    {"symbol": "BNB", "name": "BNB", "chains": ["BNB Chain"]},
-    {"symbol": "AVAX", "name": "Avalanche", "chains": ["Avalanche"]},
-]
-
-
-@api_router.get("/payments/info")
-async def payment_info():
-    """Public endpoint: returns wallet address, accepted tokens, and plans."""
-    return {
-        "wallet": PAYOUT_WALLET,
-        "accepted_tokens": ACCEPTED_TOKENS,
-        "plans": {k: {"name": v["name"], "amount_usd": v["amount_usd"]} for k, v in PLANS.items()},
-    }
-
-
-@api_router.post("/payments/submit")
-async def submit_payment(request: StarletteRequest):
-    """User submits tx hash after sending crypto. We record it for manual verification."""
-    body = await request.json()
-    plan_id = body.get("plan_id", "")
-    tx_hash = body.get("tx_hash", "")
-    chain = body.get("chain", "")
-    token = body.get("token", "")
-    sender = body.get("sender_address", "")
-
-    if plan_id not in PLANS:
-        raise HTTPException(status_code=400, detail="Invalid plan")
-    if not tx_hash or len(tx_hash) < 10:
-        raise HTTPException(status_code=400, detail="Invalid transaction hash")
-
-    plan = PLANS[plan_id]
-
-    # Prevent duplicate submissions
-    existing = await db.payment_transactions.find_one({"tx_hash": tx_hash})
-    if existing:
-        raise HTTPException(status_code=409, detail="Transaction already submitted")
-
-    await db.payment_transactions.insert_one({
-        "tx_hash": tx_hash,
-        "plan_id": plan_id,
-        "plan_name": plan["name"],
-        "amount_usd": plan["amount_usd"],
-        "chain": chain,
-        "token": token,
-        "sender_address": sender.lower() if sender else "",
-        "payout_wallet": PAYOUT_WALLET,
-        "payment_status": "pending_verification",
-        "buyer_email": "",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-
-    return {"status": "submitted", "message": "Payment submitted for verification. You'll be activated shortly."}
-
-
-@api_router.post("/payments/email")
-async def save_buyer_email(request: StarletteRequest):
-    """Save buyer email after payment submission."""
-    body = await request.json()
-    tx_hash = body.get("tx_hash", "")
-    email = body.get("email", "")
-    if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="Invalid email")
-    result = await db.payment_transactions.update_one(
-        {"tx_hash": tx_hash},
-        {"$set": {"buyer_email": email.strip().lower()}}
-    )
-    if result.matched_count == 0:
-        # Store anyway for manual lookup
-        await db.payment_transactions.update_one(
-            {"buyer_email": email.strip().lower()},
-            {"$set": {"buyer_email": email.strip().lower(), "tx_hash": tx_hash, "created_at": datetime.now(timezone.utc).isoformat()}},
-            upsert=True
-        )
-    return {"saved": True}
 
 
 # Include router
