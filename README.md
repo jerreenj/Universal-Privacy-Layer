@@ -294,8 +294,8 @@ Universal-Privacy-Layer/
 │       │   ├── features/               Stealth send/receive, messaging, DeFi, NFT, multisig
 │       │   ├── layout/                 Navbar, dashboard hub, animated landing
 │       │   ├── common/                 BackButton, CopyButton, shared utilities
-│       │   └── ui/                     shadcn/ui primitives, interactive pricing section
-│       ├── pages/                      Pricing page with crypto payment flow
+│       │   └── ui/                     shadcn/ui primitives
+│       ├── pages/                      Route-level page components
 │       ├── config/                     Chain registry, RPC endpoints, API constants
 │       ├── context/                    Multi-chain wallet state provider (WalletContext)
 │       ├── lib/                        messageCrypto.js (ECDH), session.js (token mgmt)
@@ -500,29 +500,6 @@ sui client switch --env testnet
 bash scripts/deploy_sui_testnet.sh
 # → scripts/deployed_sui_testnet.json (gitignored; see deployed_sui_testnet.json.example for shape)
 ```
-
-<br>
-
-
-<div align="center">
-
-**Crypto-only. No card. No KYC. No intermediary.**
-
-</div>
-
-<br>
-
-| Plan | Price | Who It's For | Payment Methods |
-|:-----|:------|:-------------|:---------------|
-| **Phantom** | $50 / 14-day trial | Solo operators who need to move in silence | Wallet &middot; QR Code &middot; Manual Transfer |
-| **Specter** | $4,999 / month | Individuals demanding full privacy across all protocols | Wallet &middot; QR Code &middot; Manual Transfer |
-| **Wraith** | $24,999 / month | Institutions and enterprises requiring dedicated infrastructure | Contact for custom onboarding |
-
-<br>
-
-**Accepted tokens:** ETH &middot; USDC &middot; USDT &middot; DAI &middot; MATIC &middot; BNB &middot; AVAX
-
-**Accepted chains:** Ethereum &middot; Base &middot; Arbitrum &middot; Polygon &middot; Optimism &middot; BNB Chain &middot; Avalanche
 
 <br>
 

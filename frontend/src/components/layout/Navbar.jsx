@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, CreditCard } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { CHAINS, VM_GROUPS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -25,11 +25,6 @@ export function Navbar() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button data-testid="nav-pricing" onClick={() => navigate("/pricing")}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white/60 hover:text-white transition-colors">
-            <CreditCard className="w-4 h-4" />
-            <span className="hidden sm:inline">Pricing</span>
-          </button>
           <div className="relative">
             <button data-testid="chain-selector" onClick={() => setShowChains(!showChains)}
               className="flex items-center gap-2 px-3 py-2 border border-white/20 hover:border-white/40 transition-all text-sm">

@@ -15,8 +15,6 @@ Production-ready privacy layer for crypto transactions. DeFi + privacy-preservin
 - [x] EIP-5564 Stealth Payments (off-chain relay)
 - [x] E2E Encrypted Messaging (ECDH + AES-256-GCM)
 - [x] Private DeFi (Uniswap V3, Hyperliquid, Polymarket)
-- [x] Crypto-only payments (QR, MetaMask, manual)
-- [x] Pricing page (Phantom $50, Specter $4,999, Wraith $24,999)
 - [x] Deployed to VPS with HTTPS + Let's Encrypt
 - [x] Wallet Privacy Analyzer — 6 EVM chains, privacy score 0-100 (2026-03-28)
 - [x] Encrypted Receipts — AES-256-GCM, one-time code decryption (2026-03-28)
@@ -26,8 +24,6 @@ Production-ready privacy layer for crypto transactions. DeFi + privacy-preservin
 - [x] Stealth address auto-rotation — max 3 uses, then new address (2026-03-28)
 - [x] Inbox fix — checks real + all stealth addresses (2026-03-28)
 - [x] 72-hour message auto-delete via MongoDB TTL (2026-03-28)
-- [x] Email collection after payment (2026-03-28)
-- [x] Contact email: jerreen@jasprlabs.com on pricing page (2026-03-28)
 - [x] Retool admin dashboard — SSH tunnel to MongoDB (2026-03-28)
 
 ## Pending (BLOCKED on gas funding)

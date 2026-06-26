@@ -13,9 +13,8 @@ import { WalletProvider } from "@/context/WalletContext";
 
 // Pages & Components — lazy-loaded so each route ships in its own chunk and
 // the wallet SDKs / route components don't block first paint of the landing
-// page. AccessGate/Pricing/Dashboard are only fetched when the user navigates
-// to them, keeping TBT low on the initial load.
-const PricingPage = lazy(() => import("@/pages/Pricing"));
+// page. AccessGate/Dashboard are only fetched when the user navigates to
+// them, keeping TBT low on the initial load.
 const AccessGate = lazy(() => import("@/components/auth/AccessGate").then(m => ({ default: m.AccessGate })));
 const Dashboard = lazy(() => import("@/components/layout/Dashboard").then(m => ({ default: m.Dashboard })));
 
@@ -29,7 +28,6 @@ function App() {
       <WalletProvider>
         <Suspense fallback={<RouteFallback />}>
           <Routes>
-            <Route path="/pricing" element={<PricingPage />} />
             <Route path="/*" element={
               <>
                 <Dashboard />

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import axios from "axios";
 import { Loader2 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 import { setSessionToken } from "@/lib/session";
 
 export function AccessGate({ onGranted }) {
@@ -9,7 +8,6 @@ export function AccessGate({ onGranted }) {
   const [error, setError] = useState(false);
   const [shake, setShake] = useState(false);
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
   const attempt = async () => {
     if (!code) return;
@@ -53,13 +51,6 @@ export function AccessGate({ onGranted }) {
         >
           {loading && <Loader2 className="w-4 h-4 animate-spin" />}
           Enter
-        </button>
-        <button
-          data-testid="access-gate-pricing-link"
-          onClick={() => navigate("/pricing")}
-          className="w-full mt-3 py-2 text-xs text-white/30 hover:text-white/60 transition-colors uppercase tracking-wider"
-        >
-          View Pricing
         </button>
       </div>
     </div>
