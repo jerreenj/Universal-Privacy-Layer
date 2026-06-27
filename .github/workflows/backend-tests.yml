@@ -1,0 +1,41 @@
+name: Backend Tests
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-tests.yml"
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests (mocked DB — no MongoDB needed)
+        env:
+          MONGO_URL: "mongodb://fake:27017"
+          DB_NAME: "upl_test_database"
+          ACCESS_CODE: "ci-test-code"
+          PAYOUT_WALLET: "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"
+        run: pytest tests/test_auth_health.py tests/test_payments.py -v --tb=short 2>&1

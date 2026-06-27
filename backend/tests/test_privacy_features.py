@@ -11,7 +11,7 @@ from datetime import datetime
 import pytest
 import requests
 
-from conftest import TEST_OWNER_ADDRESS
+from conftest_integration import TEST_OWNER_ADDRESS
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
