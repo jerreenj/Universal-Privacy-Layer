@@ -260,9 +260,9 @@ Designed to prevent linkage back to your identity.
 ```
 Universal-Privacy-Layer/
 │
-├── backend/                            Python 3.11 · FastAPI · Motor (async MongoDB)
+├── backend/                            Python 3.11 · FastAPI · async data layer
 │   ├── server.py                       80+ API endpoints, single-file microservice
-│   │   ├── Session Auth                Passphrase → token, rate-limited, MongoDB-persisted
+│   │   ├── Session Auth                Passphrase → token, rate-limited, database-persisted
 │   │   ├── Stealth Engine              EIP-5564 meta-address generation, announcement relay
 │   │   ├── Privacy Router              Cross-chain splits, relayer dispatch, fee calculation
 │   │   ├── DeFi Integrations           Uniswap V3, Hyperliquid, Polymarket CLOB
@@ -317,7 +317,7 @@ Universal-Privacy-Layer/
          │                                                              │
          │                       ACCESS GATE                           │
          │              Passphrase → Session Token                     │
-         │          Rate-limited · 1-year TTL · MongoDB                │
+         │          Rate-limited · 1-year TTL · storage                │
          │                                                              │
          └────────────────────────┬─────────────────────────────────────┘
                                   │
@@ -413,7 +413,7 @@ capability custody.
 
 | Layer | Implementation |
 |:------|:---------------|
-| **Authentication** | Session token issued after passphrase verification. Required on every API call. Persisted in MongoDB with in-memory fallback — survives restarts and disk failures. |
+| **Authentication** | Session token issued after passphrase verification. Required on every API call. Persisted in a managed database with in-memory fallback — survives restarts and disk failures. |
 | **Brute Force Protection** | Rate limited: 5 auth attempts per minute per IP address. Exponential backoff on repeated failures. |
 | **Private Key Handling** | Generated client-side in browser memory. Returned once to the user for backup. Never stored in any database, server memory, or log file. |
 | **Seed Phrase Policy** | Displayed once. Cleared from browser memory immediately after user confirms backup. Never transmitted to backend under any circumstance. |
@@ -421,11 +421,11 @@ capability custody.
 | **Wallet Session Hygiene** | WalletConnect and MetaMask session storage is wiped on disconnect. No tokens, keys, or state persist after logout. |
 | **CORS Policy** | Locked exclusively to production domain. No wildcard origins. Preflight requests validated. |
 | **API Surface** | `/docs` and `/openapi.json` endpoints disabled in production. No schema leakage. No route enumeration. |
-| **Input Sanitization** | All MongoDB regex queries escaped. All user inputs validated and type-checked server-side. Injection-proof by design. |
+| **Input Sanitization** | All database queries escaped. All user inputs validated and type-checked server-side. Injection-proof by design. |
 | **Error Handling** | Generic error messages only. No stack traces, internal state, or database details exposed in any response. |
 | **Request Limits** | 1 MB maximum request body. Payload size enforced at middleware level before any processing. |
 | **Security Headers** | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `X-XSS-Protection: 1; mode=block` on every response. |
-| **MongoDB Security** | Database bound to `127.0.0.1` only. Not exposed to public internet. No remote access. |
+| **Database Isolation** | Managed database accessible only to the application. Not exposed to the public internet. No remote access. |
 | **Docker Isolation** | Application runs in isolated container. No host filesystem access. Minimal attack surface. |
 
 <br>
@@ -478,13 +478,13 @@ bash scripts/deploy_sui_testnet.sh
 
 | Component | Specification |
 |:----------|:-------------|
-| **Backend** | Python 3.11, FastAPI, Motor (async MongoDB driver), httpx |
+| **Backend** | Python 3.11, FastAPI, async database driver, httpx |
 | **Frontend** | React 18, Tailwind CSS, ethers.js v6, Web3Modal v3, shadcn/ui |
 | **Cryptography** | `@noble/secp256k1` v3.0.0, AES-256-GCM, ECDH, Groth16 |
 | **Standard** | EIP-5564 (Stealth Addresses) |
 | **Smart Contracts (EVM)** | Solidity ^0.8.19 |
 | **Smart Contracts (Sui)** | Move 2024, package `upl`, 12 modules, 123 tests, Sui framework rev `framework/testnet` |
-| **Database** | MongoDB 7, indexed collections, TTL-based session cleanup |
+| **Database** | Managed document database, indexed collections, TTL-based session cleanup |
 | **Containerization** | Multi-stage Docker (Node 22 Alpine + Python 3.11) |
 | **TLS** | Azure-managed (Container Apps ingress) |
 | **Infrastructure** | Azure Container Apps + Azure Container Registry; GitHub Actions push-to-deploy |
