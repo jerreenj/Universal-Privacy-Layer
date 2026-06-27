@@ -36,6 +36,6 @@ jobs:
         env:
           MONGO_URL: "mongodb://fake:27017"
           DB_NAME: "upl_test_database"
-          ACCESS_CODE: "ci-test-code"
+          ACCESS_CODE: "test-access-code-123"
           PAYOUT_WALLET: "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"
-        run: pytest tests/test_auth_health.py tests/test_payments.py -v --tb=short 2>&1
+        run: pytest tests/test_auth_health.py tests/test_payments.py -p no:pytest_ethereum -v --tb=short 2>&1
