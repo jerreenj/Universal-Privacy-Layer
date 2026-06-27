@@ -301,7 +301,7 @@ Universal-Privacy-Layer/
 │       ├── lib/                        messageCrypto.js (ECDH), session.js (token mgmt)
 │       └── utils/                      stealth.js — EIP-5564 secp256k1 elliptic curve math
 │
-└── Dockerfile                          Multi-stage build: Node 20 (frontend) → Python 3.11 (backend)
+└── Dockerfile                          Multi-stage build: Node 22 (frontend) → Python 3.11 (backend)
 ```
 
 <br>
@@ -436,43 +436,10 @@ capability custody.
 
 ## Deployment
 
-### Docker (Recommended)
-
-```bash
-docker build -t upl .
-
-docker run -d --name upl --restart always \
-  -p 8001:8001 \
-  -e MONGO_URL=mongodb://localhost:27017 \
-  -e DB_NAME=privacycloak \
-  -e ACCESS_CODE=<passphrase> \
-  -e PAYOUT_WALLET=<your_wallet_address> \
-  -e CORS_ORIGINS=https://yourdomain.com \
-  upl
-```
-
-### Manual
-
-```bash
-# Backend
-cd backend
-pip install -r requirements.txt
-uvicorn server:app --host 0.0.0.0 --port 8001
-
-# Frontend
-cd frontend
-yarn install && yarn build
-```
-
-### Environment Variables
-
-| Variable | Required | Description |
-|:---------|:--------:|:------------|
-| `MONGO_URL` | Yes | MongoDB connection string |
-| `DB_NAME` | Yes | Database name |
-| `ACCESS_CODE` | Yes | Passphrase for the access gate |
-| `PAYOUT_WALLET` | Yes | Wallet address for receiving crypto payments |
-| `CORS_ORIGINS` | Yes | Comma-separated list of allowed origins |
+UPL is delivered as a **hosted infrastructure service** at
+[privacycloak.in](https://privacycloak.in) — running on Azure Container Apps
+fronted by Azure-managed TLS, with the image built and deployed on every push
+to `main` via GitHub Actions. Self-hosting is not a supported deployment.
 
 ### Build & Test (Sui Move package)
 
@@ -518,9 +485,9 @@ bash scripts/deploy_sui_testnet.sh
 | **Smart Contracts (EVM)** | Solidity ^0.8.19 |
 | **Smart Contracts (Sui)** | Move 2024, package `upl`, 12 modules, 123 tests, Sui framework rev `framework/testnet` |
 | **Database** | MongoDB 7, indexed collections, TTL-based session cleanup |
-| **Containerization** | Multi-stage Docker (Node 20 Alpine + Python 3.11) |
-| **TLS** | Let's Encrypt, auto-renewal via Certbot |
-| **Infrastructure** | Nginx reverse proxy, Docker process isolation |
+| **Containerization** | Multi-stage Docker (Node 22 Alpine + Python 3.11) |
+| **TLS** | Azure-managed (Container Apps ingress) |
+| **Infrastructure** | Azure Container Apps + Azure Container Registry; GitHub Actions push-to-deploy |
 
 <br>
 
