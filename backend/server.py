@@ -81,7 +81,7 @@ def rate_limit(request: StarletteRequest, max_calls: int = 20, window: int = 60)
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # Public endpoints that don't require a session token
-    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access"}
+    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access", "/api/payments/info", "/api/payments/submit"}
     PUBLIC_PREFIXES = ()
 
     async def dispatch(self, request: StarletteRequest, call_next):
@@ -3850,6 +3850,74 @@ async def check_stealth_balance(addresses: List[str] = Body(..., embed=True), ch
                 results[addr] = "0"
     return {"balances": results, "chain": chain}
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAYMENTS — Direct Crypto (send to wallet), plan-free
+# Pricing is handled B2-custom / offline per customer. This surface only
+# exposes the payout wallet + accepted tokens so a buyer can send an agreed
+# amount and submit the tx hash for manual verification. No fixed plans/tiers
+# are published. PAYOUT_WALLET is env-driven (empty default = disabled) so no
+# payout address is ever committed to the repo.
+# ═══════════════════════════════════════════════════════════════════════════════
+PAYOUT_WALLET = os.environ.get("PAYOUT_WALLET", "")
+
+ACCEPTED_TOKENS = [
+    {"symbol": "ETH", "name": "Ethereum", "chains": ["Ethereum", "Base", "Arbitrum", "Optimism"]},
+    {"symbol": "USDC", "name": "USD Coin", "chains": ["Ethereum", "Base", "Arbitrum", "Polygon", "Optimism"]},
+    {"symbol": "USDT", "name": "Tether", "chains": ["Ethereum", "Polygon", "BNB Chain", "Arbitrum"]},
+    {"symbol": "DAI", "name": "Dai", "chains": ["Ethereum", "Base", "Polygon"]},
+    {"symbol": "MATIC", "name": "Polygon", "chains": ["Polygon"]},
+    {"symbol": "BNB", "name": "BNB", "chains": ["BNB Chain"]},
+    {"symbol": "AVAX", "name": "Avalanche", "chains": ["Avalanche"]},
+]
+
+
+@api_router.get("/payments/info")
+async def payment_info():
+    """Public endpoint: payout wallet + accepted tokens for direct crypto
+    payment. No plans are published — amounts are agreed B2-custom per customer."""
+    return {
+        "enabled": bool(PAYOUT_WALLET),
+        "wallet": PAYOUT_WALLET,
+        "accepted_tokens": ACCEPTED_TOKENS,
+    }
+
+
+@api_router.post("/payments/submit")
+async def submit_payment(request: StarletteRequest):
+    """Buyer submits a tx hash after sending an agreed crypto amount to the
+    payout wallet. Recorded for manual verification — no fixed plan/amount."""
+    body = await request.json()
+    tx_hash = body.get("tx_hash", "")
+    amount_usd = body.get("amount_usd")  # free-form, agreed offline
+    chain = body.get("chain", "")
+    token = body.get("token", "")
+    sender = body.get("sender_address", "")
+    email = body.get("email", "")
+
+    if not tx_hash or len(tx_hash) < 10:
+        raise HTTPException(status_code=400, detail="Invalid transaction hash")
+    if email and "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+
+    # Prevent duplicate submissions
+    existing = await db.payment_transactions.find_one({"tx_hash": tx_hash})
+    if existing:
+        raise HTTPException(status_code=409, detail="Transaction already submitted")
+
+    await db.payment_transactions.insert_one({
+        "tx_hash": tx_hash,
+        "amount_usd": amount_usd,
+        "chain": chain,
+        "token": token,
+        "sender_address": sender.lower() if sender else "",
+        "payout_wallet": PAYOUT_WALLET,
+        "payment_status": "pending_verification",
+        "buyer_email": email.strip().lower() if email else "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {"status": "submitted", "message": "Payment submitted for verification. You'll be activated shortly."}
 
 
 # Include router
