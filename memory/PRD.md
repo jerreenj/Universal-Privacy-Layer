@@ -5,17 +5,17 @@ Production-ready privacy layer for crypto transactions. DeFi + privacy-preservin
 
 ## Architecture
 - Frontend: React 18 + Tailwind + ethers.js
-- Backend: FastAPI + MongoDB
+- Backend: FastAPI + managed database
 - Crypto: @noble/secp256k1 v3, EIP-5564
-- Hosting: VPS (IP stored in password manager) + Docker + Nginx + Let's Encrypt
-- Admin: Retool (connected via SSH tunnel to MongoDB)
+- Hosting: Azure Container Apps (managed TLS)
+- Admin: internal dashboard (private database access)
 
 ## Implemented
-- [x] Access Gate + persistent MongoDB sessions (1yr TTL)
+- [x] Access Gate + persistent database sessions (1yr TTL)
 - [x] EIP-5564 Stealth Payments (off-chain relay)
 - [x] E2E Encrypted Messaging (ECDH + AES-256-GCM)
 - [x] Private DeFi (Uniswap V3, Hyperliquid, Polymarket)
-- [x] Deployed to VPS with HTTPS + Let's Encrypt
+- [x] Deployed to Azure Container Apps with managed TLS
 - [x] Wallet Privacy Analyzer — 6 EVM chains, privacy score 0-100 (2026-03-28)
 - [x] Encrypted Receipts — AES-256-GCM, one-time code decryption (2026-03-28)
 - [x] Privacy Address Book — Encrypted contacts, full CRUD (2026-03-28)
@@ -23,8 +23,8 @@ Production-ready privacy layer for crypto transactions. DeFi + privacy-preservin
 - [x] Messaging privacy fix — stealth address as sender, never leaks public address (2026-03-28)
 - [x] Stealth address auto-rotation — max 3 uses, then new address (2026-03-28)
 - [x] Inbox fix — checks real + all stealth addresses (2026-03-28)
-- [x] 72-hour message auto-delete via MongoDB TTL (2026-03-28)
-- [x] Retool admin dashboard — SSH tunnel to MongoDB (2026-03-28)
+- [x] 72-hour message auto-delete via database TTL (2026-03-28)
+- [x] Internal admin dashboard — private database access (2026-03-28)
 
 ## Pending (BLOCKED on gas funding)
 - [ ] On-chain StealthAddressRegistry.sol deployment

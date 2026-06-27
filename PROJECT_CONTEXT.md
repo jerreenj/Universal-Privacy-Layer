@@ -19,12 +19,12 @@ plus private routing for DeFi (Uniswap, Hyperliquid, Polymarket).
 | Part | Stack | Entry point | Role |
 |------|-------|-------------|------|
 | 🖥️ **Frontend** | React 19, react-router 7, ethers v6, wagmi, viem, Tailwind 3, shadcn/ui, framer-motion | `frontend/src/index.js` → `App.js` | Web dashboard (~25 feature screens) |
-| ⚙️ **Backend** | Python 3.11, FastAPI 0.110, Motor (async MongoDB), web3.py, pycryptodome | `backend/server.py` (single file, ~3300 lines) | The "brain" — ~80 API endpoints, auth, rate-limiting, sessions |
+| ⚙️ **Backend** | Python 3.11, FastAPI 0.110, async database driver, web3.py, pycryptodome | `backend/server.py` (single file, ~3300 lines) | The "brain" — ~80 API endpoints, auth, rate-limiting, sessions |
 | 🔗 **Contracts (EVM)** | Solidity ^0.8.20 | `contracts/*.sol` (3 files) | On-chain privacy logic (NOT deployed) |
 | 🟣 **Contracts (Sui)** | Move 2024 | `contracts/sui/` (12 modules + 12 test modules) | Real compiling Move package, ~26% of repo language bytes; testnet publish staged |
 
 Supporting:
-- `Dockerfile` — multi-stage build (Node 20 → Python 3.11)
+- `Dockerfile` — multi-stage build (Node 22 → Python 3.11)
 - `memory/` — PRD + (leaked) credentials — see security section
 - `.emergent/` — build-tooling metadata from the Emergent platform
 - `README.md` — large marketing-style doc (~500 lines)
@@ -34,7 +34,7 @@ Supporting:
 | Area | Status | Notes |
 |------|--------|-------|
 | Frontend | ✅ Working | Polished UI, broad feature set |
-| Backend | ✅ Working | 80+ endpoints, MongoDB, auth, Dockerized, deployed |
+| Backend | ✅ Working | 80+ endpoints, database-backed, auth, Dockerized, deployed |
 | Contracts (EVM) | ⚠️ Written, NOT deployed | Placeholder addresses (same fake addr reused for 5 chains), no Hardhat/Foundry |
 | Contracts (Sui) | ✅ Written + tested | 12-module Move package `upl` (6 core + 6 Sui-native extensions), 123/123 unit tests green, CI-gated; ~26% of repo language bytes; testnet publish staged (S2 done, P2 deploy pending) |
 | ZK proofs | ⚠️ Cosmetic | Backend only format-checks; `Groth16Verifier` had fake key constants (file removed P1.3 / PR #2; dead verifier glue stripped in P1.3 follow-up) |
