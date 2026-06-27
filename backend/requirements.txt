@@ -9,7 +9,14 @@ python-dotenv==1.2.1
 python-multipart==0.0.22
 
 # Database (async MongoDB)
-motor==3.3.1
+# pymongo is PINNED here (not left to pip's transitive resolve) on purpose.
+# Leaving it floating made the June-26 build resolve pymongo 4.17.0, which
+# removed the private _QUERY_OPTIONS symbol that motor 3.3.1 imported from
+# pymongo.cursor — ImportError at startup -> CrashLoopBackOff -> Azure kept
+# serving the stale (pricing-still-present) image. motor 3.7.1 is the release
+# line built for modern pymongo (>=4.9) and no longer references that symbol.
+motor==3.7.1
+pymongo==4.17.0
 
 # Validation
 pydantic==2.12.5
