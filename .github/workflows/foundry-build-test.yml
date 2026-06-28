@@ -1,0 +1,74 @@
+# CI gate for the EVM Foundry project (contracts/).
+#
+# P1.4 deliverable: the EVM side of "make contracts real". Mirrors the Sui Move
+# gate (.github/workflows/move-build-test.yml) — build the project, run the
+# Solidity unit-test suite, and fail the PR on any non-zero exit. Runs on every
+# push to main / PR touching the EVM contracts (or this workflow file) and can
+# be dispatched manually for a one-off signal.
+#
+# Dependencies (forge-std, openzeppelin-contracts) are NOT committed — they live
+# under contracts/lib/, which is gitignored. The job fetches them with
+# `forge install` before building, so the tree stays clean and the language bar
+# reflects our own source, not vendored framework code.
+
+name: Foundry (EVM) build + test
+
+on:
+  push:
+    branches:
+      - main
+      - 'p1/**'
+    paths:
+      - 'contracts/src/**'
+      - 'contracts/test/**'
+      - 'contracts/script/**'
+      - 'contracts/foundry.toml'
+      - '.github/workflows/foundry-build-test.yml'
+  pull_request:
+    paths:
+      - 'contracts/src/**'
+      - 'contracts/test/**'
+      - 'contracts/script/**'
+      - 'contracts/foundry.toml'
+      - '.github/workflows/foundry-build-test.yml'
+  workflow_dispatch:
+
+# Cancel any superseded run on the same ref — keeps iteration cheap.
+concurrency:
+  group: foundry-build-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: forge build + forge test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Show Forge version
+        run: forge --version
+
+      # Dependencies are gitignored — fetch them fresh on the runner.
+      - name: Install dependencies
+        run: forge install
+
+      - name: Check formatting
+        run: forge fmt --check
+
+      - name: Build contracts
+        run: forge build --sizes
+
+      - name: Run tests
+        run: forge test -vvv
