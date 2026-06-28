@@ -39,11 +39,11 @@ contract StealthAddressRegistry {
     ///      to avoid needing ABI codec for `bytes` in the public getter. The
     ///      frontend reconstructs the 64-byte pubkey from these halves.
     struct Announcement {
-        bytes32 ephemeralPubKeyX;   // x-coordinate (or first 32 bytes) of the ephemeral pubkey
-        bytes32 ephemeralPubKeyY;   // y-coordinate (or next  32 bytes)
-        bytes32 viewTag;            // fast-scan view tag (1-byte canonical tag left-padded)
-        address announcer;          // msg.sender — typically the PrivacyRelayer
-        uint64  timestamp;
+        bytes32 ephemeralPubKeyX; // x-coordinate (or first 32 bytes) of the ephemeral pubkey
+        bytes32 ephemeralPubKeyY; // y-coordinate (or next  32 bytes)
+        bytes32 viewTag; // fast-scan view tag (1-byte canonical tag left-padded)
+        address announcer; // msg.sender — typically the PrivacyRelayer
+        uint64 timestamp;
     }
 
     // ─── Events ───────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ contract StealthAddressRegistry {
         bytes32 indexed stealthHash,
         bytes32 ephemeralPubKeyX,
         bytes32 ephemeralPubKeyY,
-        uint64  timestamp
+        uint64 timestamp
     );
 
     // ─── Storage ──────────────────────────────────────────────────────────
@@ -90,23 +90,22 @@ contract StealthAddressRegistry {
      *      always keeps the *first* one for O(1) `getByViewTag`; full scans
      *      iterate `_announcements` directly.
      */
-    function announce(
-        bytes32 ephemeralPubKeyX,
-        bytes32 ephemeralPubKeyY,
-        bytes32 viewTag,
-        bytes32 stealthHash
-    ) external {
+    function announce(bytes32 ephemeralPubKeyX, bytes32 ephemeralPubKeyY, bytes32 viewTag, bytes32 stealthHash)
+        external
+    {
         require(ephemeralPubKeyX != bytes32(0) || ephemeralPubKeyY != bytes32(0), "Empty ephemeral key");
         require(viewTag != bytes32(0), "Empty view tag");
 
         uint256 realIndex = _announcements.length;
-        _announcements.push(Announcement({
-            ephemeralPubKeyX: ephemeralPubKeyX,
-            ephemeralPubKeyY: ephemeralPubKeyY,
-            viewTag:          viewTag,
-            announcer:        msg.sender,
-            timestamp:        uint64(block.timestamp)
-        }));
+        _announcements.push(
+            Announcement({
+                ephemeralPubKeyX: ephemeralPubKeyX,
+                ephemeralPubKeyY: ephemeralPubKeyY,
+                viewTag: viewTag,
+                announcer: msg.sender,
+                timestamp: uint64(block.timestamp)
+            })
+        );
 
         // First-write-wins for the view-tag fast lookup. Subsequent
         // announcements with the same viewTag are still retrievable via
@@ -116,7 +115,9 @@ contract StealthAddressRegistry {
         }
 
         announcementCount = _announcements.length;
-        emit StealthAnnouncement(viewTag, msg.sender, stealthHash, ephemeralPubKeyX, ephemeralPubKeyY, uint64(block.timestamp));
+        emit StealthAnnouncement(
+            viewTag, msg.sender, stealthHash, ephemeralPubKeyX, ephemeralPubKeyY, uint64(block.timestamp)
+        );
     }
 
     // ─── Read paths ───────────────────────────────────────────────────────
@@ -132,7 +133,7 @@ contract StealthAddressRegistry {
             bytes32 ephemeralPubKeyY,
             bytes32 viewTag,
             address announcer,
-            uint64  timestamp
+            uint64 timestamp
         )
     {
         require(index < _announcements.length, "Index out of range");
@@ -151,12 +152,7 @@ contract StealthAddressRegistry {
     function getByViewTag(bytes32 viewTag)
         external
         view
-        returns (
-            bytes32 ephemeralPubKeyX,
-            bytes32 ephemeralPubKeyY,
-            uint64  timestamp,
-            address announcer
-        )
+        returns (bytes32 ephemeralPubKeyX, bytes32 ephemeralPubKeyY, uint64 timestamp, address announcer)
     {
         uint256 offset = viewTagIndex[viewTag];
         require(offset != 0, "View tag not found");
@@ -175,11 +171,7 @@ contract StealthAddressRegistry {
     function scanRange(uint64 fromTs, uint64 toTs)
         external
         view
-        returns (
-            bytes32[] memory ephemeralPubKeyX,
-            bytes32[] memory ephemeralPubKeyY,
-            bytes32[] memory viewTags
-        )
+        returns (bytes32[] memory ephemeralPubKeyX, bytes32[] memory ephemeralPubKeyY, bytes32[] memory viewTags)
     {
         require(fromTs <= toTs, "Range inverted");
         uint256 n = _announcements.length;
@@ -191,14 +183,14 @@ contract StealthAddressRegistry {
         }
         ephemeralPubKeyX = new bytes32[](count);
         ephemeralPubKeyY = new bytes32[](count);
-        viewTags         = new bytes32[](count);
+        viewTags = new bytes32[](count);
         uint256 idx = 0;
         for (uint256 i = 0; i < n; i++) {
             uint64 ts = _announcements[i].timestamp;
             if (ts >= fromTs && ts <= toTs) {
                 ephemeralPubKeyX[idx] = _announcements[i].ephemeralPubKeyX;
                 ephemeralPubKeyY[idx] = _announcements[i].ephemeralPubKeyY;
-                viewTags[idx]         = _announcements[i].viewTag;
+                viewTags[idx] = _announcements[i].viewTag;
                 idx++;
             }
         }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
@@ -67,8 +67,8 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
     uint256 public constant MAX_FEE_BPS = 100; // hard cap = 1%
 
     // ─── Bookkeeping ───────────────────────────────────────────────────────
-    uint256 private _totalRelayed;       // cumulative wei forwarded (for stats + UI)
-    uint256 public accumulatedFees;      // accrues feeBps per transfer; only owner withdraws
+    uint256 private _totalRelayed; // cumulative wei forwarded (for stats + UI)
+    uint256 public accumulatedFees; // accrues feeBps per transfer; only owner withdraws
 
     // Optional prepaid buffer: a user can pre-fund THIS contract so the
     // relayer doesn't need to front ETH itself. Refundable by depositor at any
@@ -77,7 +77,11 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
     // not the contract owner, and not the relayer.
     mapping(address => uint256) public prepaidBalance;
 
-    constructor() {}
+    constructor() Ownable(msg.sender) {
+        // Solo-relayer MVP: the deployer IS the relayer. Rotate via setRelayer()
+        // once the relayer service has its own hot wallet (P1.10 hardening).
+        relayer = msg.sender;
+    }
 
     // ─── Modifiers ─────────────────────────────────────────────────────────
     /// @notice Only the relayer service wallet may call `relay`. Enforced by
@@ -129,11 +133,7 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
      *   `nonReentrant` (stealth recipients are EOAs in MVP, but the guard is the
      *   defensive default).
      */
-    function relay(
-        address recipient,
-        bytes32 ephemeralKey,
-        uint8 viewTag
-    ) external payable onlyRelayer nonReentrant {
+    function relay(address recipient, bytes32 ephemeralKey, uint8 viewTag) external payable onlyRelayer nonReentrant {
         require(msg.value > 0, "Amount must be > 0");
         require(recipient != address(0), "Invalid recipient");
         require(recipient != address(this), "Recipient == relayer contract");
@@ -147,16 +147,11 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
         accumulatedFees += fee;
         _totalRelayed += transferAmount;
 
-        (bool ok, ) = recipient.call{value: transferAmount}("");
+        (bool ok,) = recipient.call{value: transferAmount}("");
         require(ok, "Stealth forward failed");
 
         emit PrivateTransfer(
-            keccak256(abi.encodePacked(recipient)),
-            ephemeralKey,
-            viewTag,
-            transferAmount,
-            fee,
-            block.timestamp
+            keccak256(abi.encodePacked(recipient)), ephemeralKey, viewTag, transferAmount, fee, block.timestamp
         );
     }
 
@@ -182,7 +177,7 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
         uint256 bal = prepaidBalance[msg.sender];
         require(bal >= amount, "Insufficient prepaid");
         prepaidBalance[msg.sender] = bal - amount;
-        (bool ok, ) = payable(msg.sender).call{value: amount}("");
+        (bool ok,) = payable(msg.sender).call{value: amount}("");
         require(ok, "Prepaid refund failed");
         emit PrepaidWithdrawn(msg.sender, amount);
     }
@@ -195,7 +190,7 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
         require(to != address(0), "Zero recipient");
         uint256 amount = accumulatedFees;
         accumulatedFees = 0;
-        (bool ok, ) = to.call{value: amount}("");
+        (bool ok,) = to.call{value: amount}("");
         require(ok, "Fee withdrawal failed");
         emit FeesWithdrawn(to, amount);
     }
