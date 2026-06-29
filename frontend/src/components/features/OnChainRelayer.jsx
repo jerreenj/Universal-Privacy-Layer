@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { ethers } from "ethers";
-import { Lock, PenLine, Loader2 } from "lucide-react";
+import { Lock, PenLine, Loader2, Send, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -14,6 +14,7 @@ export function OnChainRelayer() {
   const [intent, setIntent] = useState(null);       // EIP-712 payload + quote from /relayer/prepare-tx
   const [signature, setSignature] = useState(null);  // user's off-chain signature over the intent
   const [relayerStats, setRelayerStats] = useState(null);
+  const [relayResult, setRelayResult] = useState(null);  // tx hashes from /relayer/submit (P1.12)
 
   useEffect(() => {
     axios.get(`${API}/relayer/stats/${chain}`).then(r => setRelayerStats(r.data)).catch(() => {});
@@ -36,6 +37,7 @@ export function OnChainRelayer() {
       });
       setIntent(res.data);
       setSignature(null);
+      setRelayResult(null);
       toast.success("Relay intent prepared — sign next");
     } catch { toast.error("Failed to prepare relay intent"); }
     setLoading(false);
@@ -55,11 +57,34 @@ export function OnChainRelayer() {
       const { domain, types, message } = intent.intent;
       const sig = await signer.signTypedData(domain, types, message);
       setSignature(sig);
-      toast.success("Intent signed — relayer will submit relay()");
+      toast.success("Intent signed — submit to relayer next");
       // Balance only changes once the relayer actually settles the tx (P1.10),
       // but refresh so the UI reflects any pending state.
       fetchBalance();
     } catch (e) { toast.error(e.message?.slice(0, 80) || "Signing failed"); }
+    setLoading(false);
+  };
+
+  // P1.12: Submit the signed intent to the backend relayer, which calls relay()
+  // + announce() on-chain. The user's wallet never appears as msg.sender.
+  const submitToRelayer = async () => {
+    if (!intent || !signature || !address) return;
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API}/relayer/submit`, {
+        intent: intent.intent,
+        signature,
+        from_address: address,
+        chain,
+      });
+      setRelayResult(res.data);
+      toast.success("Relayed on-chain! TX confirmed.");
+      fetchBalance();
+      // Refresh stats so the total relayed counter updates.
+      axios.get(`${API}/relayer/stats/${chain}`).then(r => setRelayerStats(r.data)).catch(() => {});
+    } catch (e) {
+      toast.error(e.response?.data?.detail?.slice(0, 80) || "Relayer submit failed");
+    }
     setLoading(false);
   };
 
@@ -102,11 +127,29 @@ export function OnChainRelayer() {
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <PenLine className="w-5 h-5" />}
               Sign Intent (off-chain)
             </button>
+          ) : !relayResult ? (
+            <div className="space-y-3">
+              <div className="bg-emerald-500/10 border border-emerald-500/30 p-3 text-xs text-emerald-300 space-y-1">
+                <div className="font-semibold">Intent signed — submit to relayer.</div>
+                <div className="mt-1 font-mono break-all text-white/60">sig: {signature.slice(0, 18)}…{signature.slice(-8)}</div>
+              </div>
+              <button onClick={submitToRelayer} disabled={loading}
+                className="w-full py-3 bg-green-500 text-black font-bold uppercase tracking-wider hover:bg-green-400 disabled:opacity-50 flex items-center justify-center gap-2">
+                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                Submit to Relayer (on-chain)
+              </button>
+            </div>
           ) : (
-            <div className="bg-emerald-500/10 border border-emerald-500/30 p-3 text-xs text-emerald-300 space-y-1">
-              <div className="font-semibold">Intent signed — relayer taking over.</div>
-              <div className="text-emerald-300/80">{intent.submission?.note}</div>
-              <div className="mt-1 font-mono break-all text-white/60">sig: {signature.slice(0, 18)}…{signature.slice(-8)}</div>
+            <div className="bg-emerald-500/10 border border-emerald-500/30 p-3 text-xs text-emerald-300 space-y-2">
+              <div className="font-semibold flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> Relayed on-chain!</div>
+              <div className="flex justify-between"><span className="text-white/50">relay tx:</span>
+                <a href={relayResult.explorer} target="_blank" rel="noreferrer" className="font-mono text-emerald-300 hover:underline">{relayResult.relay_tx_hash?.slice(0, 18)}…</a>
+              </div>
+              <div className="flex justify-between"><span className="text-white/50">announce tx:</span>
+                <a href={`${CHAINS[chain]?.explorer}/tx/${relayResult.announce_tx_hash}`} target="_blank" rel="noreferrer" className="font-mono text-emerald-300 hover:underline">{relayResult.announce_tx_hash?.slice(0, 18)}…</a>
+              </div>
+              <div className="flex justify-between"><span className="text-white/50">Announcements:</span><span className="font-mono">{relayResult.announcement_count}</span></div>
+              <div className="flex justify-between"><span className="text-white/50">Recipient:</span><span className="font-mono">{relayResult.recipient?.slice(0, 10)}…{relayResult.recipient?.slice(-6)}</span></div>
             </div>
           )}
           <button onClick={() => { setIntent(null); setSignature(null); }}

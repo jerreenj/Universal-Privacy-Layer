@@ -1888,6 +1888,166 @@ async def get_relayer_stats(chain: str):
         logger.error(f"Relayer stats error: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
 
+
+# ── P1.10/P1.12: Relayer submit endpoint ────────────────────────────────────
+# The frontend signs the EIP-712 intent locally, then POSTs the intent + signature
+# here. The backend validates the signature, then calls relay() + announce() on-chain
+# using the relayer wallet's private key (from env RELAYER_PRIVATE_KEY). The user's
+# wallet never appears as msg.sender — only the relayer's.
+class RelayerSubmitRequest(BaseModel):
+    intent: Dict[str, Any]  # {domain, types, primaryType, message}
+    signature: str          # 0x-prefixed hex signature
+    from_address: str       # the user's wallet (must match signature recovery)
+    chain: str = "base"
+
+
+@api_router.post("/relayer/submit")
+async def submit_relayer_intent(request: RelayerSubmitRequest):
+    """Validate the EIP-712 signature and submit relay() + announce() on-chain.
+    The relayer wallet pays the gas and fronts the ETH amount from its own balance.
+    Returns the relay + announce tx hashes on success."""
+    try:
+        config = CHAIN_CONFIG.get(request.chain)
+        if not config:
+            raise HTTPException(status_code=400, detail="Invalid chain")
+
+        relayer_address = _relayer_address_for(request.chain)
+        if not relayer_address:
+            raise HTTPException(status_code=503, detail=f"PrivacyRelayer not deployed on '{request.chain}'")
+
+        registry_address = _stealth_registry_addr(request.chain)
+        if not registry_address:
+            raise HTTPException(status_code=503, detail=f"StealthAddressRegistry not deployed on '{request.chain}'")
+
+        # The relayer's private key — must be the authorized relayer on the contract.
+        relayer_key = os.environ.get("RELAYER_PRIVATE_KEY") or os.environ.get("DEPLOYER_PRIVATE_KEY")
+        if not relayer_key:
+            raise HTTPException(status_code=503, detail="Relayer wallet not configured (set RELAYER_PRIVATE_KEY env)")
+
+        # 1. Validate the EIP-712 signature off-chain
+        intent = request.intent
+        domain = intent.get("domain", {})
+        types = intent.get("types", {})
+        message = intent.get("message", {})
+
+        full_message = {
+            "types": {**types, "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"},
+            ]},
+            "primaryType": "RelayIntent",
+            "domain": domain,
+            "message": message,
+        }
+
+        try:
+            from eth_account.messages import encode_typed_data
+            encoded = encode_typed_data(full_message=full_message)
+            recovered = Account.recover_message(encoded, signature=request.signature)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Signature validation failed: {e}")
+
+        if recovered.lower() != request.from_address.lower():
+            raise HTTPException(status_code=401, detail=f"Signature does not match sender (expected {request.from_address}, got {recovered})")
+
+        # 2. Check deadline
+        deadline = int(message.get("deadline", 0))
+        if _time.time() > deadline:
+            raise HTTPException(status_code=400, detail="Intent expired")
+
+        amount = int(message.get("amount", 0))
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="amount must be > 0")
+
+        # 3. Submit relay() on-chain
+        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        relayer_account = Account.from_key(relayer_key)
+        relayer_contract = w3.eth.contract(
+            address=Web3.to_checksum_address(relayer_address),
+            abi=PRIVACY_RELAYER_ABI,
+        )
+        registry_contract = w3.eth.contract(
+            address=Web3.to_checksum_address(registry_address),
+            abi=STEALTH_REGISTRY_ABI,
+        )
+
+        # Verify the relayer wallet is authorized
+        onchain_relayer = relayer_contract.functions.relayer().call()
+        if onchain_relayer.lower() != relayer_account.address.lower():
+            raise HTTPException(status_code=503, detail="Relayer wallet not authorized on contract")
+
+        recipient = Web3.to_checksum_address(message["recipient"])
+        ephemeral_key = bytes.fromhex(message["ephemeralKey"].replace("0x", ""))
+        ephemeral_key_bytes32 = w3.to_bytes(ephemeral_key).rjust(32, b"\x00")
+        view_tag = int(message["viewTag"]) & 0xFF
+
+        # relay() — send msg.value = amount
+        nonce = w3.eth.get_transaction_count(relayer_account.address)
+        tx = relayer_contract.functions.relay(recipient, ephemeral_key_bytes32, view_tag).build_transaction({
+            "from": relayer_account.address,
+            "value": amount,
+            "nonce": nonce,
+            "gas": 200000,
+            "gasPrice": w3.eth.gas_price,
+            "chainId": config["chain_id"],
+        })
+        signed = relayer_account.sign_transaction(tx)
+        relay_tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(relay_tx_hash, timeout=120)
+        if receipt["status"] != 1:
+            raise HTTPException(status_code=500, detail=f"relay() tx reverted: {relay_tx_hash.hex()}")
+
+        # 4. Submit announce() on the registry
+        ephemeral_x = ephemeral_key_bytes32
+        ephemeral_y = hashlib.sha256(ephemeral_key_bytes32).digest()
+        view_tag_bytes32 = bytes(31) + bytes([view_tag])
+        stealth_hash = w3.solidity_keccak(["address"], [recipient])
+
+        announce_nonce = w3.eth.get_transaction_count(relayer_account.address, "pending")
+        announce_tx = registry_contract.functions.announce(
+            ephemeral_x, ephemeral_y, view_tag_bytes32, stealth_hash
+        ).build_transaction({
+            "from": relayer_account.address,
+            "nonce": announce_nonce,
+            "gas": 200000,
+            "gasPrice": w3.eth.gas_price,
+            "chainId": config["chain_id"],
+        })
+        signed_announce = relayer_account.sign_transaction(announce_tx)
+        announce_tx_hash = w3.eth.send_raw_transaction(signed_announce.raw_transaction)
+        announce_receipt = w3.eth.wait_for_transaction_receipt(announce_tx_hash, timeout=120)
+
+        count = registry_contract.functions.announcementCount().call()
+
+        return {
+            "status": "relayed",
+            "relay_tx_hash": relay_tx_hash.hex(),
+            "announce_tx_hash": announce_tx_hash.hex(),
+            "relay_block": receipt["blockNumber"],
+            "announce_block": announce_receipt["blockNumber"],
+            "announcement_count": count,
+            "recipient": recipient,
+            "amount_wei": str(amount),
+            "explorer": f"{config.get('explorer', 'https://basescan.org')}/tx/{relay_tx_hash.hex()}",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Relayer submit error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+def _stealth_registry_addr(chain: str) -> Optional[str]:
+    """Resolve the StealthAddressRegistry address for a chain (or None)."""
+    cfg = UPL_CONTRACTS.get(chain)
+    if not cfg:
+        return None
+    addr = cfg.get("stealth_registry")
+    return addr if addr and addr.lower() != "0x0" else None
+
 # --- 3. CROSS-CHAIN PRIVACY SPLITTING ---
 class CrossChainSplitRequest(BaseModel):
     from_address: str
