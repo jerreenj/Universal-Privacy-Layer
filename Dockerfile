@@ -31,6 +31,12 @@ COPY backend/ ./backend/
 # Copy built frontend into backend/static for serving
 COPY --from=frontend-build /build/frontend/build ./backend/static
 
+# Copy deployment manifests so the backend can read real contract addresses.
+# deployed_base.json is force-committed (gitignored by contracts/deployed_*.json)
+# because it contains only public contract addresses — no secrets.
+# The backend's _load_deployed_addresses() reads it at /app/contracts/deployed_base.json.
+COPY contracts/deployed_base.json ./contracts/deployed_base.json
+
 # Railway injects PORT; default to 8001
 ENV PORT=8001
 
