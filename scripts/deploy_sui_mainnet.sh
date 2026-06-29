@@ -58,9 +58,9 @@ ACTIVE_ADDR="$("${SUI_BIN}" client active-address)"
 log "Active address: ${ACTIVE_ADDR}"
 [ -n "${ACTIVE_ADDR}" ] || die "No active address; run: sui client addresses && sui client switch --address <addr>"
 
-GAS_LINE="$("${SUI_BIN}" client gas --address "${ACTIVE_ADDR}" 2>/dev/null | tail -n +2 | head -n1 || true)"
-log "Gas row: ${GAS_LINE:-<no balance>}"
-echo "${GAS_LINE}" | grep -Eq '[1-9]' \
+GAS_OUTPUT="$("${SUI_BIN}" client gas "${ACTIVE_ADDR}" 2>/dev/null || true)"
+log "Gas check: $(echo "${GAS_OUTPUT}" | grep -oE '[0-9]+ SUI' | head -1 || echo '<no balance>')"
+echo "${GAS_OUTPUT}" | grep -Eq '[1-9]' \
   || die "Active address has zero gas on ${NETWORK}; fund it with real SUI before deploying."
 
 # ─── Build (fail fast) ─────────────────────────────────────────────────────────
@@ -172,7 +172,15 @@ doc = {
         "prepaid_ticket",
         "privacy_receipt",
         "stealth_transfer",
-        "uopl_multisig"
+        "uopl_multisig",
+        "view_tag_index",
+        "fee_splitter",
+        "announcement_indexer",
+        "cancel_nonce",
+        "relayer_registry",
+        "timelock_cap",
+        "nullifier_registry",
+        "private_swap"
     ],
     "shared_objects": {
         "registry": "${REGISTRY_ID}",

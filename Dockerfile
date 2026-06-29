@@ -37,6 +37,10 @@ COPY --from=frontend-build /build/frontend/build ./backend/static
 # The backend's _load_deployed_addresses() reads it at /app/contracts/deployed_base.json.
 COPY contracts/deployed_base.json ./contracts/deployed_base.json
 
+# Sui mainnet manifest (force-committed — gitignored, but only public object IDs).
+# The backend's _load_deployed_sui() reads it at /app/scripts/deployed_sui_mainnet.json.
+COPY scripts/deployed_sui_mainnet.json ./scripts/deployed_sui_mainnet.json
+
 # Railway injects PORT; default to 8001
 ENV PORT=8001
 

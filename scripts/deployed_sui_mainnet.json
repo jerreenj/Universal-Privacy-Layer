@@ -1,0 +1,35 @@
+{
+  "network": "mainnet",
+  "sui_cli_version": "sui 1.73.2-1f6e1e6dd72d-dirty",
+  "published_at": "2026-06-29T18:33:32Z",
+  "package_id": "0xb9fe4d78d216e98b6229e97f93972cb7c3493d8d9f123880f781ab920c66db50",
+  "modules": [
+    "stealth_address_registry",
+    "privacy_relayer",
+    "prepaid_ticket",
+    "privacy_receipt",
+    "stealth_transfer",
+    "uopl_multisig",
+    "view_tag_index",
+    "fee_splitter",
+    "announcement_indexer",
+    "cancel_nonce",
+    "relayer_registry",
+    "timelock_cap",
+    "nullifier_registry",
+    "private_swap"
+  ],
+  "shared_objects": {
+    "registry": "0x7b62abe30dbc0fd63432ef3b51b506d8a51cce467634ce1854b1941817454b13",
+    "announcement_indexer": "0x078bdd9628b80db21698a2ea376556daa4c7dce27b117744d128affe8d1ccd10",
+    "timelock_cap": "0x5c5ab104d4e86c164a7fffe2b162356c1ade93783b3dfa2f74cb2a36c6c84120",
+    "swap_state": "0x733521f312be365a15279db5afc44d19d4f1d83172031005c7c4a0e7ed6eaee7"
+  },
+  "owned_capabilities": {
+    "upgrade_cap": "0xd4b4aff0fda905c50accccccbafa0a1106b35c012a98124568dea32e00e034bd",
+    "admin_cap": "0x15e9e5174b708bef3644e851de907e4f55f6d088058c34d143888fb386b2556c",
+    "relayer_cap": "0xbc0898789926a7bf0436e3a5095ddbe71ec09658af1525a0df55ea9ff07ed416",
+    "receipt_cap": "0x7394b019a70ba284fd7846c171ea787181305a3f16d52b29d866d28cad3f03f5"
+  },
+  "publisher_address": "0x8a997306ebf56f66adae9077b08dd29b3e876547fe6003e80ee95e928d727c9f"
+}

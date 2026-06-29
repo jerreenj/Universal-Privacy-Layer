@@ -9,7 +9,15 @@
     "prepaid_ticket",
     "privacy_receipt",
     "stealth_transfer",
-    "uopl_multisig"
+    "uopl_multisig",
+    "view_tag_index",
+    "fee_splitter",
+    "announcement_indexer",
+    "cancel_nonce",
+    "relayer_registry",
+    "timelock_cap",
+    "nullifier_registry",
+    "private_swap"
   ],
   "shared_objects": {
     "registry": "0xREPLACE_WITH_REGISTRY_OBJECT_ID",
