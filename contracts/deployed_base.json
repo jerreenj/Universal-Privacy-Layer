@@ -1,0 +1,10 @@
+{
+  "base": {
+    "chainId": 8453,
+    "deployedAt": "2026-06-29T14:43:29Z",
+    "commit": "42eb01df2027",
+    "privacy_relayer": "0x994F6Ce29B073f82317E8F175D8aac15C2671365",
+    "stealth_registry": "0x05077cB4c4214b89dD35F949b587d31e79b3B0c9",
+    "uniswap_wrapper": "0x01A7EB9acb55B80254609dCB8112f1cd65D67c8F"
+  }
+}
