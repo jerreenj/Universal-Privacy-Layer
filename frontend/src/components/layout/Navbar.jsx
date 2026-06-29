@@ -44,8 +44,9 @@ export function Navbar() {
                         disabled={!v.live}>
                         <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
                         {v.name}
+                        {v.deployed && <span className="text-[9px] text-green-400 ml-auto font-semibold">● Deployed</span>}
                         {!v.live && <span className="text-[10px] text-yellow-400 ml-auto">Soon</span>}
-                        {chain === k && v.live && <div className="w-2 h-2 rounded-full bg-green-400 ml-auto" />}
+                        {chain === k && v.live && !v.deployed && <div className="w-2 h-2 rounded-full bg-green-400 ml-auto" />}
                       </button>
                     ))}
                   </div>

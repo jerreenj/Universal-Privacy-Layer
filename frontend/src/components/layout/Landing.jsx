@@ -45,8 +45,9 @@ export function Landing() {
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
                   <span>{v.name}</span>
                   <span className="text-white/30 text-xs ml-auto">{v.symbol}</span>
+                  {v.deployed && <span className="text-[9px] text-green-400 font-semibold">● Deployed</span>}
                   {!v.live && <span className="text-[10px] text-yellow-400">Soon</span>}
-                  {chain === k && v.live && <div className="w-2 h-2 rounded-full bg-green-400" />}
+                  {chain === k && v.live && !v.deployed && <div className="w-2 h-2 rounded-full bg-green-400" />}
                 </button>
               ))}
             </div>

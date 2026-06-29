@@ -66,6 +66,7 @@ export function WalletProvider({ children }) {
                 stealthRegistry: info.stealth_registry ?? CHAINS[key].contracts?.stealthRegistry,
                 ...(info.uniswap_wrapper ? { uniswapWrapper: info.uniswap_wrapper } : {}),
               };
+              CHAINS[key].deployed = true;
             }
           }
         }
