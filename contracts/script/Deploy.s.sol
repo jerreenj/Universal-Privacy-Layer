@@ -79,13 +79,17 @@ contract DeployScript is Script {
         vm.stopBroadcast();
 
         // ── Write deployed_base.json (addresses + chainId) ───────────────────
-        // The shell wrapper enriches with deployedAt (UTC ISO-8601) + commit
-        // (git sha) provenance after the broadcast settles.
+        // The backend's _load_deployed_addresses() iterates the top-level keys
+        // as chain names and expects each value to be a dict of address fields.
+        // So the manifest must be {"base": {...}}, not a flat object. Foundry's
+        // vm.serialize* with the same objectKey accumulates into one nested object.
+        string memory baseObj = "base";
+        baseObj = vm.serializeAddress(baseObj, "privacy_relayer", address(relayer));
+        baseObj = vm.serializeAddress(baseObj, "stealth_registry", address(registry));
+        baseObj = vm.serializeAddress(baseObj, "uniswap_wrapper", address(wrapper));
+        baseObj = vm.serializeUint(baseObj, "chainId", BASE_CHAIN_ID);
         string memory json = "deployed_base";
-        json = vm.serializeAddress("base", "privacy_relayer", address(relayer));
-        json = vm.serializeAddress("base", "stealth_registry", address(registry));
-        json = vm.serializeAddress("base", "uniswap_wrapper", address(wrapper));
-        json = vm.serializeUint("base", "chainId", BASE_CHAIN_ID);
+        json = vm.serializeString(json, "base", baseObj);
         vm.writeJson(json, "deployed_base.json");
 
         console2.log("");
