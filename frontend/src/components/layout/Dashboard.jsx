@@ -2,7 +2,7 @@ import { useState, lazy, Suspense } from "react";
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
-  Search, FileText, BookOpen, Hash
+  Search, FileText, BookOpen, Hash, Send
 } from "lucide-react";
 import { CHAINS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -34,6 +34,7 @@ const WalletPrivacyAnalyzer     = lazy(() => import("@/components/features/Walle
 const EncryptedReceipts         = lazy(() => import("@/components/features/EncryptedReceipts"));
 const PrivacyAddressBook        = lazy(() => import("@/components/features/PrivacyAddressBook"));
 const ZKCommitments             = lazy(() => import("@/components/features/ZKCommitments"));
+const SuiStealthSend            = lazy(() => import("@/components/features/SuiStealthSend"));
 
 /* Page metadata – references the lazy Component *type*, not a rendered element. */
 const pages = {
@@ -60,6 +61,7 @@ const pages = {
   receipts:    { title: "Encrypted Receipts",          Component: EncryptedReceipts },
   addressbook: { title: "Privacy Address Book",        Component: PrivacyAddressBook },
   zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments },
+  suiSend:     { title: "Sui Stealth Send",            Component: SuiStealthSend },
 };
 
 function LoadingFallback() {
@@ -192,6 +194,7 @@ export function Dashboard() {
               { id: "multisig", icon: <Users className="w-5 h-5" />, title: "Multisig", color: "text-amber-400" },
               { id: "analyzer", icon: <Search className="w-5 h-5" />, title: "Privacy Analyzer", color: "text-cyan-400" },
               { id: "zkcommit", icon: <Hash className="w-5 h-5" />, title: "ZK Commitments", color: "text-lime-400" },
+              { id: "suiSend", icon: <Send className="w-5 h-5" />, title: "Sui Stealth Send", color: "text-cyan-400" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">

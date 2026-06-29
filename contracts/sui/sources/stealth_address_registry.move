@@ -134,13 +134,43 @@ module upl::stealth_address_registry {
     /// The sender is read from `ctx` rather than a `&signer` parameter because
     /// Sui Move 2024 exposes the transaction sender via `TxContext`; the EVM
     /// `msg.sender` maps cleanly to `tx_context::sender(ctx)`.
-    public(package) entry fun announce(
+    /// Original announce — kept for compatibility with the published v1/v2
+    /// package. The Sui CLI counts &TxContext as a parameter for
+    /// `public(package) entry` functions, making it hard to call from the CLI.
+    /// Use `announce_entry` (below) for CLI/PTB calls — it takes ctx as the
+    /// last param (auto-injected by Sui for `public entry` functions).
+    public entry fun announce(
         ctx: &TxContext,
         registry: &mut Registry,
         ephemeral_pub_key: vector<u8>,
         view_tag: vector<u8>,
         stealth_hash: vector<u8>,
         clock: &Clock,
+    ) {
+        announce_impl(registry, ephemeral_pub_key, view_tag, stealth_hash, clock, ctx);
+    }
+
+    /// CLI-friendly announce — `public entry` with ctx as the last param,
+    /// which the Sui runtime auto-injects (not counted by `sui client call`).
+    public entry fun announce_entry(
+        registry: &mut Registry,
+        ephemeral_pub_key: vector<u8>,
+        view_tag: vector<u8>,
+        stealth_hash: vector<u8>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        announce_impl(registry, ephemeral_pub_key, view_tag, stealth_hash, clock, ctx);
+    }
+
+    /// Shared implementation — both announce + announce_entry delegate here.
+    fun announce_impl(
+        registry: &mut Registry,
+        ephemeral_pub_key: vector<u8>,
+        view_tag: vector<u8>,
+        stealth_hash: vector<u8>,
+        clock: &Clock,
+        ctx: &TxContext,
     ) {
         assert!(!vector::is_empty(&ephemeral_pub_key), EEmptyEphemeralPubKey);
         assert!(!vector::is_empty(&view_tag), EEmptyViewTag);

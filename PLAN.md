@@ -14,12 +14,12 @@
 ```
 P0  Security + cleanup              ████████████████ 100% ✅ DONE
 P1  EVM contracts on Base           ████████████████ 100% ✅ DONE
-P2  Sui mainnet publish + wiring    ████████░░░░░░░░  50% 🔄 toolchain done, deploy pending
+P2  Sui mainnet publish + wiring    ████████████████ 100% ✅ DONE
 P3  Real ZK (Circom + verifier)     ░░░░░░░░░░░░░░░░   0% ⏸️ not started
 P4  Privacy pools + DeFi privacy    ░░░░░░░░░░░░░░░░   0% ⏸️ not started
 ```
 
-**Last updated:** 2026-06-29 — P1 fully complete (all 13 sub-tasks, deployed + tested on Base mainnet)
+**Last updated:** 2026-06-29 — P2 complete (Sui mainnet published, test announce verified, frontend wired)
 
 ---
 
@@ -87,32 +87,43 @@ P1.13 Private swap test              ██████████████�
 
 ---
 
-## P2 — Sui Mainnet Publish + Wiring 🔄 50%
+## P2 — Sui Mainnet Publish + Wiring ✅ DONE
 
 ### Sub-task Progress
 
 ```
-P2.1  Move package (12 modules, 123 tests)    ████████████████ 100% ✅
+P2.1  Move package (14 modules, 126 tests)    ████████████████ 100% ✅
 P2.2  Move.toml → framework/mainnet           ████████████████ 100% ✅
 P2.3  CI gate (mainnet Sui binary)            ████████████████ 100% ✅
 P2.4  Deploy script (deploy_sui_mainnet.sh)   ████████████████ 100% ✅
 P2.5  Backend Sui loader + /api/sui/*          ████████████████ 100% ✅
 P2.6  Frontend Sui liveness fetch             ████████████████ 100% ✅
-P2.7  PUBLISH to Sui mainnet (real SUI gas)   ░░░░░░░░░░░░░░░░   0% ⏸️ pending funding
-P2.8  Wire Sui registry reads to frontend     ░░░░░░░░░░░░░░░░   0% blocked on P2.7
+P2.7  PUBLISH to Sui mainnet (real SUI gas)   ████████████████ 100% ✅
+P2.8  Sui relay + frontend components         ████████████████ 100% ✅
 ```
 
-### What's done
+### Deployed Objects (Sui mainnet)
 
-- 12-module Move package `upl` builds + tests against `framework/mainnet` (CI green)
-- `scripts/deploy_sui_mainnet.sh` ready to publish (preflight, build, publish, write manifest)
-- Backend `_load_deployed_sui()` reads `deployed_sui_mainnet.json` + serves `/api/sui/status`, `/api/sui/registry/count`, `/api/deployments`
-- Frontend fetches `/api/deployments` on load and flips Sui from "coming soon" to live
+| Object | ID |
+|--------|-----|
+| Package (v3) | `0xc930c83d82b6547004f20d9336b7fbfd390116984d9669fe5de56eb4a812f991` |
+| Package (original) | `0xb9fe4d78d216e98b6229e97f93972cb7c3493d8d9f123880f781ab920c66db50` |
+| Registry (shared) | `0x7b62abe30dbc0fd63432ef3b51b506d8a51cce467634ce1854b1941817454b13` |
+| AnnouncementIndexer (shared) | `0x078bdd9628b80db21698a2ea376556daa4c7dce27b117744d128affe8d1ccd10` |
+| UpgradeCap | `0xd4b4aff0fda905c50accccccbafa0a1106b35c012a98124568dea32e00e034bd` |
+| AdminCap | `0x15e9e5174b708bef3644e851de907e4f55f6d088058c34d143888fb386b2556c` |
+| RelayerCap | `0xbc0898789926a7bf0436e3a5095ddbe71ec09658af1525a0df55ea9ff07ed416` |
+| ReceiptCap | `0x7394b019a70ba284fd7846c171ea787181305a3f16d52b29d866d28cad3f03f5` |
 
-### What's pending
+### What was proven on-chain
 
-- **P2.7**: Fund a Sui mainnet wallet with ~10 SUI, run `bash scripts/deploy_sui_mainnet.sh`
-- **P2.8**: After publish, frontend auto-shows Sui as live (no code change needed)
+- **Package published** to Sui mainnet (14 modules, 126/126 tests pass on `framework/mainnet`)
+- **1 test announce** submitted via `announce_entry` — registry `next_id: 1`
+- **Package upgraded to v3** (added `announce_entry` CLI-friendly function)
+- **Sui relayer script** (`scripts/sui_relayer.py`) builds + submits announce transactions
+- **Backend `/api/sui/relay/submit`** endpoint calls the Sui CLI to submit announces
+- **Frontend `SuiStealthSend.jsx`** component: generate ephemeral key → submit announce → show tx confirmation
+- **Gas spent**: ~0.6 SUI total (publish + 2 upgrades + test announce)
 
 ---
 
@@ -172,13 +183,13 @@ P2.8  Wire Sui registry reads to frontend     ░░░░░░░░░░░�
 
 | Object | ID |
 |--------|-----|
-| Package | *pending P2.7 deploy* |
-| Registry (shared) | *pending P2.7 deploy* |
-| RelayerState (shared) | *pending P2.7 deploy* |
-| AdminCap | *pending P2.7 deploy* |
-| RelayerCap | *pending P2.7 deploy* |
-| ReceiptCap | *pending P2.7 deploy* |
-| UpgradeCap | *pending P2.7 deploy* |
+| Package (v3) | `0xc930c83d82b6547004f20d9336b7fbfd390116984d9669fe5de56eb4a812f991` |
+| Registry (shared) | `0x7b62abe30dbc0fd63432ef3b51b506d8a51cce467634ce1854b1941817454b13` |
+| AnnouncementIndexer (shared) | `0x078bdd9628b80db21698a2ea376556daa4c7dce27b117744d128affe8d1ccd10` |
+| UpgradeCap | `0xd4b4aff0fda905c50accccccbafa0a1106b35c012a98124568dea32e00e034bd` |
+| AdminCap | `0x15e9e5174b708bef3644e851de907e4f55f6d088058c34d143888fb386b2556c` |
+| RelayerCap | `0xbc0898789926a7bf0436e3a5095ddbe71ec09658af1525a0df55ea9ff07ed416` |
+| ReceiptCap | `0x7394b019a70ba284fd7846c171ea787181305a3f16d52b29d866d28cad3f03f5` |
 
 ---
 

@@ -82,7 +82,7 @@ def rate_limit(request: StarletteRequest, max_calls: int = 20, window: int = 60)
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # Public endpoints that don't require a session token
     PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access", "/api/payments/info", "/api/payments/submit",
-                    "/api/deployments", "/api/sui/status", "/api/sui/registry/count"}
+                    "/api/deployments", "/api/sui/status", "/api/sui/registry/count", "/api/sui/relay/submit"}
     PUBLIC_PREFIXES = ()
 
     async def dispatch(self, request: StarletteRequest, call_next):
@@ -4235,6 +4235,87 @@ async def sui_registry_count():
     return {"count": int(next_id) if next_id is not None else 0,
             "registry_object_id": registry_id,
             "network": SUI_DEPLOYMENT.get("network")}
+
+
+# ── P2.8: Sui relay submit endpoint ─────────────────────────────────────────
+class SuiRelaySubmitRequest(BaseModel):
+    ephemeral_key: str   # 0x-prefixed hex (32 bytes)
+    view_tag: int        # 0-255
+    stealth_hash: str    # 0x-prefixed hex (32 bytes)
+
+
+@api_router.post("/sui/relay/submit")
+async def sui_relay_submit(request: SuiRelaySubmitRequest):
+    """Submit an announce_entry() transaction to the Sui mainnet registry.
+    Uses the sui CLI to build + submit the PTB. The relayer wallet signs."""
+    if not SUI_DEPLOYMENT:
+        raise HTTPException(status_code=503, detail="Sui package not deployed")
+    registry_id = SUI_DEPLOYMENT.get("shared_objects", {}).get("registry")
+    package_id = SUI_DEPLOYMENT.get("package_id")
+    if not registry_id or not package_id:
+        raise HTTPException(status_code=503, detail="Sui registry/package not in manifest")
+
+    import base64
+    import subprocess
+
+    ephemeral_bytes = bytes.fromhex(request.ephemeral_key.replace("0x", ""))
+    view_tag_bytes = bytes([request.view_tag & 0xFF])
+    stealth_bytes = bytes.fromhex(request.stealth_hash.replace("0x", ""))
+
+    ephemeral_b64 = base64.b64encode(ephemeral_bytes).decode()
+    view_tag_b64 = base64.b64encode(view_tag_bytes).decode()
+    stealth_b64 = base64.b64encode(stealth_bytes).decode()
+
+    CLOCK_ID = "0x6"
+    sui_bin = os.environ.get("SUI_BIN", "sui")
+
+    try:
+        result = subprocess.run(
+            [sui_bin, "client", "call",
+             "--package", package_id,
+             "--module", "stealth_address_registry",
+             "--function", "announce_entry",
+             "--args", registry_id, ephemeral_b64, view_tag_b64, stealth_b64, CLOCK_ID,
+             "--gas-budget", "50000000", "--json"],
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"sui CLI failed: {result.stderr[:200]}")
+
+        # Parse JSON from output
+        raw = result.stdout.strip()
+        tx_data = None
+        for line in raw.split("\n"):
+            if line.strip().startswith("{"):
+                try:
+                    tx_data = json.loads(line)
+                    break
+                except json.JSONDecodeError:
+                    continue
+        if not tx_data:
+            raise HTTPException(status_code=500, detail="Could not parse sui CLI output")
+
+        digest = tx_data.get("digest", "unknown")
+        effects = tx_data.get("effects", {})
+        status = effects.get("status", {}).get("status", "unknown")
+
+        # Read the new count
+        count_result = await _sui_rpc("sui_getObject", [registry_id])
+        fields = count_result.get("data", {}).get("content", {}).get("fields", {})
+        count = int(fields.get("next_id", 0))
+
+        return {
+            "status": "announced",
+            "tx_digest": digest,
+            "execution_status": status,
+            "announcement_count": count,
+            "explorer": f"https://suiexplorer.com/txblock/{digest}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Sui relay submit error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 
 # ── Unified deployments endpoint (P1.6) ─────────────────────────────────────
