@@ -95,11 +95,25 @@ class TestDeploymentsNoManifests:
 
     def test_deployments_evm_chains_present(self, client):
         data = client.get("/api/deployments").json()
-        # The 7 EVM chains should all appear, none deployed (placeholder addresses).
+        # The 7 EVM chains should all appear.
         assert "base" in data["evm"]
-        assert data["evm"]["base"]["deployed"] is False
-        # Placeholder addresses → normalized to None by the loader.
-        assert data["evm"]["base"]["privacy_relayer"] is None
+        # Structure check — deployed depends on whether deployed_base.json
+        # is committed with real addresses (it is now, after P1.9).
+        assert "deployed" in data["evm"]["base"]
+        assert "privacy_relayer" in data["evm"]["base"]
+
+    def test_deployments_evm_base_deployed_with_real_addresses(self, client):
+        """If deployed_base.json is committed with real Base mainnet addresses
+        (which it is after P1.9), base should show deployed=True with real addrs."""
+        data = client.get("/api/deployments").json()
+        base = data["evm"]["base"]
+        if base["deployed"]:
+            # Real addresses should be non-null checksummed addresses.
+            assert base["privacy_relayer"] is not None
+            assert base["privacy_relayer"].startswith("0x")
+            assert len(base["privacy_relayer"]) == 42
+            assert base["stealth_registry"] is not None
+            assert base["stealth_registry"].startswith("0x")
 
     def test_deployments_evm_has_explorer(self, client):
         data = client.get("/api/deployments").json()

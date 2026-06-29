@@ -2,16 +2,30 @@
 Backend API Tests for Universal Privacy Layer - 4 New Features
 Wallet Privacy Analyzer, Privacy Address Book, ZK Commitments, Encrypted Receipts
 
-Run with: pytest -v
+INTEGRATION TESTS — requires a live backend. These are NOT collected by the
+default pytest run (they need REACT_APP_BACKEND_URL + a live server). To run:
+    pytest tests/test_privacy_features.py -v --integration
+
+Or set the env var: UPL_RUN_INTEGRATION=1
 """
 
+import os
 import secrets
 import hashlib
 from datetime import datetime
 import pytest
 import requests
 
-from conftest_integration import TEST_OWNER_ADDRESS
+# Skip entire module unless integration mode is explicitly enabled
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("UPL_RUN_INTEGRATION"),
+    reason="Integration tests require UPL_RUN_INTEGRATION=1 + live backend",
+)
+
+try:
+    from conftest_integration import TEST_OWNER_ADDRESS
+except ImportError:
+    TEST_OWNER_ADDRESS = "0x0000000000000000000000000000000000000000"
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
