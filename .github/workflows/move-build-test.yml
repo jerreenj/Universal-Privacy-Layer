@@ -10,7 +10,7 @@
 # It uses the official Mysten Labs `sui` Docker image so the build is
 # reproducible without cargo/sui toolchain setup, and pins the tag so a
 # future mainnet/testnet split doesn't silently change what the gate runs
-# against. Testnet framework rev is what `Move.toml` already pins.
+# against. Mainnet framework rev is what `Move.toml` already pins.
 
 name: Move (Sui) build + test
 
@@ -46,23 +46,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install the Sui CLI (testnet)
-        # Install the `sui` binary from the latest testnet release asset,
-        # matching `Move.toml`'s `Sui = { ..., rev = "framework/testnet" }`.
+      - name: Install the Sui CLI (mainnet)
+        # Install the `sui` binary from the latest mainnet release asset,
+        # matching `Move.toml`'s `Sui = { ..., rev = "framework/mainnet" }`.
         # Pinning avoids the framework/toolchain skew that would otherwise
         # make `tx_context::dummy()`-style tests flaky across releases.
         #
         # The asset naming encodes the version (e.g.
-        # `sui-testnet-v1.74.0-ubuntu-x86_64.tgz`), so we resolve the tag from
+        # `sui-mainnet-v1.74.0-ubuntu-x86_64.tgz`), so we resolve the tag from
         # the GitHub API and download the matching archive. Ubuntu-x86_64 is
-        # what `ubuntu-latest` runners provide.
+        # what `ubuntu-latest` runners provide. We list recent releases and
+        # filter for `mainnet-*` tags — the `releases/latest` endpoint may
+        # return a testnet release, so we filter explicitly.
         run: |
           set -euo pipefail
           TAG="$(curl -sSf -H 'Accept: application/vnd.github+json' \
-            https://api.github.com/repos/MystenLabs/sui/releases/latest \
+            "https://api.github.com/repos/MystenLabs/sui/releases?per_page=20" \
             | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+            | grep 'mainnet' \
             | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
-          echo "Resolved latest testnet tag: ${TAG}"
+          echo "Resolved latest mainnet tag: ${TAG}"
           ASSET="sui-${TAG}-ubuntu-x86_64.tgz"
           URL="https://github.com/MystenLabs/sui/releases/download/${TAG}/${ASSET}"
           echo "Downloading ${URL}"

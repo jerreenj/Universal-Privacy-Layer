@@ -41,8 +41,53 @@ export function WalletProvider({ children }) {
   const [solConn, setSolConn] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const [privacyWallet, setPrivacyWallet] = useState(null);
+  const [, setDeploymentsLoaded] = useState(false);
 
   const vm = CHAINS[chain].vm;
+
+  // P1.6: fetch the unified /deployments endpoint on mount and update the
+  // CHAINS config in place with real deployed addresses + Sui liveness.
+  // CHAINS is a mutable shared object — updating its fields here reflects in
+  // every component that reads it on the next render (Navbar, Landing,
+  // ChainsStatus, CrossChainSplit all gate on `c.live` / `c.contracts`).
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await axios.get(`${API}/deployments`);
+        if (!mounted || !res?.data) return;
+        const { evm, sui } = res.data;
+        // Update each EVM chain's contracts with real addresses where deployed.
+        if (evm && typeof evm === "object") {
+          for (const [key, info] of Object.entries(evm)) {
+            if (CHAINS[key] && info?.deployed) {
+              CHAINS[key].contracts = {
+                privacyRelayer: info.privacy_relayer ?? CHAINS[key].contracts?.privacyRelayer,
+                stealthRegistry: info.stealth_registry ?? CHAINS[key].contracts?.stealthRegistry,
+                ...(info.uniswap_wrapper ? { uniswapWrapper: info.uniswap_wrapper } : {}),
+              };
+            }
+          }
+        }
+        // Flip Sui from "coming soon" to live if the package is deployed.
+        if (sui?.live && CHAINS.sui) {
+          CHAINS.sui.live = true;
+          CHAINS.sui.comingSoon = false;
+          CHAINS.sui.contracts = {
+            ...(CHAINS.sui.contracts || {}),
+            packageId: sui.package_id,
+            sharedObjects: sui.shared_objects,
+          };
+        }
+        setDeploymentsLoaded(true);
+      } catch {
+        // Non-fatal: deployments endpoint unreachable → keep static config
+        // (zero-address EVM placeholders, Sui "coming soon"). This is the
+        // same shape as before P1.6, so no regression for existing users.
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   const connectEVM = useCallback(async () => {
     if (!window.ethereum) return toast.error("MetaMask not found — install it first");

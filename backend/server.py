@@ -81,7 +81,8 @@ def rate_limit(request: StarletteRequest, max_calls: int = 20, window: int = 60)
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # Public endpoints that don't require a session token
-    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access", "/api/payments/info", "/api/payments/submit"}
+    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access", "/api/payments/info", "/api/payments/submit",
+                    "/api/deployments", "/api/sui/status", "/api/sui/registry/count"}
     PUBLIC_PREFIXES = ()
 
     async def dispatch(self, request: StarletteRequest, call_next):
@@ -471,6 +472,103 @@ _UPL_CONTRACTS_STATIC = {
 # P1.4 exactly, and the deploy stays safe. The env var `UPL_DEPLOYED_BASE_JSON`
 # (absolute or ROOT_DIR-relative) overrides the default path for tests.
 UPL_CONTRACTS = _load_deployed_addresses(_UPL_CONTRACTS_STATIC)
+
+
+# ── Sui deployment manifest loader (P1.6) ──────────────────────────────────
+# Mirrors _load_deployed_addresses but for the Sui Move package published to
+# mainnet. Reads scripts/deployed_sui_mainnet.json (git-ignored; the .example
+# template is the committed documentation). With no manifest present, SUI_DEPLOYMENT
+# is None — all Sui endpoints report `live: False` and no Sui reads are attempted.
+
+SUI_CONFIG = {
+    "mainnet": {"rpc_url": "https://fullnode.mainnet.sui.io:443", "network": "mainnet"},
+}
+SUI_DEFAULT_NETWORK = "mainnet"
+
+
+def _load_deployed_sui() -> Optional[Dict[str, Any]]:
+    """Load the Sui mainnet deployment manifest written by
+    `scripts/deploy_sui_mainnet.sh`. Returns a dict with:
+        network, package_id, modules, shared_objects, owned_capabilities,
+        published_at, publisher_address, sui_cli_version, live=True
+    or None if the manifest is absent / unreadable / malformed.
+
+    The env var `UPL_DEPLOYED_SUI_JSON` (absolute or ROOT_DIR-relative)
+    overrides the default path (`scripts/deployed_sui_mainnet.json`) — used by
+    tests to point at a fixture.
+
+    Sui object ids are 0x + up to 64 hex chars (NOT 40 like EVM addresses),
+    so the validator uses a different regex than _load_deployed_addresses.
+    """
+    def _resolve_path() -> Optional[Path]:
+        raw = os.environ.get("UPL_DEPLOYED_SUI_JSON")
+        if not raw:
+            return ROOT_DIR.parent / "scripts" / "deployed_sui_mainnet.json"
+        p = Path(raw)
+        return p if p.is_absolute() else (ROOT_DIR / p)
+
+    path = _resolve_path()
+    if not path.exists():
+        logging.info("UPL Sui: no deployed_sui_mainnet.json at %s — Sui not deployed yet.", path)
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.warning("UPL Sui: failed to read %s (%s) — Sui treated as not deployed.", path, exc)
+        return None
+    if not isinstance(manifest, dict):
+        logging.warning("UPL Sui: %s is not a JSON object — ignoring.", path)
+        return None
+
+    # Validate required fields. package_id and shared_objects.registry are the
+    # minimum the backend needs to read on-chain state.
+    package_id = manifest.get("package_id")
+    shared_objects = manifest.get("shared_objects", {})
+    if not (isinstance(package_id, str) and re.match(r"^0x[a-fA-F0-9]{16,64}$", package_id)):
+        logging.warning("UPL Sui: package_id missing or invalid in %s — ignoring.", path)
+        return None
+
+    # Validate shared object ids with the Sui id regex.
+    def _valid_sui_id(val: Any) -> bool:
+        return isinstance(val, str) and re.match(r"^0x[a-fA-F0-9]{16,64}$", val) is not None
+
+    registry_id = shared_objects.get("registry") if isinstance(shared_objects, dict) else None
+    if not _valid_sui_id(registry_id):
+        logging.warning("UPL Sui: shared_objects.registry missing or invalid in %s — registry reads will 503.", path)
+        registry_id = None
+
+    relayer_state_id = shared_objects.get("relayer_state") if isinstance(shared_objects, dict) else None
+    if not _valid_sui_id(relayer_state_id):
+        relayer_state_id = None
+
+    # Validate owned capabilities (optional — not all are required for reads).
+    owned_caps = manifest.get("owned_capabilities", {})
+    if isinstance(owned_caps, dict):
+        for cap_key, cap_val in list(owned_caps.items()):
+            if not _valid_sui_id(cap_val):
+                owned_caps[cap_key] = None
+
+    result = {
+        "network": manifest.get("network", SUI_DEFAULT_NETWORK),
+        "package_id": package_id,
+        "modules": manifest.get("modules", []),
+        "shared_objects": {
+            "registry": registry_id,
+            "relayer_state": relayer_state_id,
+        },
+        "owned_capabilities": owned_caps if isinstance(owned_caps, dict) else {},
+        "published_at": manifest.get("published_at"),
+        "publisher_address": manifest.get("publisher_address"),
+        "sui_cli_version": manifest.get("sui_cli_version"),
+        "live": True,
+    }
+    logging.info("UPL Sui: manifest loaded from %s — package_id=%s, registry=%s",
+                 path, package_id, registry_id)
+    return result
+
+
+SUI_DEPLOYMENT = _load_deployed_sui()
 
 
 # Token configurations per chain
@@ -2606,7 +2704,11 @@ async def get_api_documentation():
 # Uniswap V3 Router & Quoter addresses per chain
 UNISWAP_V3_CONTRACTS = {
     "base": {
-        "router": "0x2626664c2603336E57B271c5C0b26F421741e481",
+        # P1.6: canonical Uniswap V3 SwapRouter (NOT SwapRouter02). The
+        # UniswapPrivacyWrapper contract's ISwapRouter.ExactInputSingleParams
+        # has a `deadline` field that only the original V3 SwapRouter matches;
+        # SwapRouter02 omits it. Same address on all V3-deployed chains.
+        "router": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
         "quoter": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a"
     },
     "arbitrum": {
@@ -3918,6 +4020,103 @@ async def submit_payment(request: StarletteRequest):
     })
 
     return {"status": "submitted", "message": "Payment submitted for verification. You'll be activated shortly."}
+
+
+# ── Sui mainnet read helper + endpoints (P1.6) ──────────────────────────────
+# Uses httpx (already a dependency) for Sui JSON-RPC reads — no Sui SDK added.
+# The Sui Move package's shared Registry object holds `next_id: u64` which equals
+# the announcement count (see contracts/sui/sources/stealth_address_registry.move:82).
+# We read it via suix_getObject / sui_getObject and extract the field.
+
+async def _sui_rpc(method: str, params: list) -> Dict[str, Any]:
+    """Make a Sui JSON-RPC call to the mainnet fullnode. Returns the parsed
+    `result` object. Raises HTTPException(503) on RPC error or unreachable node."""
+    network = SUI_DEFAULT_NETWORK
+    rpc_url = SUI_CONFIG.get(network, {}).get("rpc_url")
+    if not rpc_url:
+        raise HTTPException(status_code=503, detail="Sui RPC not configured")
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(rpc_url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, httpx.RequestError) as exc:
+        raise HTTPException(status_code=503, detail=f"Sui RPC unreachable: {exc}")
+    if "error" in data:
+        raise HTTPException(status_code=502, detail=f"Sui RPC error: {data['error']}")
+    return data.get("result", {})
+
+
+@api_router.get("/sui/status")
+async def sui_status():
+    """Return the Sui mainnet deployment manifest (package_id, shared_objects,
+    network, live boolean). Returns {live: False} when no manifest is present."""
+    if not SUI_DEPLOYMENT:
+        return {"live": False, "network": None, "package_id": None,
+                "shared_objects": {}, "owned_capabilities": {}, "modules": []}
+    return SUI_DEPLOYMENT
+
+
+@api_router.get("/sui/registry/count")
+async def sui_registry_count():
+    """Read the Sui shared Registry object and return its announcement count
+    (the `next_id` field, which equals the count since ids are monotonic from 0).
+    Returns 503 if Sui is not deployed or the registry object id is missing."""
+    if not SUI_DEPLOYMENT:
+        raise HTTPException(status_code=503, detail="Sui package not deployed")
+    registry_id = SUI_DEPLOYMENT.get("shared_objects", {}).get("registry")
+    if not registry_id:
+        raise HTTPException(status_code=503, detail="Sui registry object id not available in manifest")
+    result = await _sui_rpc("sui_getObject", [registry_id])
+    obj = result.get("data", {})
+    fields = obj.get("content", {}).get("fields", {})
+    next_id = fields.get("next_id")
+    return {"count": int(next_id) if next_id is not None else 0,
+            "registry_object_id": registry_id,
+            "network": SUI_DEPLOYMENT.get("network")}
+
+
+# ── Unified deployments endpoint (P1.6) ─────────────────────────────────────
+# Single endpoint the frontend fetches on load to learn which contracts are
+# deployed across EVM + Sui, so the UI can surface real addresses and flip
+# Sui from "coming soon" to live without a code change.
+
+@api_router.get("/deployments")
+async def deployments():
+    """Return the deployment status of all UPL contracts across EVM chains and
+    Sui mainnet. EVM addresses come from UPL_CONTRACTS (populated by the
+    _load_deployed_addresses loader at import time from deployed_base.json);
+    Sui status comes from SUI_DEPLOYMENT (loaded from deployed_sui_mainnet.json)."""
+    evm = {}
+    for chain, cfg in UPL_CONTRACTS.items():
+        relayer = cfg.get("privacy_relayer")
+        registry = cfg.get("stealth_registry")
+        wrapper = cfg.get("uniswap_wrapper")
+        # A chain is "deployed" if at least one contract has a real (non-zero)
+        # address. Zero-address / None means not deployed.
+        def _is_real(addr):
+            return bool(addr) and addr not in ("0x0", "0x0000000000000000000000000000000000000000")
+        evm[chain] = {
+            "privacy_relayer": relayer if _is_real(relayer) else None,
+            "stealth_registry": registry if _is_real(registry) else None,
+            "uniswap_wrapper": wrapper if _is_real(wrapper) else None,
+            "deployed": _is_real(relayer) or _is_real(registry) or _is_real(wrapper),
+            "explorer": cfg.get("explorer"),
+        }
+    if SUI_DEPLOYMENT:
+        sui = {
+            "live": True,
+            "package_id": SUI_DEPLOYMENT.get("package_id"),
+            "network": SUI_DEPLOYMENT.get("network"),
+            "shared_objects": SUI_DEPLOYMENT.get("shared_objects", {}),
+            "modules": SUI_DEPLOYMENT.get("modules", []),
+            "published_at": SUI_DEPLOYMENT.get("published_at"),
+        }
+    else:
+        sui = {"live": False, "package_id": None, "network": None,
+               "shared_objects": {}, "modules": []}
+    return {"evm": evm, "sui": sui}
 
 
 # Include router

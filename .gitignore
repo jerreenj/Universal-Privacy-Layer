@@ -40,7 +40,7 @@ contracts/deploy*.py
 contracts/sui/build/
 contracts/sui/dependency_constr.lock
 contracts/sui/.sui/
-scripts/deployed_sui_testnet.json
+scripts/deployed_sui_mainnet.json
 
 # ─── Logs & test artifacts ──────────────────────────────────────
 *.log

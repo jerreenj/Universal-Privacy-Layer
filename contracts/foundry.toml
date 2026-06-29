@@ -10,4 +10,7 @@ remappings = [
     "@openzeppelin/=lib/openzeppelin-contracts/"
 ]
 
+# P1.6: allow Deploy.s.sol to write contracts/deployed_base.json after deploy.
+fs_permissions = [{access = "write", path = "./deployed_base.json"}]
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

@@ -1,7 +1,7 @@
 {
-  "network": "testnet",
-  "sui_cli_version": "sui 1.73.2-testnet",
-  "published_at": "2026-06-23T18:00:00Z",
+  "network": "mainnet",
+  "sui_cli_version": "sui 1.73.2-mainnet",
+  "published_at": "2026-06-30T00:00:00Z",
   "package_id": "0xREPLACE_WITH_REAL_PACKAGE_ID_FROM_PUBLISH",
   "modules": [
     "stealth_address_registry",

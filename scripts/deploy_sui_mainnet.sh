@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Deploy the UPL Sui Move package (contracts/sui) to Sui testnet and emit a
-# `deployed_sui_testnet.json` manifest the backend + frontend can read.
+# Deploy the UPL Sui Move package (contracts/sui) to Sui mainnet and emit a
+# `deployed_sui_mainnet.json` manifest the backend + frontend can read.
 #
-# This is the S2.4 deliverable of the "make Sui real & visible" plan.
+# This is the P1.6 deliverable — the Sui mainnet deploy toolchain, switched
+# from testnet to mainnet per the project's "everything mainnet, no testnet"
+# directive. The Move package (12 modules, 123 tests) builds against the
+# `framework/mainnet` Sui framework rev pinned in `Move.toml`.
 #
 # What it does, in order:
 #   1. Sanity-checks the environment: `sui` on PATH, an active client env
-#      pointing at testnet (`sui client active-env`), and a non-zero funded
-#      active address (`sui client gas`). Publish cost on testnet is a few SUI;
+#      pointing at mainnet (`sui client active-env`), and a non-zero funded
+#      active address (`sui client gas`). Publish cost on mainnet is real SUI;
 #      we refuse to proceed on an empty balance rather than letting the
 #      publish tx fail mid-run.
 #   2. Runs `sui move build` to fail fast on a compile regression before any
@@ -19,7 +22,7 @@
 #      done here — the published address is recorded in the manifest instead
 #      so the source tree stays publish-agnostic (the canonical Sui pattern;
 #      callers re-bind `upl` at their own publish time).
-#   5. Writes `scripts/deployed_sui_testnet.json` with:
+#   5. Writes `scripts/deployed_sui_mainnet.json` with:
 #        - network, sui_cli_version, package_id, the upgrade_cap id,
 #          the shared Registry / RelayerState object ids, and the AdminCap /
 #          RelayerCap / ReceiptCap object ids that `init` minted to the publisher.
@@ -32,13 +35,13 @@
 set -euo pipefail
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-NETWORK="testnet"
+NETWORK="mainnet"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG_DIR="${REPO_ROOT}/contracts/sui"
-OUT_MANIFEST="${REPO_ROOT}/scripts/deployed_sui_testnet.json"
+OUT_MANIFEST="${REPO_ROOT}/scripts/deployed_sui_mainnet.json"
 SUI_BIN="${SUI_BIN:-sui}"                 # override with an absolute path if `sui` isn't on PATH
 
-log() { printf '[deploy_sui_testnet] %s\n' "$*" >&2; }
+log() { printf '[deploy_sui_mainnet] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
 # ─── Preflight ────────────────────────────────────────────────────────────────
@@ -58,7 +61,7 @@ log "Active address: ${ACTIVE_ADDR}"
 GAS_LINE="$("${SUI_BIN}" client gas --address "${ACTIVE_ADDR}" 2>/dev/null | tail -n +2 | head -n1 || true)"
 log "Gas row: ${GAS_LINE:-<no balance>}"
 echo "${GAS_LINE}" | grep -Eq '[1-9]' \
-  || die "Active address has zero gas on ${NETWORK}; fund it from the Sui testnet faucet first."
+  || die "Active address has zero gas on ${NETWORK}; fund it with real SUI before deploying."
 
 # ─── Build (fail fast) ─────────────────────────────────────────────────────────
 log "Building package: ${PKG_DIR}"

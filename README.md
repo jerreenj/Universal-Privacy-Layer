@@ -134,7 +134,7 @@ Every operation — whether it's a token swap, a perp trade, a prediction bet, o
 </table>
 
 <sup>&dagger;</sup> Sui Move package `upl` (12 modules) is written, unit-tested
-(123/123 green), and CI-gated; publication to testnet via `scripts/deploy_sui_testnet.sh`
+(123/123 green), and CI-gated; publication to mainnet via `scripts/deploy_sui_mainnet.sh`
 is staged. See [Sui Move package](#sui-move-package-contractssui).
 
 <br>
@@ -276,7 +276,7 @@ Universal-Privacy-Layer/
 │   ├── PrivacyRelayer.sol              Gas-only meta-tx forwarder (onlyRelayer, EIP-712 intent)
 │   ├── StealthAddressRegistry.sol      On-chain stealth announcement registry (EIP-5564)
 │   ├── UniswapPrivacyWrapper.sol       Stealth-routed Uniswap V3 swap interactions
-│   └── sui/                            Sui Move 2024 package ("upl") · Move.toml pin rev=framework/testnet
+│   └── sui/                            Sui Move 2024 package ("upl") · Move.toml pin rev=framework/mainnet
 │       ├── sources/                    12 production modules: stealth_address_registry, privacy_relayer,
 │       │                               prepaid_ticket, privacy_receipt, stealth_transfer, uopl_multisig,
 │       │                               view_tag_index, fee_splitter, announcement_indexer, cancel_nonce,
@@ -284,7 +284,8 @@ Universal-Privacy-Layer/
 │       └── tests/                      12 #[test_only] modules · 123 unit tests · `sui move test`
 │
 ├── .github/workflows/move-build-test.yml   CI gate: `sui move build` + `sui move test` on every PR
-├── scripts/deploy_sui_testnet.sh            Testnet publish script → scripts/deployed_sui_testnet.json
+├── scripts/deploy_sui_mainnet.sh            Mainnet publish script → scripts/deployed_sui_mainnet.json
+├── scripts/deploy_base.sh                  EVM deploy script (Base mainnet) → contracts/deployed_base.json
 │
 ├── frontend/                           React 18 · Tailwind CSS · ethers.js · Web3Modal
 │   └── src/
@@ -374,7 +375,7 @@ Universal-Privacy-Layer/
 ### Sui Move package (`contracts/sui/`)
 
 The Sui side of UPL is a real, compiling **Move 2024** package `upl`, pinned to
-the `framework/testnet` Sui framework rev (`Move.toml`). It is not a stub — all
+the `framework/mainnet` Sui framework rev (`Move.toml`). It is not a stub — all
 twelve modules build clean (`sui move build`, 0 errors / 0 warnings) and the
 `#[test_only]` suite runs **123/123 green** (`sui move test`). The package mirrors
 the EVM privacy primitives in Move's resource/ownership model and adds Sui-native
@@ -443,30 +444,56 @@ to `main` via GitHub Actions. Self-hosting is not a supported deployment.
 
 ### Build & Test (Sui Move package)
 
-The Sui Move package builds and tests against the testnet Sui framework rev. CI
+The Sui Move package builds and tests against the mainnet Sui framework rev. CI
 (`.github/workflows/move-build-test.yml`) runs both gates on every PR touching
 `contracts/sui/`.
 
 ```bash
-# Install the Sui CLI testnet build (one-time):  https://docs.sui.io/guides/developer/getting-started
+# Install the Sui CLI mainnet build (one-time):  https://docs.sui.io/guides/developer/getting-started
 
-# Build — 0 errors / 0 warnings on testnet framework rev
+# Build — 0 errors / 0 warnings on mainnet framework rev
 sui move build
 
 # Unit tests — 123 tests across the 12 #[test_only] modules, all green
 sui move test
 ```
 
-To publish the `upl` package to **testnet** and emit the manifest the backend
+To publish the `upl` package to **mainnet** and emit the manifest the backend
 reads, run the deploy script (it preflight-checks the active env + gas, builds
-fail-fast, publishes, and writes `scripts/deployed_sui_testnet.json` with the
+fail-fast, publishes, and writes `scripts/deployed_sui_mainnet.json` with the
 package id + shared object ids + capability object ids):
 
 ```bash
-sui client switch --env testnet
-bash scripts/deploy_sui_testnet.sh
-# → scripts/deployed_sui_testnet.json (gitignored; see deployed_sui_testnet.json.example for shape)
+sui client switch --env mainnet
+bash scripts/deploy_sui_mainnet.sh
+# → scripts/deployed_sui_mainnet.json (gitignored; see deployed_sui_mainnet.json.example for shape)
 ```
+
+### Deploy EVM contracts (Base mainnet)
+
+The EVM contracts (`PrivacyRelayer`, `StealthAddressRegistry`,
+`UniswapPrivacyWrapper`) deploy to Base mainnet via Foundry. The deploy script
+preflight-checks the deployer balance, requires interactive confirmation
+(`feeRecipient` is immutable after deploy), broadcasts, and writes
+`contracts/deployed_base.json` with the three addresses + provenance:
+
+```bash
+# Set required env (see contracts/.env.example):
+export BASE_RPC_URL=https://mainnet.base.org
+export DEPLOYER_PRIVATE_KEY=0x...
+export FEE_RECIPIENT=0x...    # IMMUTABLE — no setter exists
+export BASESCAN_API_KEY=...   # optional, for verification
+
+bash scripts/deploy_base.sh
+# → contracts/deployed_base.json (gitignored; auto-read by backend at startup)
+```
+
+The backend's `_load_deployed_addresses()` reads `deployed_base.json` at import
+time and overrides the static placeholder addresses in `UPL_CONTRACTS` — no
+endpoint changes needed. Similarly, `_load_deployed_sui()` reads
+`deployed_sui_mainnet.json`. The unified `/api/deployments` endpoint surfaces
+both to the frontend, which flips Sui from "coming soon" to live when the
+manifest appears.
 
 <br>
 
@@ -483,7 +510,7 @@ bash scripts/deploy_sui_testnet.sh
 | **Cryptography** | `@noble/secp256k1` v3.0.0, AES-256-GCM, ECDH, Groth16 |
 | **Standard** | EIP-5564 (Stealth Addresses) |
 | **Smart Contracts (EVM)** | Solidity ^0.8.19 |
-| **Smart Contracts (Sui)** | Move 2024, package `upl`, 12 modules, 123 tests, Sui framework rev `framework/testnet` |
+| **Smart Contracts (Sui)** | Move 2024, package `upl`, 12 modules, 123 tests, Sui framework rev `framework/mainnet` |
 | **Database** | Managed document database, indexed collections, TTL-based session cleanup |
 | **Containerization** | Multi-stage Docker (Node 22 Alpine + Python 3.11) |
 | **TLS** | Azure-managed (Container Apps ingress) |

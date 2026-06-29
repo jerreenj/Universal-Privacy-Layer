@@ -6,8 +6,8 @@ version = "0.1.0"
 # Pulled forward from the project's Phase-2 plan in response to the Sui grants
 # team review (2026-06) flagging that the repo was EVM-only despite the README
 # advertising Sui/MoveVM. These modules are real, compiling privacy primitives
-# ported from the EVM contracts in ../  + Sui-native extensions. Testnet
-# deployable via scripts/deploy_sui_testnet.sh.
+# ported from the EVM contracts in ../  + Sui-native extensions. Mainnet
+# deployable via scripts/deploy_sui_mainnet.sh.
 edition = "2024"
 
 [addresses]
@@ -19,7 +19,7 @@ upl = "0x0"
 # The Sui framework + Move stdlib are referenced via the `[env]` of `sui move
 # build` (auto-discovered when building with the `sui` CLI). Listing them here
 # keeps the manifest self-describing for tooling that resolves deps explicitly.
-Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/mainnet" }
 
 [dev-dependencies]
 # Tests live in tests/*.move and use #[test_only] / #[test] attributes from the
