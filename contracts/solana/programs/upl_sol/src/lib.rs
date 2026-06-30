@@ -229,7 +229,8 @@ impl PrivacyReceipt {
     pub const SPACE: usize = 8 + 8 + 32 + 256 + 2 + 32 + 2 + 8 + 8; // = 358
 }
 
-// ─── Instructions ───────────────────────────────────────────────────────────
+
+// ─── Account validation structs (crate root) ──────────────────────────────
 
 /// Initialize the registry — creates the RegistryState PDA and sets the
 /// relayer + admin + fee. Called once by the deployer. Mirrors Sui `init`
@@ -255,21 +256,6 @@ pub struct Initialize<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn initialize(ctx: Context<Initialize>, fee_bps: u16) -> Result<()> {
-    require!(fee_bps <= MAX_FEE_BPS, UplError::FeeTooHigh);
-
-    let registry = &mut ctx.accounts.registry;
-    registry.relayer = ctx.accounts.relayer.key();
-    registry.admin = ctx.accounts.payer.key();
-    registry.fee_bps = fee_bps;
-    registry.next_id = 0;
-    registry.total_relayed = 0;
-    registry.accumulated_fees = 0;
-    registry.next_receipt_id = 0;
-
-    Ok(())
-}
-
 /// Announce a stealth address — creates an Announcement PDA. Permissionless
 /// (anyone can announce), but typically called by the relayer. Mirrors Sui
 /// `stealth_address_registry::announce`.
@@ -293,42 +279,6 @@ pub struct Announce<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn announce(
-    ctx: Context<Announce>,
-    ephemeral_pub_key: [u8; 32],
-    view_tag: u8,
-    stealth_hash: [u8; 32],
-) -> Result<()> {
-    require!(
-        ephemeral_pub_key != [0u8; 32],
-        UplError::EmptyEphemeralKey
-    );
-
-    let registry = &mut ctx.accounts.registry;
-    let announcement = &mut ctx.accounts.announcement;
-
-    let id = registry.next_id;
-    registry.next_id += 1;
-
-    announcement.id = id;
-    announcement.ephemeral_pub_key = ephemeral_pub_key;
-    announcement.view_tag = view_tag;
-    announcement.stealth_hash = stealth_hash;
-    announcement.announcer = ctx.accounts.announcer.key();
-    announcement.timestamp = Clock::get()?.unix_timestamp;
-
-    emit!(StealthAnnouncement {
-        id,
-        view_tag,
-        announcer: ctx.accounts.announcer.key(),
-        stealth_hash,
-        ephemeral_pub_key,
-        timestamp: announcement.timestamp,
-    });
-
-    Ok(())
-}
-
 /// Relay SOL to a stealth recipient (announce-less path). Relayer-gated.
 /// Skims the fee, forwards `amount - fee` via System Program transfer.
 /// Mirrors Sui `privacy_relayer::relay` + Base `relay()`. Kept for
@@ -348,61 +298,6 @@ pub struct Relay<'info> {
     pub recipient: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
-}
-
-pub fn relay(ctx: Context<Relay>, _ephemeral_key: [u8; 32], _view_tag: u8, amount: u64) -> Result<()> {
-    let registry = &mut ctx.accounts.registry;
-
-    require!(amount > 0, UplError::ZeroAmount);
-    require!(!ctx.accounts.recipient.key().eq(&Pubkey::default()), UplError::ZeroRecipient);
-    require!(
-        !ctx.accounts.recipient.key().eq(&crate::ID),
-        UplError::RecipientIsProgram
-    );
-    require!(registry.fee_bps <= MAX_FEE_BPS, UplError::FeeTooHigh);
-
-    let fee = registry.fee_for(amount);
-    let transfer_amount = amount
-        .checked_sub(fee)
-        .ok_or_else(|| error!(UplError::FeeTooHigh))?;
-
-    // Forward amount - fee to the stealth recipient via System Program CPI.
-    system_program::transfer(
-        CpiContext::new(
-            ctx.accounts.system_program.to_account_info(),
-            system_program::Transfer {
-                from: ctx.accounts.relayer.to_account_info(),
-                to: ctx.accounts.recipient.to_account_info(),
-            },
-        ),
-        transfer_amount,
-    )?;
-
-    // The fee stays with the relayer (it was part of the amount the relayer
-    // fronted). We track accumulated_fees for accounting — the relayer can
-    // later withdraw them via withdraw_fees. This mirrors Base's pattern where
-    // the fee accrues in the contract; here it accrues conceptually with the
-    // relayer but is tracked on-chain for stats/transparency.
-    registry.accumulated_fees = registry
-        .accumulated_fees
-        .checked_add(fee)
-        .ok_or_else(|| error!(UplError::ZeroAmount))?;
-    registry.total_relayed = registry
-        .total_relayed
-        .checked_add(transfer_amount)
-        .ok_or_else(|| error!(UplError::ZeroAmount))?;
-
-    let stealth_hash = hash(&ctx.accounts.recipient.key().to_bytes()).to_bytes();
-    emit!(PrivateTransfer {
-        stealth_hash,
-        ephemeral_key: _ephemeral_key,
-        view_tag: _view_tag,
-        amount: transfer_amount,
-        fee,
-        timestamp: Clock::get()?.unix_timestamp,
-    });
-
-    Ok(())
 }
 
 /// **THE PARITY ENTRY POINT** — atomically announce + relay SOL + issue receipt
@@ -484,7 +379,187 @@ pub struct RelayAndAnnounceWithRecipient<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn relay_and_announce(
+/// Issue a standalone receipt (relayer-gated). Mirrors Sui
+/// `privacy_receipt::issue`. Used when a receipt is needed outside the
+/// atomic relay_and_announce flow.
+#[derive(Accounts)]
+pub struct IssueReceipt<'info> {
+    #[account(mut, has_one = relayer)]
+    pub registry: Account<'info, RegistryState>,
+
+    #[account(mut)]
+    pub relayer: Signer<'info>,
+
+    /// CHECK: the receipt recipient. Stored, not used for signing.
+    #[account(mut)]
+    pub recipient: AccountInfo<'info>,
+
+    #[account(
+        init,
+        payer = relayer,
+        space = PrivacyReceipt::SPACE,
+        seeds = [b"receipt", registry.next_receipt_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub receipt: Account<'info, PrivacyReceipt>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// Set the fee rate (admin-only). Mirrors Sui `set_fee_bps` + Base `setFeeBps`.
+#[derive(Accounts)]
+pub struct SetFeeBps<'info> {
+    #[account(mut, has_one = admin)]
+    pub registry: Account<'info, RegistryState>,
+
+    /// The admin — must match registry.admin. Enforced by has_one.
+    #[account(mut)]
+    pub admin: Signer<'info>,
+}
+
+/// Withdraw accrued fees (admin-only). Transfers accumulated_fees lamports
+/// from the registry PDA to the admin. Mirrors Sui `withdraw_fees` + Base
+/// `withdrawFees`.
+#[derive(Accounts)]
+pub struct WithdrawFees<'info> {
+    #[account(mut, has_one = admin)]
+    pub registry: Account<'info, RegistryState>,
+
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    /// CHECK: the destination for the withdrawn fees. Usually == admin.
+    #[account(mut)]
+    pub to: AccountInfo<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// Close the program (admin-only) — returns all SOL to the admin.
+/// For emergency shutdown. Mirrors Sui's package upgrade capability
+/// (Solana has no upgrade authority in the program itself, but the
+/// deployer can close via BPF upgrade authority separately).
+#[derive(Accounts)]
+pub struct Close<'info> {
+    #[account(mut, has_one = admin, close = admin)]
+    pub registry: Account<'info, RegistryState>,
+
+    #[account(mut)]
+    pub admin: Signer<'info>,
+}
+
+
+#[program]
+pub mod upl_sol {
+    use super::*;
+
+    pub fn initialize(ctx: Context<Initialize>, fee_bps: u16) -> Result<()> {
+    require!(fee_bps <= MAX_FEE_BPS, UplError::FeeTooHigh);
+
+    let registry = &mut ctx.accounts.registry;
+    registry.relayer = ctx.accounts.relayer.key();
+    registry.admin = ctx.accounts.payer.key();
+    registry.fee_bps = fee_bps;
+    registry.next_id = 0;
+    registry.total_relayed = 0;
+    registry.accumulated_fees = 0;
+    registry.next_receipt_id = 0;
+
+    Ok(())
+    }
+
+    pub fn announce(
+    ctx: Context<Announce>,
+    ephemeral_pub_key: [u8; 32],
+    view_tag: u8,
+    stealth_hash: [u8; 32],
+    ) -> Result<()> {
+    require!(
+        ephemeral_pub_key != [0u8; 32],
+        UplError::EmptyEphemeralKey
+    );
+
+    let registry = &mut ctx.accounts.registry;
+    let announcement = &mut ctx.accounts.announcement;
+
+    let id = registry.next_id;
+    registry.next_id += 1;
+
+    announcement.id = id;
+    announcement.ephemeral_pub_key = ephemeral_pub_key;
+    announcement.view_tag = view_tag;
+    announcement.stealth_hash = stealth_hash;
+    announcement.announcer = ctx.accounts.announcer.key();
+    announcement.timestamp = Clock::get()?.unix_timestamp;
+
+    emit!(StealthAnnouncement {
+        id,
+        view_tag,
+        announcer: ctx.accounts.announcer.key(),
+        stealth_hash,
+        ephemeral_pub_key,
+        timestamp: announcement.timestamp,
+    });
+
+    Ok(())
+    }
+
+    pub fn relay(ctx: Context<Relay>, _ephemeral_key: [u8; 32], _view_tag: u8, amount: u64) -> Result<()> {
+    let registry = &mut ctx.accounts.registry;
+
+    require!(amount > 0, UplError::ZeroAmount);
+    require!(!ctx.accounts.recipient.key().eq(&Pubkey::default()), UplError::ZeroRecipient);
+    require!(
+        !ctx.accounts.recipient.key().eq(&crate::ID),
+        UplError::RecipientIsProgram
+    );
+    require!(registry.fee_bps <= MAX_FEE_BPS, UplError::FeeTooHigh);
+
+    let fee = registry.fee_for(amount);
+    let transfer_amount = amount
+        .checked_sub(fee)
+        .ok_or_else(|| error!(UplError::FeeTooHigh))?;
+
+    // Forward amount - fee to the stealth recipient via System Program CPI.
+    system_program::transfer(
+        CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            system_program::Transfer {
+                from: ctx.accounts.relayer.to_account_info(),
+                to: ctx.accounts.recipient.to_account_info(),
+            },
+        ),
+        transfer_amount,
+    )?;
+
+    // The fee stays with the relayer (it was part of the amount the relayer
+    // fronted). We track accumulated_fees for accounting — the relayer can
+    // later withdraw them via withdraw_fees. This mirrors Base's pattern where
+    // the fee accrues in the contract; here it accrues conceptually with the
+    // relayer but is tracked on-chain for stats/transparency.
+    registry.accumulated_fees = registry
+        .accumulated_fees
+        .checked_add(fee)
+        .ok_or_else(|| error!(UplError::ZeroAmount))?;
+    registry.total_relayed = registry
+        .total_relayed
+        .checked_add(transfer_amount)
+        .ok_or_else(|| error!(UplError::ZeroAmount))?;
+
+    let stealth_hash = hash(&ctx.accounts.recipient.key().to_bytes()).to_bytes();
+    emit!(PrivateTransfer {
+        stealth_hash,
+        ephemeral_key: _ephemeral_key,
+        view_tag: _view_tag,
+        amount: transfer_amount,
+        fee,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
+    Ok(())
+    }
+
+    pub fn relay_and_announce(
     ctx: Context<RelayAndAnnounce>,
     ephemeral_pub_key: [u8; 32],
     view_tag: u8,
@@ -492,7 +567,7 @@ pub fn relay_and_announce(
     ciphertext: Vec<u8>,
     nonce: Vec<u8>,
     amount: u64,
-) -> Result<()> {
+    ) -> Result<()> {
     let registry = &mut ctx.accounts.registry;
 
     // ── Validate ────────────────────────────────────────────────────────
@@ -604,41 +679,14 @@ pub fn relay_and_announce(
     });
 
     Ok(())
-}
+    }
 
-/// Issue a standalone receipt (relayer-gated). Mirrors Sui
-/// `privacy_receipt::issue`. Used when a receipt is needed outside the
-/// atomic relay_and_announce flow.
-#[derive(Accounts)]
-pub struct IssueReceipt<'info> {
-    #[account(mut, has_one = relayer)]
-    pub registry: Account<'info, RegistryState>,
-
-    #[account(mut)]
-    pub relayer: Signer<'info>,
-
-    /// CHECK: the receipt recipient. Stored, not used for signing.
-    #[account(mut)]
-    pub recipient: AccountInfo<'info>,
-
-    #[account(
-        init,
-        payer = relayer,
-        space = PrivacyReceipt::SPACE,
-        seeds = [b"receipt", registry.next_receipt_id.to_le_bytes().as_ref()],
-        bump
-    )]
-    pub receipt: Account<'info, PrivacyReceipt>,
-
-    pub system_program: Program<'info, System>,
-}
-
-pub fn issue_receipt(
+    pub fn issue_receipt(
     ctx: Context<IssueReceipt>,
     announcement_id: u64,
     ciphertext: Vec<u8>,
     nonce: Vec<u8>,
-) -> Result<()> {
+    ) -> Result<()> {
     require!(!ciphertext.is_empty(), UplError::EmptyCiphertext);
     require!(!nonce.is_empty(), UplError::EmptyNonce);
     require!(ciphertext.len() <= 256, UplError::EmptyCiphertext);
@@ -671,20 +719,9 @@ pub fn issue_receipt(
     });
 
     Ok(())
-}
+    }
 
-/// Set the fee rate (admin-only). Mirrors Sui `set_fee_bps` + Base `setFeeBps`.
-#[derive(Accounts)]
-pub struct SetFeeBps<'info> {
-    #[account(mut, has_one = admin)]
-    pub registry: Account<'info, RegistryState>,
-
-    /// The admin — must match registry.admin. Enforced by has_one.
-    #[account(mut)]
-    pub admin: Signer<'info>,
-}
-
-pub fn set_fee_bps(ctx: Context<SetFeeBps>, new_fee_bps: u16) -> Result<()> {
+    pub fn set_fee_bps(ctx: Context<SetFeeBps>, new_fee_bps: u16) -> Result<()> {
     require!(new_fee_bps <= MAX_FEE_BPS, UplError::FeeTooHigh);
 
     let registry = &mut ctx.accounts.registry;
@@ -697,27 +734,9 @@ pub fn set_fee_bps(ctx: Context<SetFeeBps>, new_fee_bps: u16) -> Result<()> {
     });
 
     Ok(())
-}
+    }
 
-/// Withdraw accrued fees (admin-only). Transfers accumulated_fees lamports
-/// from the registry PDA to the admin. Mirrors Sui `withdraw_fees` + Base
-/// `withdrawFees`.
-#[derive(Accounts)]
-pub struct WithdrawFees<'info> {
-    #[account(mut, has_one = admin)]
-    pub registry: Account<'info, RegistryState>,
-
-    #[account(mut)]
-    pub admin: Signer<'info>,
-
-    /// CHECK: the destination for the withdrawn fees. Usually == admin.
-    #[account(mut)]
-    pub to: AccountInfo<'info>,
-
-    pub system_program: Program<'info, System>,
-}
-
-pub fn withdraw_fees(ctx: Context<WithdrawFees>) -> Result<()> {
+    pub fn withdraw_fees(ctx: Context<WithdrawFees>) -> Result<()> {
     let registry = &mut ctx.accounts.registry;
     let amount = registry.accumulated_fees;
     require!(amount > 0, UplError::ZeroAmount);
@@ -736,21 +755,10 @@ pub fn withdraw_fees(ctx: Context<WithdrawFees>) -> Result<()> {
     });
 
     Ok(())
-}
+    }
 
-/// Close the program (admin-only) — returns all SOL to the admin.
-/// For emergency shutdown. Mirrors Sui's package upgrade capability
-/// (Solana has no upgrade authority in the program itself, but the
-/// deployer can close via BPF upgrade authority separately).
-#[derive(Accounts)]
-pub struct Close<'info> {
-    #[account(mut, has_one = admin, close = admin)]
-    pub registry: Account<'info, RegistryState>,
-
-    #[account(mut)]
-    pub admin: Signer<'info>,
-}
-
-pub fn close(_ctx: Context<Close>) -> Result<()> {
+    pub fn close(_ctx: Context<Close>) -> Result<()> {
     Ok(())
+    }
+
 }

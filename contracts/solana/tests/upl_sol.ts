@@ -1,7 +1,34 @@
 import * as anchor from "@coral-xyz/anchor";
-import { AnchorProvider, BN, Program } from "@coral-xyz/anchor";
-import { Keypair, PublicKey, SystemProgram, LAMPORTS_PER_SOL, TransactionInstruction, Transaction } from "@solana/web3.js";
+import { AnchorProvider, BN } from "@coral-xyz/anchor";
+import { Keypair, PublicKey, SystemProgram, LAMPORTS_PER_SOL, TransactionInstruction, Transaction, SendOptions, ConfirmOptions } from "@solana/web3.js";
 import { assert, expect } from "chai";
+import * as crypto from "crypto";
+
+// ─── HTTP-only transaction confirmation (WS doesn't work in WSL) ────────────
+// sendAndConfirmRaw polls getSignatureStatuses via HTTP instead of waiting
+// for a WebSocket event. This is the workaround for the WSL WebSocket issue.
+async function sendAndConfirmHttp(
+  connection: anchor.web3.Connection,
+  tx: Transaction,
+  signers: Keypair[]
+): Promise<string> {
+  // Send the transaction
+  const sig = await connection.sendTransaction(tx, signers, { skipPreflight: false });
+  // Poll for confirmation via HTTP
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    const status = await connection.getSignatureStatus(sig);
+    if (status?.value?.confirmationStatus === "confirmed" ||
+        status?.value?.confirmationStatus === "finalized" ||
+        status?.value?.confirmationStatus === "processed") {
+      if (status.value.err) {
+        throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
+      }
+      return sig;
+    }
+  }
+  throw new Error(`Transaction ${sig} not confirmed after 60s`);
+}
 
 // UPL Solana — raw integration tests using @solana/web3.js directly.
 // We build instructions manually (no Anchor IDL needed) to avoid the
@@ -15,8 +42,8 @@ const PROGRAM_ID = new PublicKey(PROGRAM_ID_STR);
 
 // ─── Instruction discriminators (first 8 bytes of sha256("global:<name>")) ──
 function ixDiscriminator(name: string): Buffer {
-  const hash = anchor.sha256(`global:${name}`);
-  return Buffer.from(hash.slice(0, 16), "hex"); // first 8 bytes as hex
+  const hash = crypto.createHash("sha256").update(`global:${name}`).digest();
+  return hash.subarray(0, 8);
 }
 
 const IX = {
@@ -77,9 +104,18 @@ function parseRegistryState(data: Buffer) {
 // ─── Test suite ─────────────────────────────────────────────────────────────
 
 describe("UPL Solana — PrivacyRelayer parity tests", () => {
-  const provider = anchor.AnchorProvider.local();
+  // Use a custom provider with HTTP-only confirmation (WebSocket doesn't work
+  // reliably in WSL — txs succeed but confirmation times out via WS).
+  const connection = new anchor.web3.Connection("http://127.0.0.1:8899", {
+    commitment: "processed",
+    confirmTransactionInitialTimeout: 60000,
+  });
+  const wallet = anchor.Wallet.local();
+  const provider = new anchor.AnchorProvider(connection, wallet, {
+    commitment: "processed",
+    preflightCommitment: "processed",
+  });
   anchor.setProvider(provider);
-  const wallet = provider.wallet as anchor.Wallet;
 
   let relayer: Keypair;
   let recipient: Keypair;
@@ -90,11 +126,22 @@ describe("UPL Solana — PrivacyRelayer parity tests", () => {
     relayer = Keypair.generate();
     recipient = Keypair.generate();
     otherUser = Keypair.generate();
-    await airdrop(provider, relayer.publicKey, 5 * LAMPORTS_PER_SOL);
-    await airdrop(provider, wallet.publicKey, 5 * LAMPORTS_PER_SOL);
 
-    // Read the actual deployed program ID from the Anchor.toml / workspace
-    // For now use the static one — anchor test replaces it
+    // Fund the relayer + otherUser from the genesis wallet via HTTP-confirmed transfer
+    // (airdrop uses WebSocket confirmation which doesn't work in WSL)
+    async function fund(target: PublicKey, lamports: number) {
+      const tx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: wallet.publicKey,
+          toPubkey: target,
+          lamports,
+        })
+      );
+      await sendAndConfirmHttp(connection, tx, [wallet.payer]);
+    }
+    await fund(relayer.publicKey, 5 * LAMPORTS_PER_SOL);
+    await fund(otherUser.publicKey, 2 * LAMPORTS_PER_SOL);
+
     programId = PROGRAM_ID;
   });
 
@@ -122,7 +169,7 @@ describe("UPL Solana — PrivacyRelayer parity tests", () => {
     });
 
     const tx = new Transaction().add(ix);
-    await provider.sendAndConfirm(tx, [wallet.payer]);
+    await sendAndConfirmHttp(connection, tx, [wallet.payer]);
 
     // Read back the registry state
     const accountInfo = await provider.connection.getAccountInfo(registry);
@@ -187,7 +234,7 @@ describe("UPL Solana — PrivacyRelayer parity tests", () => {
     });
 
     const tx = new Transaction().add(ix);
-    await provider.sendAndConfirm(tx, [wallet.payer, relayer]);
+    await sendAndConfirmHttp(connection, tx, [wallet.payer, relayer]);
 
     // Recipient received amount - fee
     const recipientAfter = await provider.connection.getBalance(recipient.publicKey);
@@ -255,7 +302,7 @@ describe("UPL Solana — PrivacyRelayer parity tests", () => {
 
     try {
       const tx = new Transaction().add(ix);
-      await provider.sendAndConfirm(tx, [otherUser]);
+      await sendAndConfirmHttp(connection, tx, [otherUser]);
       assert.fail("should have reverted");
     } catch (err: any) {
       // has_one constraint failure or custom error
@@ -299,7 +346,7 @@ describe("UPL Solana — PrivacyRelayer parity tests", () => {
 
     try {
       const tx = new Transaction().add(ix);
-      await provider.sendAndConfirm(tx, [relayer]);
+      await sendAndConfirmHttp(connection, tx, [relayer]);
       assert.fail("should have reverted with ZeroAmount");
     } catch (err: any) {
       expect(err.message).to.match(/Error|failed|revert|6000|ZeroAmount/i);
