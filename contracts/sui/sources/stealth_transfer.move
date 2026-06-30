@@ -75,6 +75,89 @@ module upl::stealth_transfer {
     const EZeroAmount: u64 = 1;
     const EZeroRecipient: u64 = 2;
 
+    // ─── CLI/PTB-friendly entry wrappers ─────────────────────────────────────
+    /// `public entry` wrapper around `relayed_send` so it is reachable from the
+    /// `sui client call` CLI path (which auto-injects `&mut TxContext` as the
+    /// last arg and accepts base64 for `vector<u8>` literals — the same pattern
+    /// as `stealth_address_registry::announce_entry` added in package v3).
+    ///
+    /// `relayed_send` itself is a `public fun` (not `public entry`) because it
+    /// is also composed inside larger PTBs by other `upl::` modules; this entry
+    /// is the CLI/relayer-script surface that delegates to it. All object args
+    /// (caps + shared state) are passed by object id; `payment` is a `Coin<SUI>`
+    /// object id the caller supplies (e.g. from a prior `split-coin` step, or a
+    /// coin the caller already owns). `ctx` is auto-injected by the Sui runtime.
+    public entry fun relayed_send_entry(
+        relayer_cap: &RelayerCap,
+        receipt_cap: &ReceiptCap,
+        state: &mut RelayerState,
+        registry: &mut Registry,
+        vti: &mut ViewTagIndex,
+        indexer: &mut AnnouncementIndexer,
+        recipient: address,
+        payment: Coin<SUI>,
+        ephemeral_key: vector<u8>,
+        view_tag: u8,
+        stealth_hash: vector<u8>,
+        ciphertext: vector<u8>,
+        nonce: vector<u8>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        relayed_send(
+            relayer_cap,
+            receipt_cap,
+            state,
+            registry,
+            vti,
+            indexer,
+            recipient,
+            payment,
+            ephemeral_key,
+            view_tag,
+            stealth_hash,
+            ciphertext,
+            nonce,
+            clock,
+            ctx,
+        );
+    }
+
+    /// `public entry` wrapper around `direct_send` for the self-relayed path
+    /// (no `RelayerCap` — caller pays gas, no fee skim). Same CLI-friendly
+    /// arg shape as `relayed_send_entry`.
+    public entry fun direct_send_entry(
+        receipt_cap: &ReceiptCap,
+        registry: &mut Registry,
+        vti: &mut ViewTagIndex,
+        indexer: &mut AnnouncementIndexer,
+        recipient: address,
+        payment: Coin<SUI>,
+        ephemeral_key: vector<u8>,
+        view_tag: vector<u8>,
+        stealth_hash: vector<u8>,
+        ciphertext: vector<u8>,
+        nonce: vector<u8>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        direct_send(
+            receipt_cap,
+            registry,
+            vti,
+            indexer,
+            recipient,
+            payment,
+            ephemeral_key,
+            view_tag,
+            stealth_hash,
+            ciphertext,
+            nonce,
+            clock,
+            ctx,
+        );
+    }
+
     // ─── Relayed path (relayer holds RelayerCap + ReceiptCap) ──────────────
     /// Compose announce -> index -> advance-cursor -> relay -> issue-receipt
     /// atomically under a single PTB. The relayer pays nothing here beyond its

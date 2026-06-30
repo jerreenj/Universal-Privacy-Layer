@@ -231,4 +231,108 @@ module upl::stealth_transfer_tests {
         idx::destroy_test_indexer(indexer);
         clock::destroy_for_testing(clock);
     }
+
+    /// `relayed_send_entry` delegates to `relayed_send` with identical
+    /// semantics. This guards the CLI-facing wrapper added in package v4
+    /// (so a future refactor of the entry signature can't silently diverge
+    /// from the composed-fun path the rest of the package depends on).
+    #[test]
+    fun relayed_send_entry_delegates_identically() {
+        let mut ctx = tx_context::dummy();
+        let clock = fresh_clock(&mut ctx);
+        let mut registry = reg::new_test_registry(&mut ctx);
+        let mut state = rel::new_test_state(0, &mut ctx); // 0% fee -> net == gross
+        let relayer_cap = rel::new_test_relayer_cap(&mut ctx);
+        let receipt_cap = recpt::new_test_receipt_cap(&mut ctx);
+        let mut vti_obj = vti::new_test_index(&mut ctx);
+        let mut indexer = idx::new_test_indexer(&mut ctx);
+
+        let gross = 2_000_000;
+        let payment = coin::mint_for_testing<SUI>(gross, &mut ctx);
+
+        let reg_before = reg::announcement_count(&registry);
+        let relayed_before = rel::total_relayed(&state);
+
+        xfer::relayed_send_entry(
+            &relayer_cap,
+            &receipt_cap,
+            &mut state,
+            &mut registry,
+            &mut vti_obj,
+            &mut indexer,
+            @0xBEEF,
+            payment,
+            x"0042",
+            0x07,
+            x"f00d",
+            x"c0ffee",
+            x"deadbeefdeadbeef",
+            &clock,
+            &mut ctx,
+        );
+
+        // With 0% fee the net forwarded equals the gross; one announcement
+        // minted; view-tag index + indexer cursor advanced.
+        assert!(reg::announcement_count(&registry) == reg_before + 1);
+        assert!(rel::total_relayed(&state) == relayed_before + gross);
+        assert!(rel::accumulated_fees(&state) == 0);
+        assert!(vti::total_indexed(&vti_obj) == 1);
+        assert!(idx::high_water_mark(&indexer) == 0);
+
+        rel::destroy_test_relayer_cap(relayer_cap);
+        recpt::destroy_test_receipt_cap(receipt_cap);
+        rel::destroy_test_state(state);
+        reg::destroy_test_registry(registry);
+        vti::destroy_test_index(vti_obj);
+        idx::destroy_test_indexer(indexer);
+        clock::destroy_for_testing(clock);
+    }
+
+    /// `direct_send_entry` delegates to `direct_send` with identical semantics
+    /// (no fee, full gross forwarded).
+    #[test]
+    fun direct_send_entry_delegates_identically() {
+        let mut ctx = tx_context::dummy();
+        let clock = fresh_clock(&mut ctx);
+        let mut registry = reg::new_test_registry(&mut ctx);
+        let state = rel::new_test_state(50, &mut ctx); // fee set but unused on direct path
+        let receipt_cap = recpt::new_test_receipt_cap(&mut ctx);
+        let mut vti_obj = vti::new_test_index(&mut ctx);
+        let mut indexer = idx::new_test_indexer(&mut ctx);
+
+        let gross = 750_000;
+        let payment = coin::mint_for_testing<SUI>(gross, &mut ctx);
+
+        let reg_before = reg::announcement_count(&registry);
+
+        xfer::direct_send_entry(
+            &receipt_cap,
+            &mut registry,
+            &mut vti_obj,
+            &mut indexer,
+            @0xBEEF,
+            payment,
+            x"0042",
+            x"07",
+            x"f00d",
+            x"c0ffee",
+            x"deadbeefdeadbeef",
+            &clock,
+            &mut ctx,
+        );
+
+        assert!(reg::announcement_count(&registry) == reg_before + 1);
+        // direct path never touches the relayer -> total_relayed stays 0.
+        assert!(rel::total_relayed(&state) == 0);
+        assert!(rel::accumulated_fees(&state) == 0);
+        assert!(vti::total_indexed(&vti_obj) == 1);
+        assert!(idx::high_water_mark(&indexer) == 0);
+
+        recpt::destroy_test_receipt_cap(receipt_cap);
+        rel::destroy_test_state(state);
+        reg::destroy_test_registry(registry);
+        vti::destroy_test_index(vti_obj);
+        idx::destroy_test_indexer(indexer);
+        clock::destroy_for_testing(clock);
+    }
 }

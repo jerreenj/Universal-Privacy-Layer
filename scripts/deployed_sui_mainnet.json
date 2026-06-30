@@ -2,9 +2,10 @@
   "network": "mainnet",
   "sui_cli_version": "sui 1.73.2-1f6e1e6dd72d-dirty",
   "published_at": "2026-06-29T18:33:32Z",
-  "package_id": "0xc930c83d82b6547004f20d9336b7fbfd390116984d9669fe5de56eb4a812f991",
+  "package_id": "0x3f010dae8e51468176edd259180c4fae72788f9fc42db127194f6b42c9ca9300",
   "package_original_id": "0xb9fe4d78d216e98b6229e97f93972cb7c3493d8d9f123880f781ab920c66db50",
-  "package_version": 3,
+  "package_previous_id": "0xc930c83d82b6547004f20d9336b7fbfd390116984d9669fe5de56eb4a812f991",
+  "package_version": 4,
   "modules": [
     "stealth_address_registry",
     "privacy_relayer",
@@ -23,17 +24,48 @@
   ],
   "shared_objects": {
     "registry": "0x7b62abe30dbc0fd63432ef3b51b506d8a51cce467634ce1854b1941817454b13",
+    "relayer_state": "0x9ec03995c0dad3522657d731965b29b1086213814048b5df9046c50a13441c34",
+    "view_tag_index": "0xe272ae2fe3c7738049be55125539ad7321699301fb1882b1508720a24f4ec904",
     "announcement_indexer": "0x078bdd9628b80db21698a2ea376556daa4c7dce27b117744d128affe8d1ccd10",
     "timelock_cap": "0x5c5ab104d4e86c164a7fffe2b162356c1ade93783b3dfa2f74cb2a36c6c84120",
-    "swap_state": "0x733521f312be365a15279db5afc44d19d4f1d83172031005c7c4a0e7ed6eaee7"
+    "swap_state": "0x733521f312be365a15279db5afc44d19d4f1d83172031005c7c4a0e7ed6eaee7",
+    "nullifier_registry": "0x895f9910f49c0d4683212fe7b80b80f90e760d7e2de2f5930962879eea91385d",
+    "fee_splitter": "0x904db2a45b8535d5ab92245bebe531e87af3a1a330fa9f6cc0231848a9fdffe0",
+    "relayer_registry": "0xa37a4f18634cc70ccc57f828161204d9804d0a3e6699f714cdbc7112a7ec91c8",
+    "cancel_nonce": "0xb057cf862cc86f586fca394c6f681e23c10174bf28bb7b4b0250cf2bf607b93e"
   },
   "owned_capabilities": {
     "upgrade_cap": "0xd4b4aff0fda905c50accccccbafa0a1106b35c012a98124568dea32e00e034bd",
-    "admin_cap": "0x15e9e5174b708bef3644e851de907e4f55f6d088058c34d143888fb386b2556c",
-    "relayer_cap": "0xbc0898789926a7bf0436e3a5095ddbe71ec09658af1525a0df55ea9ff07ed416",
-    "receipt_cap": "0x7394b019a70ba284fd7846c171ea787181305a3f16d52b29d866d28cad3f03f5"
+    "privacy_relayer": {
+      "admin_cap": "0xb65170d5f79f56f04bf61bb88b1a05e01fa44825bd0e22225f32cc54c9b9b59f",
+      "relayer_cap": "0xbc0898789926a7bf0436e3a5095ddbe71ec09658af1525a0df55ea9ff07ed416"
+    },
+    "privacy_receipt": {
+      "receipt_cap": "0x7394b019a70ba284fd7846c171ea787181305a3f16d52b29d866d28cad3f03f5"
+    },
+    "fee_splitter": {
+      "admin_cap": "0x15e9e5174b708bef3644e851de907e4f55f6d088058c34d143888fb386b2556c"
+    },
+    "relayer_registry": {
+      "admin_cap": "0x7e8393e90ac98037adfabf134278ad8854ae4f1c4dd1a2e2d39557cbe6ed29bd"
+    },
+    "private_swap": {
+      "admin_cap": "0x25fc165ac855c95fd255e65acff73366620c6e0c5fd9501a95e3c0848918065a"
+    },
+    "timelock_cap": {
+      "admin_cap": "0x3c59b61f3e287a2011920120bfdcf4e8344f2da09697d4a08a9c34024f365a98"
+    }
   },
   "publisher_address": "0x8a997306ebf56f66adae9077b08dd29b3e876547fe6003e80ee95e928d727c9f",
-  "announcement_count": 1,
-  "test_announce_tx": "GRrJGMjFzCB9q6Pe65PvkyVaftUpZ8rRd5xYj4xCf84s"
+  "announcement_count": 2,
+  "test_announce_tx": "GRrJGMjFzCB9q6Pe65PvkyVaftUpZ8rRd5xYj4xCf84s",
+  "test_relay_tx": "HSqpd1chZ6UHUCD5ekYKMiumrftkrWFgFUFivwGBQ5u7",
+  "publish_tx": "F6DxHWHfETicqAXpiRHo6CSKTnnBKzE7kc3FA62MFYdx",
+  "v4_upgrade_tx": "GWN9QhsV1fSDWKgEc2YbXJRNfPexJLD72pVMXmoi28FV",
+  "_manifest_reconciled": {
+    "reconciled_at": "2026-06-30",
+    "reconciled_from": "publish tx objectChanges (F6DxHWHf...) via Sui mainnet JSON-RPC sui_getTransactionBlock",
+    "note": "P2.7 publish manifest omitted 6 shared objects + 5 owned capabilities. Re-added here so the relay (stealth_transfer::relayed_send needs RelayerState + ViewTagIndex + AnnouncementIndexer + Registry) and per-module admin ops have their object ids. The old flat 'admin_cap' key (0x15e9...) was actually fee_splitter::AdminCap — kept under its real module key. Shared object ids are stable across upgrades (same ids, new versions).",
+    "v4_upgrade": "Package upgraded to v4 to add relayed_send_entry/direct_send_entry (public entry wrappers) so the relayed private send is reachable via `sui client call` (base64 vector<u8> args). Upgrade tx GWN9Qhs..., new package_id 0x3f010d.... Verified on mainnet: test relay of 10000 MIST via relayed_send_entry (tx HSqpd1...) succeeded — Registry next_id 1->2, RelayerState total_relayed 0->10000, ViewTagIndex total_indexed 0->1."
+  }
 }
