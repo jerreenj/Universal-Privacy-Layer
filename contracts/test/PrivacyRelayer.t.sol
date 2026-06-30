@@ -103,12 +103,7 @@ contract PrivacyRelayerTest is Test {
         // Must revert — propagated from the mock's announce().
         vm.expectRevert("announce intentionally reverts");
         relayer.relayAndAnnounce{value: amount}(
-            recipient,
-            bytes32(uint256(0xCAFE)),
-            42,
-            bytes32(uint256(0xCAFE)),
-            bytes32(uint256(0xBABE)),
-            keccak256("s")
+            recipient, bytes32(uint256(0xCAFE)), 42, bytes32(uint256(0xCAFE)), bytes32(uint256(0xBABE)), keccak256("s")
         );
 
         // Atomicity: recipient balance unchanged — the forward was rolled back.
@@ -127,12 +122,7 @@ contract PrivacyRelayerTest is Test {
 
         vm.expectRevert("Registry not set");
         fresh.relayAndAnnounce{value: 1 ether}(
-            recipient,
-            bytes32(uint256(0xCAFE)),
-            42,
-            bytes32(uint256(0xCAFE)),
-            bytes32(uint256(0xBABE)),
-            keccak256("s")
+            recipient, bytes32(uint256(0xCAFE)), 42, bytes32(uint256(0xCAFE)), bytes32(uint256(0xBABE)), keccak256("s")
         );
     }
 
@@ -179,12 +169,7 @@ contract PrivacyRelayerTest is Test {
         vm.prank(address(0xEA1A1A1A));
         vm.expectRevert("Not authorised relayer");
         relayer.relayAndAnnounce{value: 0}(
-            recipient,
-            bytes32(uint256(0xCAFE)),
-            42,
-            bytes32(uint256(0xCAFE)),
-            bytes32(uint256(0xBABE)),
-            keccak256("s")
+            recipient, bytes32(uint256(0xCAFE)), 42, bytes32(uint256(0xCAFE)), bytes32(uint256(0xBABE)), keccak256("s")
         );
     }
 
@@ -192,24 +177,14 @@ contract PrivacyRelayerTest is Test {
     function testRevert_RelayAndAnnounceZeroAmount() public {
         vm.expectRevert("Amount must be > 0");
         relayer.relayAndAnnounce{value: 0}(
-            recipient,
-            bytes32(uint256(0xCAFE)),
-            42,
-            bytes32(uint256(0xCAFE)),
-            bytes32(uint256(0xBABE)),
-            keccak256("s")
+            recipient, bytes32(uint256(0xCAFE)), 42, bytes32(uint256(0xCAFE)), bytes32(uint256(0xBABE)), keccak256("s")
         );
     }
 
     function testRevert_RelayAndAnnounceZeroRecipient() public {
         vm.expectRevert("Invalid recipient");
         relayer.relayAndAnnounce{value: 1 ether}(
-            address(0),
-            bytes32(uint256(0xCAFE)),
-            42,
-            bytes32(uint256(0xCAFE)),
-            bytes32(uint256(0xBABE)),
-            keccak256("s")
+            address(0), bytes32(uint256(0xCAFE)), 42, bytes32(uint256(0xCAFE)), bytes32(uint256(0xBABE)), keccak256("s")
         );
     }
 }
