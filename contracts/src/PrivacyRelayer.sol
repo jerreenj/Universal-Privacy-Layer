@@ -9,8 +9,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 ///      call into the registry atomically in the same tx. Signature matches
 ///      StealthAddressRegistry.announce(bytes32,bytes32,bytes32,bytes32).
 interface IStealthRegistry {
-    function announce(bytes32 ephemeralPubKeyX, bytes32 ephemeralPubKeyY, bytes32 viewTag, bytes32 stealthHash)
-        external;
+    function announce(bytes32 ephemeralPubKeyX, bytes32 ephemeralPubKeyY, bytes32 viewTag, bytes32 stealthHash) external;
 }
 
 /**
