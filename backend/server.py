@@ -1652,8 +1652,12 @@ async def get_zkp_proof(proof_id: str):
 # verifies that signature and submits `relay()` on the user's behalf.
 PRIVACY_RELAYER_ABI = [
     {"inputs":[{"name":"recipient","type":"address"},{"name":"ephemeralKey","type":"bytes32"},{"name":"viewTag","type":"uint8"}],"name":"relay","outputs":[],"stateMutability":"payable","type":"function"},
+    {"inputs":[{"name":"recipient","type":"address"},{"name":"ephemeralKey","type":"bytes32"},{"name":"viewTag","type":"uint8"},{"name":"ephemPubKeyX","type":"bytes32"},{"name":"ephemPubKeyY","type":"bytes32"},{"name":"stealthHash","type":"bytes32"}],"name":"relayAndAnnounce","outputs":[],"stateMutability":"payable","type":"function"},
     {"inputs":[],"name":"feeBps","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-    {"inputs":[],"name":"totalRelayed","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+    {"inputs":[],"name":"totalRelayed","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"relayer","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"registry","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"newRegistry","type":"address"}],"name":"setRegistry","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ]
 
 # UniswapPrivacyWrapper.sol ABI — reconciled 1:1 with the Solidity surface
@@ -1909,10 +1913,13 @@ async def get_relayer_stats(chain: str):
         raise HTTPException(status_code=500, detail="An internal error occurred")
 
 
-# ── P1.10/P1.12: Relayer submit endpoint ────────────────────────────────────
+# ── P1.10/P1.12: Relayer submit endpoint (P2.9.7: made atomic) ──────────────
 # The frontend signs the EIP-712 intent locally, then POSTs the intent + signature
-# here. The backend validates the signature, then calls relay() + announce() on-chain
-# using the relayer wallet's private key (from env RELAYER_PRIVATE_KEY). The user's
+# here. The backend validates the signature, then submits a SINGLE relayAndAnnounce()
+# tx that forwards the ETH AND records the registry announcement atomically — the
+# EVM analog of Sui's relayed_send PTB. (Previously this was two separate relay()
+# + announce() txs stitched off-chain, which could dangle if the 2nd reverted.)
+# Uses the relayer wallet's private key (from env RELAYER_PRIVATE_KEY). The user's
 # wallet never appears as msg.sender — only the relayer's.
 class RelayerSubmitRequest(BaseModel):
     intent: Dict[str, Any]  # {domain, types, primaryType, message}
@@ -1923,9 +1930,11 @@ class RelayerSubmitRequest(BaseModel):
 
 @api_router.post("/relayer/submit")
 async def submit_relayer_intent(request: RelayerSubmitRequest):
-    """Validate the EIP-712 signature and submit relay() + announce() on-chain.
-    The relayer wallet pays the gas and fronts the ETH amount from its own balance.
-    Returns the relay + announce tx hashes on success."""
+    """Validate the EIP-712 signature and submit a single atomic relayAndAnnounce()
+    tx on-chain — the ETH forward to the stealth recipient and the registry
+    announcement happen in ONE transaction (P2.9.7 parity with Sui's relayed_send
+    PTB). The relayer wallet pays the gas and fronts the ETH amount from its own
+    balance. Returns the single tx hash on success."""
     try:
         config = CHAIN_CONFIG.get(request.chain)
         if not config:
@@ -1981,7 +1990,12 @@ async def submit_relayer_intent(request: RelayerSubmitRequest):
         if amount <= 0:
             raise HTTPException(status_code=400, detail="amount must be > 0")
 
-        # 3. Submit relay() on-chain
+        # 3. Submit relayAndAnnounce() on-chain — ONE atomic transaction that
+        # forwards msg.value to the stealth recipient AND records the registry
+        # announcement in the same tx (P2.9.7 parity with Sui's relayed_send
+        # PTB). Replaces the old two-tx relay()+announce() stitch, which could
+        # leave a dangling relay if the announce tx reverted or the relayer
+        # crashed between the two. Either both succeed or both revert now.
         w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
         relayer_account = Account.from_key(relayer_key)
         relayer_contract = w3.eth.contract(
@@ -1998,59 +2012,63 @@ async def submit_relayer_intent(request: RelayerSubmitRequest):
         if onchain_relayer.lower() != relayer_account.address.lower():
             raise HTTPException(status_code=503, detail="Relayer wallet not authorized on contract")
 
+        # Verify the relayer contract has its registry wired (required for
+        # relayAndAnnounce). If unset, the on-chain call would revert with
+        # "Registry not set" — fail fast with a clear message instead.
+        onchain_registry = relayer_contract.functions.registry().call()
+        if onchain_registry == "0x0000000000000000000000000000000000000000":
+            raise HTTPException(status_code=503, detail="PrivacyRelayer registry not wired (call setRegistry)")
+
         recipient = Web3.to_checksum_address(message["recipient"])
         ephemeral_key = bytes.fromhex(message["ephemeralKey"].replace("0x", ""))
         ephemeral_key_bytes32 = w3.to_bytes(ephemeral_key).rjust(32, b"\x00")
         view_tag = int(message["viewTag"]) & 0xFF
 
-        # relay() — send msg.value = amount
+        # Announce payload — same derivation as the previous two-tx path so the
+        # recorded announcement is byte-identical to what announce() produced
+        # before: ephemPubKeyX = the 32-byte ephemeral commitment, ephemPubKeyY
+        # = sha256 of it (test convention), stealthHash = keccak of recipient.
+        # The contract left-pads viewTag to bytes32 via bytes32(uint256(viewTag)).
+        ephemeral_x = ephemeral_key_bytes32
+        ephemeral_y = hashlib.sha256(ephemeral_key_bytes32).digest()
+        stealth_hash = w3.solidity_keccak(["address"], [recipient])
+
+        # relayAndAnnounce() — single tx, msg.value = amount
         nonce = w3.eth.get_transaction_count(relayer_account.address)
-        tx = relayer_contract.functions.relay(recipient, ephemeral_key_bytes32, view_tag).build_transaction({
+        tx = relayer_contract.functions.relayAndAnnounce(
+            recipient,
+            ephemeral_key_bytes32,
+            view_tag,
+            ephemeral_x,
+            ephemeral_y,
+            stealth_hash,
+        ).build_transaction({
             "from": relayer_account.address,
             "value": amount,
             "nonce": nonce,
-            "gas": 200000,
+            "gas": 300000,  # relay() was 200k; +announce() call, bump to be safe
             "gasPrice": w3.eth.gas_price,
             "chainId": config["chain_id"],
         })
         signed = relayer_account.sign_transaction(tx)
-        relay_tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(relay_tx_hash, timeout=120)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
         if receipt["status"] != 1:
-            raise HTTPException(status_code=500, detail=f"relay() tx reverted: {relay_tx_hash.hex()}")
+            raise HTTPException(status_code=500, detail=f"relayAndAnnounce() tx reverted: {tx_hash.hex()}")
 
-        # 4. Submit announce() on the registry
-        ephemeral_x = ephemeral_key_bytes32
-        ephemeral_y = hashlib.sha256(ephemeral_key_bytes32).digest()
-        view_tag_bytes32 = bytes(31) + bytes([view_tag])
-        stealth_hash = w3.solidity_keccak(["address"], [recipient])
-
-        announce_nonce = w3.eth.get_transaction_count(relayer_account.address, "pending")
-        announce_tx = registry_contract.functions.announce(
-            ephemeral_x, ephemeral_y, view_tag_bytes32, stealth_hash
-        ).build_transaction({
-            "from": relayer_account.address,
-            "nonce": announce_nonce,
-            "gas": 200000,
-            "gasPrice": w3.eth.gas_price,
-            "chainId": config["chain_id"],
-        })
-        signed_announce = relayer_account.sign_transaction(announce_tx)
-        announce_tx_hash = w3.eth.send_raw_transaction(signed_announce.raw_transaction)
-        announce_receipt = w3.eth.wait_for_transaction_receipt(announce_tx_hash, timeout=120)
-
+        # Read the announcement count AFTER the atomic tx confirms — it reflects
+        # the announce that happened inside the same tx.
         count = registry_contract.functions.announcementCount().call()
 
         return {
             "status": "relayed",
-            "relay_tx_hash": relay_tx_hash.hex(),
-            "announce_tx_hash": announce_tx_hash.hex(),
-            "relay_block": receipt["blockNumber"],
-            "announce_block": announce_receipt["blockNumber"],
+            "tx_hash": tx_hash.hex(),
+            "relay_tx_hash": tx_hash.hex(),  # alias for frontend back-compat
             "announcement_count": count,
+            "block": receipt["blockNumber"],
             "recipient": recipient,
             "amount_wei": str(amount),
-            "explorer": f"{config.get('explorer', 'https://basescan.org')}/tx/{relay_tx_hash.hex()}",
+            "explorer": f"{config.get('explorer', 'https://basescan.org')}/tx/{tx_hash.hex()}",
         }
 
     except HTTPException:

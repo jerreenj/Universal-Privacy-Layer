@@ -11,6 +11,13 @@ remappings = [
 ]
 
 # P1.6: allow Deploy.s.sol to write contracts/deployed_base.json after deploy.
-fs_permissions = [{access = "write", path = "./deployed_base.json"}]
+# P2.9.7: RedeployRelayer.s.sol also needs to READ the manifest to recover the
+# existing stealth_registry address (read access is NOT implied by write).
+# The redeploy script does NOT rewrite the manifest inside Forge (it would
+# collide with foundry's shared JSON-builder state); that step is post-broadcast.
+fs_permissions = [
+    {access = "read",  path = "./deployed_base.json"},
+    {access = "write", path = "./deployed_base.json"}
+]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

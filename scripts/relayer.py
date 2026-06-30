@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-UPL Relayer Service (P1.10 + P1.11)
+UPL Relayer Service (P1.10 + P1.11; P2.9.7 made atomic)
 
 Processes signed EIP-712 relay intents:
   1. Validates the user's EIP-712 signature off-chain
-  2. Calls relay() on PrivacyRelayer with msg.value = amount (relayer fronts ETH)
-  3. Calls announce() on StealthAddressRegistry to record the announcement
+  2. Submits ONE atomic relayAndAnnounce() tx on PrivacyRelayer with
+     msg.value = amount (relayer fronts ETH) — forwards the ETH to the stealth
+     recipient AND records the registry announcement in the SAME tx (the EVM
+     analog of Sui's relayed_send PTB). Either both succeed or both revert.
 
 Usage:
   # Process a single intent from a JSON file:
@@ -45,9 +47,12 @@ DEPLOYED_JSON = REPO_ROOT / "contracts" / "deployed_base.json"
 # Contract ABIs (must match backend/server.py)
 PRIVACY_RELAYER_ABI = [
     {"inputs":[{"name":"recipient","type":"address"},{"name":"ephemeralKey","type":"bytes32"},{"name":"viewTag","type":"uint8"}],"name":"relay","outputs":[],"stateMutability":"payable","type":"function"},
+    {"inputs":[{"name":"recipient","type":"address"},{"name":"ephemeralKey","type":"bytes32"},{"name":"viewTag","type":"uint8"},{"name":"ephemPubKeyX","type":"bytes32"},{"name":"ephemPubKeyY","type":"bytes32"},{"name":"stealthHash","type":"bytes32"}],"name":"relayAndAnnounce","outputs":[],"stateMutability":"payable","type":"function"},
     {"inputs":[],"name":"feeBps","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
     {"inputs":[],"name":"totalRelayed","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
     {"inputs":[],"name":"relayer","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"registry","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"newRegistry","type":"address"}],"name":"setRegistry","outputs":[],"stateMutability":"nonpayable","type":"function"},
 ]
 
 STEALTH_REGISTRY_ABI = [
@@ -170,72 +175,63 @@ def process_intent(w3, relayer_account, contracts, intent_data, signature, amoun
     view_tag = int(message["viewTag"]) & 0xFF
     amount = int(message["amount"])
 
-    # 5. Call relay() with msg.value = amount
-    log(f"Submitting relay() — recipient={recipient}, amount={amount} wei, viewTag={view_tag}")
+    # 5. Verify the relayer contract has its registry wired (required for the
+    #    atomic relayAndAnnounce). Fail fast with a clear message if unset.
+    onchain_registry = relayer_contract.functions.registry().call()
+    if onchain_registry == "0x" + "0" * 40:
+        raise RuntimeError(
+            "PrivacyRelayer registry not wired — call setRegistry(<StealthAddressRegistry>) "
+            "on the relayer contract before relaying. (P2.9.7)"
+        )
+
+    # 6. Build the announce payload (same derivation as the backend):
+    #    ephemPubKeyX = the 32-byte ephemeral commitment, ephemPubKeyY = sha256
+    #    of it (test convention — a real impl derives the full pubkey off-chain),
+    #    stealthHash = keccak of the recipient address. The contract left-pads
+    #    viewTag to bytes32 internally via bytes32(uint256(viewTag)).
+    ephemeral_x = ephemeral_key_bytes32
+    ephemeral_y = hashlib.sha256(ephemeral_key_bytes32).digest()
+    stealth_hash = Web3.solidity_keccak(["address"], [recipient])
+
+    # 7. Call relayAndAnnounce() — ONE atomic tx: forwards msg.value to the
+    #    stealth recipient AND records the registry announcement in the same tx.
+    #    Replaces the old two-tx relay()+announce() stitch (P2.9.7 parity with
+    #    Sui's relayed_send PTB). If the announce reverts, the forward rolls
+    #    back too — no dangling relay.
+    log(f"Submitting relayAndAnnounce() — recipient={recipient}, amount={amount} wei, viewTag={view_tag}")
     nonce = w3.eth.get_transaction_count(relayer_account.address)
-    tx = relayer_contract.functions.relay(
+    tx = relayer_contract.functions.relayAndAnnounce(
         recipient,
         ephemeral_key_bytes32,
         view_tag,
+        ephemeral_x,
+        ephemeral_y,
+        stealth_hash,
     ).build_transaction({
         "from": relayer_account.address,
         "value": amount,
         "nonce": nonce,
-        "gas": 200000,
+        "gas": 300000,  # relay() was 200k; +announce() call, bump to be safe
         "gasPrice": w3.eth.gas_price,
         "chainId": 8453,
     })
     signed = relayer_account.sign_transaction(tx)
-    relay_tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    log(f"relay() tx submitted: {relay_tx_hash.hex()}")
-    receipt = w3.eth.wait_for_transaction_receipt(relay_tx_hash, timeout=120)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    log(f"relayAndAnnounce() tx submitted: {tx_hash.hex()}")
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
     if receipt["status"] != 1:
-        raise RuntimeError(f"relay() tx reverted: {relay_tx_hash.hex()}")
-    log(f"relay() confirmed — block {receipt['blockNumber']}, gas {receipt['gasUsed']}")
+        raise RuntimeError(f"relayAndAnnounce() tx reverted: {tx_hash.hex()}")
+    log(f"relayAndAnnounce() confirmed — block {receipt['blockNumber']}, gas {receipt['gasUsed']}")
 
-    # 6. Call announce() on the registry
-    # The ephemeral key from relay() is a single bytes32 (x-only coord or hash).
-    # For announce(), we need X and Y halves. For the MVP, we split the 32-byte
-    # ephemeral key into two 16-byte halves (padded to bytes32 each). This is a
-    # test convention — a real implementation derives the full pubkey off-chain.
-    ephemeral_x = ephemeral_key_bytes32  # Use the full 32 bytes as X
-    ephemeral_y = hashlib.sha256(ephemeral_key_bytes32).digest()  # Derive Y as a hash (test only)
-    view_tag_bytes32 = view_tag_to_bytes32(view_tag)
-    stealth_hash = Web3.solidity_keccak(["address"], [recipient])
-
-    log(f"Submitting announce() — viewTag={view_tag_bytes32.hex()}")
-    # Re-fetch nonce after relay() confirmed (the previous nonce is now used)
-    nonce = w3.eth.get_transaction_count(relayer_account.address, "pending")
-    announce_tx = registry_contract.functions.announce(
-        ephemeral_x,
-        ephemeral_y,
-        view_tag_bytes32,
-        stealth_hash,
-    ).build_transaction({
-        "from": relayer_account.address,
-        "nonce": nonce,
-        "gas": 200000,
-        "gasPrice": w3.eth.gas_price,
-        "chainId": 8453,
-    })
-    signed_announce = relayer_account.sign_transaction(announce_tx)
-    announce_tx_hash = w3.eth.send_raw_transaction(signed_announce.raw_transaction)
-    log(f"announce() tx submitted: {announce_tx_hash.hex()}")
-    announce_receipt = w3.eth.wait_for_transaction_receipt(announce_tx_hash, timeout=120)
-    if announce_receipt["status"] != 1:
-        log(f"WARNING: announce() tx reverted: {announce_tx_hash.hex()}")
-    else:
-        log(f"announce() confirmed — block {announce_receipt['blockNumber']}")
-
-    # 7. Verify announcement count increased
+    # 8. Verify announcement count increased (the announce happened inside the
+    #    same tx, so the count already reflects it).
     count = registry_contract.functions.announcementCount().call()
     log(f"Registry announcement count: {count}")
 
     return {
-        "relay_tx_hash": relay_tx_hash.hex(),
-        "announce_tx_hash": announce_tx_hash.hex(),
-        "relay_block": receipt["blockNumber"],
-        "announce_block": announce_receipt["blockNumber"],
+        "tx_hash": tx_hash.hex(),
+        "relay_tx_hash": tx_hash.hex(),  # alias for back-compat with old consumers
+        "block": receipt["blockNumber"],
         "announcement_count": count,
         "signer": signer,
         "recipient": recipient,

@@ -4,6 +4,15 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
+/// @dev Minimal interface to StealthAddressRegistry.announce — avoids a full
+///      import (and any circular dependency) while letting `relayAndAnnounce`
+///      call into the registry atomically in the same tx. Signature matches
+///      StealthAddressRegistry.announce(bytes32,bytes32,bytes32,bytes32).
+interface IStealthRegistry {
+    function announce(bytes32 ephemeralPubKeyX, bytes32 ephemeralPubKeyY, bytes32 viewTag, bytes32 stealthHash)
+        external;
+}
+
 /**
  * @title PrivacyRelayer
  * @notice Universal Privacy Layer — Smart Relayer Contract (P1 reconciled).
@@ -36,8 +45,11 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  *
  * ABI surface (matches `backend/server.py` PRIVACY_RELAYER_ABI exactly):
  *   - function relay(address recipient, bytes32 ephemeralKey, uint8 viewTag) payable
+ *   - function relayAndAnnounce(...) payable   (P2.9.7 — atomic relay + announce)
  *   - function feeBps() view returns (uint256)
  *   - function totalRelayed() view returns (uint256)
+ *   - function setRegistry(address)            (P2.9.7 — owner-only wiring)
+ *   - function registry() view returns (address)
  */
 contract PrivacyRelayer is ReentrancyGuard, Ownable {
     // ─── Events ────────────────────────────────────────────────────────────
@@ -77,6 +89,13 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
     // not the contract owner, and not the relayer.
     mapping(address => uint256) public prepaidBalance;
 
+    // ─── Registry wiring (P2.9.7) ─────────────────────────────────────────
+    // Address of the StealthAddressRegistry that `relayAndAnnounce` calls into
+    // atomically in the same tx. Set once by the owner via `setRegistry`. Zero
+    // until set, in which case `relayAndAnnounce` reverts (use the announce-less
+    // `relay()` if no registry is wired). `relay()` remains unaffected.
+    address public registry;
+
     constructor() Ownable(msg.sender) {
         // Solo-relayer MVP: the deployer IS the relayer. Rotate via setRelayer()
         // once the relayer service has its own hot wallet (P1.10 hardening).
@@ -103,6 +122,17 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
     function setRelayer(address newRelayer) external onlyOwner {
         require(newRelayer != address(0), "Zero relayer");
         relayer = newRelayer;
+    }
+
+    /// @notice Wire the StealthAddressRegistry that `relayAndAnnounce` calls
+    ///         atomically. Owner-only. Zero address is rejected. Once set, the
+    ///         registry is fixed (no unset path); rotate by re-pointing to a new
+    ///         registry address if the registry is ever replaced. `relay()` (the
+    ///         announce-less entry) is unaffected by this setting and remains
+    ///         callable regardless.
+    function setRegistry(address newRegistry) external onlyOwner {
+        require(newRegistry != address(0), "Zero registry");
+        registry = newRegistry;
     }
 
     // ─── Core entry — the ONLY function the backend calls ─────────────────
@@ -134,16 +164,76 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
      *   defensive default).
      */
     function relay(address recipient, bytes32 ephemeralKey, uint8 viewTag) external payable onlyRelayer nonReentrant {
+        _relayCore(recipient, ephemeralKey, viewTag);
+    }
+
+    /**
+     * @notice Atomic relay + announce — the EVM analog of Sui's `relayed_send`
+     *         PTB. Forwards `msg.value` to the stealth recipient (fee-skimmed),
+     *         emits `PrivateTransfer`, AND calls `registry.announce(...)` in the
+     *         SAME transaction. If either the forward or the announce reverts,
+     *         the entire tx reverts — no dangling relay without an announcement
+     *         (the failure mode of the old two-tx stitch). Closes the P2.9
+     *         parity gap with Sui's atomic compose.
+     *
+     *         `relay()` (announce-less) is kept for backward compatibility; this
+     *         is the preferred entry point once `setRegistry` has been called.
+     *
+     * @param recipient      Stealth recipient (same as `relay()`).
+     * @param ephemeralKey   32-byte ephemeral commitment (same as `relay()`).
+     * @param viewTag        1-byte view tag (same as `relay()`).
+     * @param ephemPubKeyX   First 32 bytes of the ephemeral pubkey for the
+     *                       registry announcement (the recipient's scan input).
+     * @param ephemPubKeyY   Last 32 bytes of the ephemeral pubkey.
+     * @param stealthHash    keccak256 of the derived stealth address (registry
+     *                       lookup/sanity — NOT the address itself).
+     *
+     * @dev Trust model: the announce fields (ephemPubKeyX/Y, stealthHash) are
+     *      relayer-supplied, NOT signed in the EIP-712 intent — identical to the
+     *      existing trust model where the relayer already constructs the
+     *      announce() payload off-chain and is `onlyRelayer`-authorized (it
+     *      fronts the ETH, so it is fully trusted). `viewTag` is left-padded to
+     *      bytes32 via `bytes32(uint256(viewTag))` to match the registry's
+     *      expected encoding (same as the off-chain relayer's
+     *      `view_tag_to_bytes32`). Requires `registry != address(0)` (set via
+     *      `setRegistry` once).
+     */
+    function relayAndAnnounce(
+        address recipient,
+        bytes32 ephemeralKey,
+        uint8 viewTag,
+        bytes32 ephemPubKeyX,
+        bytes32 ephemPubKeyY,
+        bytes32 stealthHash
+    ) external payable onlyRelayer nonReentrant {
+        // Forward + fee + PrivateTransfer event. Reverts on failure.
+        _relayCore(recipient, ephemeralKey, viewTag);
+
+        // Atomic announce in the same tx. If this reverts, the forward above is
+        // rolled back too — recipient never sees the funds, no dangling relay.
+        address reg = registry;
+        require(reg != address(0), "Registry not set");
+        IStealthRegistry(reg).announce(ephemPubKeyX, ephemPubKeyY, bytes32(uint256(viewTag)), stealthHash);
+    }
+
+    /// @dev Shared forward core for `relay()` and `relayAndAnnounce`. Enforces
+    ///      all invariants, skims the fee, forwards `msg.value - fee` to the
+    ///      stealth recipient, and emits `PrivateTransfer`. Returns the
+    ///      forwarded amount and the fee so callers/tests can inspect them.
+    function _relayCore(address recipient, bytes32 ephemeralKey, uint8 viewTag)
+        internal
+        returns (uint256 transferAmount, uint256 fee)
+    {
         require(msg.value > 0, "Amount must be > 0");
         require(recipient != address(0), "Invalid recipient");
         require(recipient != address(this), "Recipient == relayer contract");
         require(_feeBps <= MAX_FEE_BPS, "Fee misconfigured");
 
-        uint256 fee = (msg.value * _feeBps) / FEE_DENOMINATOR;
+        fee = (msg.value * _feeBps) / FEE_DENOMINATOR;
         // MAX_FEE_BPS = 100 < FEE_DENOMINATOR, so fee < msg.value always; the
         // require above is a static defensive check, not the runtime guarantee.
 
-        uint256 transferAmount = msg.value - fee;
+        transferAmount = msg.value - fee;
         accumulatedFees += fee;
         _totalRelayed += transferAmount;
 

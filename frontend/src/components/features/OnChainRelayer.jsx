@@ -141,15 +141,13 @@ export function OnChainRelayer() {
             </div>
           ) : (
             <div className="bg-emerald-500/10 border border-emerald-500/30 p-3 text-xs text-emerald-300 space-y-2">
-              <div className="font-semibold flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> Relayed on-chain!</div>
-              <div className="flex justify-between"><span className="text-white/50">relay tx:</span>
+              <div className="font-semibold flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> Relayed on-chain (atomic)!</div>
+              <div className="flex justify-between"><span className="text-white/50">Transaction:</span>
                 <a href={relayResult.explorer} target="_blank" rel="noreferrer" className="font-mono text-emerald-300 hover:underline">{relayResult.relay_tx_hash?.slice(0, 18)}…</a>
               </div>
-              <div className="flex justify-between"><span className="text-white/50">announce tx:</span>
-                <a href={`${CHAINS[chain]?.explorer}/tx/${relayResult.announce_tx_hash}`} target="_blank" rel="noreferrer" className="font-mono text-emerald-300 hover:underline">{relayResult.announce_tx_hash?.slice(0, 18)}…</a>
-              </div>
-              <div className="flex justify-between"><span className="text-white/50">Announcements:</span><span className="font-mono">{relayResult.announcement_count}</span></div>
+              <div className="flex justify-between"><span className="text-white/50">Announcement:</span><span className="font-mono">{relayResult.announcement_count}</span></div>
               <div className="flex justify-between"><span className="text-white/50">Recipient:</span><span className="font-mono">{relayResult.recipient?.slice(0, 10)}…{relayResult.recipient?.slice(-6)}</span></div>
+              <div className="text-white/40 italic">Single atomic tx: relay + announce succeed or revert together (P2.9.7).</div>
             </div>
           )}
           <button onClick={() => { setIntent(null); setSignature(null); }}
