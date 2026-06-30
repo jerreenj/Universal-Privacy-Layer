@@ -1,0 +1,20 @@
+{
+  "name": "upl-sol-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "UPL Solana program — integration tests",
+  "scripts": {
+    "test": "ts-mocha -t 1000000 tests/**/*.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.30.1",
+    "@solana/web3.js": "^1.95.0"
+  },
+  "devDependencies": {
+    "ts-mocha": "^10.0.0",
+    "typescript": "^5.4.0",
+    "chai": "^4.4.0",
+    "@types/chai": "^4.3.0",
+    "@types/mocha": "^10.0.0"
+  }
+}

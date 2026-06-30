@@ -1,0 +1,16 @@
+# Anchor / Solana build artifacts
+target/
+anchor-client/
+test-ledger/
+deploy/
+*.so
+
+# Dependencies
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store

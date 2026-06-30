@@ -1,0 +1,21 @@
+[toolchain]
+
+[features]
+seeds = false
+skip-lint = false
+
+[programs.localnet]
+upl_sol = "F7MQRA15YwswZoLK319rs1sr35Km2KBfqvPgR7TPnp1t"
+
+[programs.devnet]
+upl_sol = "F7MQRA15YwswZoLK319rs1sr35Km2KBfqvPgR7TPnp1t"
+
+[registry]
+url = "https://anchor.projectserum.com"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "yarn run ts-mocha -t 1000000 tests/**/*.ts"
