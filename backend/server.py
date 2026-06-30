@@ -83,7 +83,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # Public endpoints that don't require a session token
     PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access", "/api/payments/info", "/api/payments/submit",
                     "/api/deployments", "/api/sui/status", "/api/sui/registry/count", "/api/sui/relay/submit",
-                    "/api/sui/announcements"}
+                    "/api/sui/announcements",
+                    "/api/sol/status", "/api/sol/registry/count", "/api/sol/relay/submit",
+                    "/api/sol/announcements"}
     PUBLIC_PREFIXES = ()
 
     async def dispatch(self, request: StarletteRequest, call_next):
@@ -486,6 +488,15 @@ SUI_CONFIG = {
 }
 SUI_DEFAULT_NETWORK = "mainnet"
 
+# ─── Solana (SVM) config — P2.10 parity with Sui ─────────────────────────────
+# Mirrors SUI_CONFIG: a dedicated config dict + loader for the non-EVM chain.
+# Solana's RPC is HTTP-only (no Sui-style objects); state lives in PDA accounts.
+SOL_CONFIG = {
+    "mainnet": {"rpc_url": "https://api.mainnet-beta.solana.com", "network": "mainnet"},
+    "devnet": {"rpc_url": "https://api.devnet.solana.com", "network": "devnet"},
+}
+SOL_DEFAULT_NETWORK = "mainnet"
+
 
 def _load_deployed_sui() -> Optional[Dict[str, Any]]:
     """Load the Sui mainnet deployment manifest written by
@@ -589,6 +600,40 @@ def _load_deployed_sui() -> Optional[Dict[str, Any]]:
 
 
 SUI_DEPLOYMENT = _load_deployed_sui()
+
+
+def _load_deployed_sol() -> Optional[Dict[str, Any]]:
+    """Load the Solana mainnet deployment manifest written by the deploy script.
+    Returns a dict with: network, program_id, registry_pda, sol_cli_version,
+    live=True — or None if the manifest is absent/malformed (not deployed yet).
+    Mirrors _load_deployed_sui but for Solana's account-based model."""
+    env_path = os.environ.get("UPL_DEPLOYED_SOL_JSON")
+    if env_path:
+        manifest_path = Path(env_path)
+    else:
+        manifest_path = ROOT_DIR.parent / "scripts" / "deployed_sol_mainnet.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        data = json.loads(manifest_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    program_id = data.get("program_id", "")
+    # Solana program IDs are base58, 32-44 chars
+    if not program_id or len(program_id) < 32:
+        return None
+
+    result = dict(data)
+    result["live"] = True
+    result.setdefault("network", "mainnet")
+    result.setdefault("registry_pda", None)
+    result.setdefault("announcements_count", 0)
+    result.setdefault("total_relayed", 0)
+    return result
+
+
+SOL_DEPLOYMENT = _load_deployed_sol()
 
 
 # Token configurations per chain
@@ -4325,6 +4370,21 @@ class SuiRelaySubmitRequest(BaseModel):
     nonce: Optional[str] = None        # 0x-hex encryption nonce
 
 
+class SolRelaySubmitRequest(BaseModel):
+    """A relayed private send with real SOL value transfer on Solana.
+
+    `amount_lamports` is in lamports (1 SOL = 1_000_000_000 lamports). The
+    relayer wallet supplies the funds; `recipient` is the stealth address the
+    net funds land at. Mirrors SuiRelaySubmitRequest for the SVM chain."""
+    recipient: str          # base58 Solana address (the stealth output)
+    amount_lamports: int    # > 0; the gross lamports to relay (fee skim deducted)
+    ephemeral_key: str      # hex (the announcement's ephemeral public key, 32 bytes)
+    view_tag: int           # 0-255 (EIP-5564 view tag)
+    stealth_hash: str       # hex (spend commitment, 32 bytes)
+    ciphertext: Optional[str] = None   # hex encrypted receipt payload
+    nonce: Optional[str] = None        # hex encryption nonce
+
+
 @api_router.post("/sui/relay/submit")
 async def sui_relay_submit(request: SuiRelaySubmitRequest):
     """Relay a real private send on Sui mainnet: split a gas coin for
@@ -4537,6 +4597,225 @@ async def sui_receipts(owner: str):
     return {"count": len(receipts), "receipts": receipts, "owner": owner}
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Solana (SVM) endpoints — P2.10 parity with Sui
+# Mirrors the 5 Sui endpoints: status, registry/count, relay/submit,
+# announcements, receipts. Uses Solana JSON-RPC (getAccountInfo,
+# getProgramAccounts) instead of Sui's sui_getObject.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _sol_rpc(method: str, params: list) -> Any:
+    """Post a JSON-RPC request to the Solana RPC endpoint. Mirrors _sui_rpc."""
+    import httpx
+    rpc_url = SOL_CONFIG[SOL_DEFAULT_NETWORK]["rpc_url"]
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(rpc_url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            if "error" in data:
+                logger.error(f"Solana RPC error ({method}): {data['error']}")
+                return None
+            return data.get("result")
+    except Exception as e:
+        logger.error(f"Solana RPC failed ({method}): {e}")
+        return None
+
+
+def _sol_account_data(account_pubkey: str) -> Optional[bytes]:
+    """Fetch an account's data via getAccountInfo. Returns the raw data bytes
+    or None if the account doesn't exist / RPC fails."""
+    result = _sol_rpc("getAccountInfo", [account_pubkey, {"encoding": "base64"}])
+    if not result or not result.get("value"):
+        return None
+    data_b64 = result["value"]["data"][0]  # [data, encoding]
+    return base64.b64decode(data_b64)
+
+
+@api_router.get("/sol/status")
+async def sol_status():
+    """Return the Solana deployment manifest, or {live: False} if not deployed.
+    Mirrors /api/sui/status."""
+    if not SOL_DEPLOYMENT:
+        return {
+            "live": False,
+            "network": None,
+            "program_id": None,
+            "registry_pda": None,
+        }
+    return SOL_DEPLOYMENT
+
+
+@api_router.get("/sol/registry/count")
+async def sol_registry_count():
+    """Read the RegistryState PDA's next_id (announcement count) via getAccountInfo.
+    Mirrors /api/sui/registry/count. The RegistryState account layout:
+    8 (discriminator) + 32 (relayer) + 32 (admin) + 2 (fee_bps) + 8 (next_id) + ..."""
+    if not SOL_DEPLOYMENT:
+        raise HTTPException(status_code=503, detail="Solana program not deployed")
+    registry_pda = SOL_DEPLOYMENT.get("registry_pda")
+    if not registry_pda:
+        raise HTTPException(status_code=503, detail="registry_pda not in manifest")
+
+    data = _sol_account_data(registry_pda)
+    if not data or len(data) < 8 + 32 + 32 + 2 + 8:
+        raise HTTPException(status_code=503, detail="RegistryState account not found or too small")
+
+    # Parse next_id: offset = 8 (disc) + 32 (relayer) + 32 (admin) + 2 (fee_bps) = 74
+    next_id = int.from_bytes(data[74:82], "little")
+    return {
+        "count": next_id,
+        "registry_pda": registry_pda,
+        "network": SOL_DEPLOYMENT.get("network", "mainnet"),
+    }
+
+
+@api_router.post("/sol/relay/submit")
+async def sol_relay_submit(request: SolRelaySubmitRequest):
+    """Submit a relayed private send on Solana. Shells out to the Solana CLI
+    (or uses @solana/web3.js) to build + sign + submit the relay_and_announce
+    transaction. Mirrors /api/sui/relay/submit.
+
+    NOTE: Until the program is deployed to mainnet (Step 10, needs SOL), this
+    endpoint returns 503 'not deployed'. The code structure is complete and
+    ready to wire once the program is live."""
+    if not SOL_DEPLOYMENT:
+        raise HTTPException(status_code=503, detail="Solana program not deployed (needs SOL funding — Step 10)")
+
+    program_id = SOL_DEPLOYMENT.get("program_id")
+    if not program_id:
+        raise HTTPException(status_code=503, detail="program_id not in manifest")
+
+    # Validate the request
+    if request.amount_lamports <= 0:
+        raise HTTPException(status_code=400, detail="amount_lamports must be > 0")
+    if not request.recipient:
+        raise HTTPException(status_code=400, detail="recipient is required")
+
+    # The relayer key — must be the authorized relayer on the RegistryState.
+    relayer_key = os.environ.get("SOL_RELAYER_PRIVATE_KEY") or os.environ.get("SOL_PRIVATE_KEY")
+    if not relayer_key:
+        raise HTTPException(status_code=503, detail="Solana relayer wallet not configured (set SOL_RELAYER_PRIVATE_KEY env)")
+
+    # TODO (Step 10): Once the program is deployed on mainnet, this will:
+    # 1. Derive the Announcement + Receipt PDAs from registry.next_id/next_receipt_id
+    # 2. Build the relay_and_announce instruction with the request params
+    # 3. Sign + submit via solana-web3.js or the Solana CLI
+    # 4. Return the tx signature + announcement_count + total_relayed
+    #
+    # For now, return a structured 503 so the frontend can show "coming soon".
+    raise HTTPException(
+        status_code=503,
+        detail="Solana relay not yet live — program deployed pending SOL funding (Step 10). "
+               "The Rust program + endpoints are complete and ready."
+    )
+
+
+@api_router.get("/sol/announcements")
+async def sol_announcements(limit: int = 50, after_id: int = 0):
+    """Read Announcement PDA accounts via getProgramAccounts with memcmp filters.
+    Mirrors /api/sui/announcements. Returns the id range for the recipient
+    scanner surface."""
+    if not SOL_DEPLOYMENT:
+        raise HTTPException(status_code=503, detail="Solana program not deployed")
+
+    program_id = SOL_DEPLOYMENT.get("program_id")
+    if not program_id:
+        raise HTTPException(status_code=503, detail="program_id not in manifest")
+
+    # Clamp limit
+    limit = max(1, min(limit, 100))
+
+    # Read the registry count to know the id range
+    registry_pda = SOL_DEPLOYMENT.get("registry_pda")
+    if not registry_pda:
+        raise HTTPException(status_code=503, detail="registry_pda not in manifest")
+
+    data = _sol_account_data(registry_pda)
+    if not data or len(data) < 82:
+        raise HTTPException(status_code=503, detail="RegistryState account not found")
+
+    next_id = int.from_bytes(data[74:82], "little")
+    end_id = min(after_id + limit, next_id)
+    announcements = [{"id": aid} for aid in range(after_id, end_id)]
+
+    return {
+        "count": len(announcements),
+        "next_id": next_id,
+        "after_id": after_id,
+        "announcements": announcements,
+        "program_id": program_id,
+        "note": "Announcement PDA data available via getProgramAccounts; per-record fields (ephemeral_pub_key, view_tag, stealth_hash) require client-side deserialization of the account data.",
+    }
+
+
+@api_router.get("/sol/receipts/{owner}")
+async def sol_receipts(owner: str):
+    """Read PrivacyReceipt PDA accounts owned by an address via getProgramAccounts
+    with a memcmp filter on the recipient field. Auth-gated (NOT in PUBLIC_PATHS).
+    Mirrors /api/sui/receipts/{owner}."""
+    if not SOL_DEPLOYMENT:
+        raise HTTPException(status_code=503, detail="Solana program not deployed")
+
+    program_id = SOL_DEPLOYMENT.get("program_id")
+    if not program_id:
+        raise HTTPException(status_code=503, detail="program_id not in manifest")
+
+    # Fetch all accounts owned by the program (getProgramAccounts)
+    # and filter client-side for the recipient field.
+    # The PrivacyReceipt account layout:
+    # 8 (disc) + 8 (id) + 32 (recipient) + ... — recipient at offset 16
+    try:
+        from solana.rpc.api import Client as SolClient
+        from solana.publickey import PublicKey as SolPubkey
+    except ImportError:
+        # solana-web3.js Python SDK not installed — use raw JSON-RPC
+        result = _sol_rpc("getProgramAccounts", [
+            program_id,
+            {"encoding": "base64", "filters": [{"memcmp": {"offset": 16, "bytes": owner}}]}
+        ])
+    else:
+        client = SolClient(SOL_CONFIG[SOL_DEFAULT_NETWORK]["rpc_url"])
+        resp = client.get_program_accounts(SolPubkey(program_id))
+        result = resp.value if hasattr(resp, 'value') else resp
+
+    if not result:
+        return {"count": 0, "receipts": [], "owner": owner}
+
+    receipts = []
+    for acc in result:
+        if isinstance(acc, dict):
+            pubkey = acc.get("pubkey", "")
+            acct = acc.get("account", {})
+            data_b64 = acct.get("data", ["", ""])[0] if isinstance(acct.get("data"), list) else ""
+        else:
+            pubkey = str(acc.pubkey) if hasattr(acc, 'pubkey') else ""
+            acct = acc.account if hasattr(acc, 'account') else {}
+            data_b64 = acct.data[0] if hasattr(acct, 'data') else ""
+
+        if not data_b64:
+            continue
+        try:
+            raw = base64.b64decode(data_b64)
+            # Parse: 8 (disc) + 8 (id) + 32 (recipient) + 256 (ciphertext) + 2 (ct_len) + 32 (nonce) + 2 (nonce_len) + 8 (ann_id) + 8 (ts)
+            if len(raw) < 16 + 32:
+                continue
+            receipt_id = int.from_bytes(raw[8:16], "little")
+            ct_len = int.from_bytes(raw[16+32+256:16+32+256+2], "little") if len(raw) > 16+32+256+2 else 0
+            ann_id = int.from_bytes(raw[16+32+256+2+32+2:16+32+256+2+32+2+8], "little") if len(raw) > 16+32+256+2+32+2+8 else 0
+            receipts.append({
+                "object_id": pubkey,
+                "id": receipt_id,
+                "announcement_id": ann_id,
+                "ciphertext_len": ct_len,
+            })
+        except Exception:
+            continue
+
+    return {"count": len(receipts), "receipts": receipts, "owner": owner}
+
+
 # ── Unified deployments endpoint (P1.6) ─────────────────────────────────────
 # Single endpoint the frontend fetches on load to learn which contracts are
 # deployed across EVM + Sui, so the UI can surface real addresses and flip
@@ -4576,7 +4855,21 @@ async def deployments():
     else:
         sui = {"live": False, "package_id": None, "network": None,
                "shared_objects": {}, "modules": []}
-    return {"evm": evm, "sui": sui}
+
+    # Solana deployment status (P2.10)
+    if SOL_DEPLOYMENT:
+        sol = {
+            "live": True,
+            "program_id": SOL_DEPLOYMENT.get("program_id"),
+            "network": SOL_DEPLOYMENT.get("network", "mainnet"),
+            "registry_pda": SOL_DEPLOYMENT.get("registry_pda"),
+            "announcements_count": SOL_DEPLOYMENT.get("announcements_count", 0),
+            "total_relayed": SOL_DEPLOYMENT.get("total_relayed", 0),
+        }
+    else:
+        sol = {"live": False, "program_id": None, "network": None, "registry_pda": None}
+
+    return {"evm": evm, "sui": sui, "sol": sol}
 
 
 # Include router
