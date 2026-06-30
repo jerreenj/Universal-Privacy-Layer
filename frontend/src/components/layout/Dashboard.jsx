@@ -37,6 +37,9 @@ const ZKCommitments             = lazy(() => import("@/components/features/ZKCom
 const SuiStealthSend            = lazy(() => import("@/components/features/SuiStealthSend"));
 const SuiScanner                = lazy(() => import("@/components/features/SuiScanner"));
 const SuiReceipts               = lazy(() => import("@/components/features/SuiReceipts"));
+const SolStealthSend            = lazy(() => import("@/components/features/SolStealthSend"));
+const SolScanner                = lazy(() => import("@/components/features/SolScanner"));
+const SolReceipts               = lazy(() => import("@/components/features/SolReceipts"));
 
 /* Page metadata – references the lazy Component *type*, not a rendered element. */
 const pages = {
@@ -66,6 +69,9 @@ const pages = {
   suiSend:     { title: "Sui Stealth Send",            Component: SuiStealthSend },
   suiScan:     { title: "Sui Announcement Scanner",     Component: SuiScanner },
   suiReceipts: { title: "Sui Encrypted Receipts",       Component: SuiReceipts },
+  solSend:     { title: "Solana Stealth Send",          Component: SolStealthSend },
+  solScan:     { title: "Solana Announcement Scanner",  Component: SolScanner },
+  solReceipts: { title: "Solana Encrypted Receipts",    Component: SolReceipts },
 };
 
 function LoadingFallback() {
@@ -201,6 +207,9 @@ export function Dashboard() {
               { id: "suiSend", icon: <Send className="w-5 h-5" />, title: "Sui Stealth Send", color: "text-cyan-400" },
               { id: "suiScan", icon: <ScanLine className="w-5 h-5" />, title: "Sui Scanner", color: "text-cyan-400" },
               { id: "suiReceipts", icon: <Receipt className="w-5 h-5" />, title: "Sui Receipts", color: "text-cyan-400" },
+              { id: "solSend", icon: <Send className="w-5 h-5" />, title: "Solana Stealth Send", color: "text-purple-400" },
+              { id: "solScan", icon: <ScanLine className="w-5 h-5" />, title: "Solana Scanner", color: "text-purple-400" },
+              { id: "solReceipts", icon: <Receipt className="w-5 h-5" />, title: "Solana Receipts", color: "text-purple-400" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">

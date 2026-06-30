@@ -56,7 +56,7 @@ export function WalletProvider({ children }) {
       try {
         const res = await axios.get(`${API}/deployments`);
         if (!mounted || !res?.data) return;
-        const { evm, sui } = res.data;
+        const { evm, sui, sol } = res.data;
         // Update each EVM chain's contracts with real addresses where deployed.
         if (evm && typeof evm === "object") {
           for (const [key, info] of Object.entries(evm)) {
@@ -78,6 +78,16 @@ export function WalletProvider({ children }) {
             ...(CHAINS.sui.contracts || {}),
             packageId: sui.package_id,
             sharedObjects: sui.shared_objects,
+          };
+        }
+        // Flip Solana from "coming soon" to live if the program is deployed.
+        if (sol?.live && CHAINS.solana) {
+          CHAINS.solana.live = true;
+          CHAINS.solana.comingSoon = false;
+          CHAINS.solana.contracts = {
+            ...(CHAINS.solana.contracts || {}),
+            programId: sol.program_id,
+            registryPda: sol.registry_pda,
           };
         }
         setDeploymentsLoaded(true);
