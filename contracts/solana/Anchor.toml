@@ -5,17 +5,32 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-upl_sol = "F7MQRA15YwswZoLK319rs1sr35Km2KBfqvPgR7TPnp1t"
+upl_sol = "E4yQzfbV8dpf1DH33u3ESNm3wvX2UYpQRnb3NVnAtT7x"
 
 [programs.devnet]
-upl_sol = "F7MQRA15YwswZoLK319rs1sr35Km2KBfqvPgR7TPnp1t"
+upl_sol = "E4yQzfbV8dpf1DH33u3ESNm3wvX2UYpQRnb3NVnAtT7x"
+
+[programs.mainnet]
+upl_sol = "E4yQzfbV8dpf1DH33u3ESNm3wvX2UYpQRnb3NVnAtT7x"
 
 [registry]
 url = "https://anchor.projectserum.com"
 
 [provider]
+# Localnet so `anchor test` spins up an in-process solana-test-validator and
+# runs the full program proof with $0 and no network (P2.10 Step C.3-local).
+# The devnet/mainnet deploys do NOT use this setting — they invoke
+# `solana program deploy --url <cluster>` directly in their deploy scripts,
+# so this is purely for the local test harness.
 cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -t 1000000 tests/**/*.ts"
+
+[test]
+# On Windows/WSL the test-validator runs against the /mnt/c filesystem, which
+# has much slower I/O than native Linux — genesis + account init can take well
+# over the 2-minute default. Give it a generous window so `anchor test` doesn't
+# give up before the validator is ready. Harmless on fast disks.
+startup_wait = 300
