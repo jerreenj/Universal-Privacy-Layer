@@ -21,3 +21,20 @@ docs/
 .env
 .env.*
 !.env.example
+
+# ─── ZK circuit build artifacts (Phase 3) ──────────────────────────
+# Large and/or secret-derived binaries: never commit. The proving key (.zkey)
+# and wasm witness generator are distributed via release/CDN at frontend build
+# time (P3.6), the Powers of Tau transcript (.ptau) is kept offline by the
+# ceremony organizer.
+circuits/build/
+circuits/**/*.r1cs
+circuits/**/*.wasm
+circuits/**/*.sym
+circuits/**/*.zkey
+circuits/**/*.ptau
+circuits/**/proof.json
+circuits/**/public.json
+circuits/**/vkey.json
+circuits/**/verification_key.json
+circuits/**/*_js/
