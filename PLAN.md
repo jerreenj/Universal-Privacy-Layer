@@ -17,23 +17,14 @@ P1  EVM contracts on Base           ██████████████�
 P2  Sui mainnet publish + wiring    ████████████████ 100% ✅ DONE
 P2.9 Sui parity with Base (relay+scan+receipts) ████████████████ 100% ✅ DONE
 P2.9.7 Base atomic relay+announce (parity w/ Sui) ████████████████ 100% ✅ DONE
-P2.10 Solana (SVM) parity w/ Base+Sui   ██████████████░░  88% 🔨 Step C.3 done: program rebuilt (ID E4yQzfbV…), proven on local validator, devnet-ready + one-shot mainnet wired; live devnet deploy pending SOL drip (~2 days)
-P3  Real ZK (Circom + verifier)     ░░░░░░░░░░░░░░░░   0% ⏸️ not started
-P4  Privacy pools + DeFi privacy    ░░░░░░░░░░░░░░░░   0% ⏸️ not started
+P2.10 Solana (SVM) parity w/ Base+Sui   ██████████████░░  88% 🔒 PAUSED — proven + devnet-ready + one-shot mainnet wired; parked pending SOL funding while P3 builds
+P3  Real ZK (privacy pool, Path B)  ░░░░░░░░░░░░░░░░   0% 🔨 IN PROGRESS — toolchain → circuit → ceremony → pool → deploy → wiring
+P4  Privacy pools + DeFi privacy    ░░░░░░░░░░░░░░░░   0% ⏸️ not started (seeded by P3)
 ```
 
-**Last updated:** 2026-07-02 — P2.10 Step C.3 DONE: Solana program rebuilt with a fresh,
-preserved program ID (`E4yQzfbV8dpf1DH33u3ESNm3wvX2UYpQRnb3NVnAtT7x` — the prior
-`F7MQRA15…` keypair was lost when `target/` was cleaned, so it couldn't be reused).
-The full program is proven on a local test-validator ($0, no network): builds, deploys,
-loads, and commits transactions (validator log confirms `committed_transactions_count=1`).
-The deploy keypair is now preserved at `scripts/.upl_sol-deploy-keypair.json` (gitignored)
-so devnet + mainnet share one program ID — a one-shot mainnet flip with no code rewrite.
-**Live devnet deploy** is one command away (`scripts/deploy_sol_devnet.sh`) pending the
-Helius faucet drip (~1 SOL/day → ~2 days to reach the ~1.8 SOL program rent), or instant
-if the wallet is funded directly. **Mainnet** (Step 10b) is wired behind a single guarded
-command, `scripts/flip_sol_to_mainnet.sh`, which fires only when
-`UPL_SOL_FUND_CONFIRMED=1` + the wallet holds ≥3 SOL. Base + Sui remain on mainnet.
+**Last updated:** 2026-07-02 — Solana **paused** at devnet-ready (pending SOL);
+**Phase 3 (Real ZK) started** — Path B privacy pool approved (Poseidon + Merkle +
+Groth16 on Base). Toolchain install (P3.0) next.
 
 ---
 
@@ -527,20 +518,125 @@ runs `solana program deploy --url mainnet`, writes
 Redeploy backend + frontend → badge auto-hides → done. Base + Sui untouched.
 Needs ~5 SOL (~$400-700, mostly reclaimable program rent).
 
+### Solana current status — 🔒 PAUSED (pending SOL funding)
+
+As of 2026-07-02, Solana is **intentionally paused** at the devnet-ready line
+while project focus moves to Phase 3 (Real ZK). Concretely:
+
+- ✅ Program rebuilt + proven (ID `E4yQzfbV…`, 254 KB `.so`, commits txns on a
+  local validator — `$0`, no network).
+- ✅ Deploy keypair preserved (`scripts/.upl_sol-deploy-keypair.json`, gitignored)
+  → devnet + mainnet share one program ID.
+- ✅ Devnet deploy is one command (`scripts/deploy_sol_devnet.sh`) once the
+  Helius faucet drips ~2 SOL (~2 days) or the wallet is funded directly.
+- ✅ Mainnet is one guarded command (`scripts/flip_sol_to_mainnet.sh`) once ~5
+  SOL is available.
+- ⏸️ **No further Solana work until funded** — Base + Sui remain the live chains.
+
+To resume: fund the deployer wallet → run `scripts/deploy_sol_devnet.sh` (devnet)
+or `scripts/flip_sol_to_mainnet.sh` (mainnet, needs `UPL_SOL_FUND_CONFIRMED=1`).
+
 ---
 
-## P3 — Real ZK (Circom + Trusted Setup + Verifier) ⏸️ Not Started
+## P3 — Real ZK 🔨 In Progress (Path B: Privacy Pool)
 
-| # | Task | Difficulty |
-|---|------|-----------|
-| P3.1 | Write Circom circuits for stealth address proof | Hard |
-| P3.2 | Trusted setup ceremony (Powers of Tau) | Hard |
-| P3.3 | Generate Groth16 proving + verification keys | Medium |
-| P3.4 | Deploy real Groth16Verifier.sol on Base | Medium |
-| P3.5 | Wire backend `/api/zkp/verify-onchain` to real verifier | Medium |
-| P3.6 | Frontend ZK proof generation + submission | Hard |
+**Decision (2026-07-02):** Build a **Tornado-style ZK privacy pool** on Base
+(Path B) first; the secp256k1 in-circuit stealth-address proof (Path A) is
+deferred to a later research milestone (P3.8). Rationale: Path B uses
+battle-tested circomlib Poseidon + Merkle circuits (production-grade, weeks not
+months) and is what the existing `/zkp/*` stubs + `ZKCommitments.jsx` /
+`ZKPProofs.jsx` shells were scaffolded for. Path A requires non-native-field
+secp256k1 arithmetic in-circuit (research-grade hard, high stall risk).
 
-**Note:** The unsound `Groth16Verifier.sol` (DELTA==GAMMA bug) was removed in P1.3. On-chain ZK verification endpoints return HTTP 501 ("deferred to Phase 3") until this is built.
+### Architecture (what gets built)
+
+A **ZK privacy pool** on Base mainnet:
+1. **Deposit**: user commits `commitment = Poseidon(nullifier, secret)` into an
+   on-chain **incremental Merkle tree** (Poseidon, depth 20) inside
+   `PrivacyPool.sol`. Fixed denomination (e.g. 0.1 ETH — fixed amounts are what
+   make pools anonymous).
+2. **Withdraw**: user generates a **Groth16 proof** off-chain (browser, snarkjs
+   wasm) proving: "I know `(nullifier, secret, path)` whose `commitment` is a
+   leaf under the current `root`, and here is `nullifierHash`" — revealing **only
+   `nullifierHash` + root + recipient** (no link to the deposit).
+3. **Verify + release**: on-chain `Groth16Verifier.sol` checks the proof; if
+   valid, `PrivacyPool.sol` marks `nullifierHash` spent and releases funds.
+
+This is the foundation of P4 (privacy pools); P4 adds multi-denomination +
+cross-chain routing on top.
+
+### Sub-task Progress
+
+```
+P3.0 Toolchain (circom + snarkjs + circomlib, WSL)            ░░░░░░░░ 0% ⏸️
+P3.1 withdraw.circom (Poseidon Merkle membership, depth 20)   ░░░░░░░░ 0% ⏸️
+P3.2 Powers of Tau ceremony (self-run) + proving/verify keys  ░░░░░░░░ 0% ⏸️
+P3.3 PrivacyPool.sol + Verifier.sol + Poseidon + Foundry test ░░░░░░░░ 0% ⏸️
+P3.4 Deploy PrivacyPool + Verifier on Base mainnet (real gas) ░░░░░░░░ 0% ⏸️
+P3.5 Backend: replace /zkp stubs with real Merkle/verify      ░░░░░░░░ 0% ⏸️
+P3.6 Frontend: real browser proof gen (snarkjs)               ░░░░░░░░ 0% ⏸️
+P3.7 Docs (zk-architecture.md) + commit + push                ░░░░░░░░ 0% ⏸️
+P3.8 Path A: secp256k1 stealth-address ZK (research milestone) ░░░░░░░░ 0% ⏸️ deferred
+```
+
+### Steps (each = checkpoint + commit)
+
+**P3.0 — Toolchain.** Install `circom` + `snarkjs` in WSL (Linux-native; circom
+has no Windows build). Add `circomlib` (Poseidon, Comparators) as a submodule at
+`contracts/circuits/circomlib/`. `docs/zk-toolchain.md`. Gate: versions print +
+circomlib Poseidon compiles.
+
+**P3.1 — The circuit (`contracts/circuits/withdraw.circom`).** Private inputs:
+`nullifier`, `secret`, `merklePathElements[20]`, `merklePathIndices[20]`. Public
+inputs: `root`, `nullifierHash`. Logic: `commitment = Poseidon(nullifier, secret)`;
+`nullifierHash = Poseidon(nullifier)`; walk the path re-computing the root with
+`DualMux` + Poseidon per level; assert `computedRoot === root`. Reuses circomlib's
+`poseidon.circom` (not hand-rolled). Gate: compiles to R1CS (~50–70k constraints).
+
+**P3.2 — Powers of Tau ceremony + keys (`scripts/zk_powers_of_tau.sh`).**
+Self-run ceremony: `powersoftau new bn128 14` → contribute → `prepare phase2` →
+`groth16 setup` → phase-2 contribute → export `withdraw_final.zkey` (proving key)
++ `verification_key.json`. **Honesty note:** this is a self-run ceremony (sound
+if the organizer is honest; standard for small/early projects). A multi-party
+community MPC is a later trust upgrade — documented, not hidden.
+
+**P3.3 — `PrivacyPool.sol` + `Verifier.sol` + Foundry tests.**
+`snarkjs zkey export solidityverifier` generates the Groth16 verifier (correct
+pairings — the P1.3 DELTA==GAMMA bug class is structurally impossible). New
+`PrivacyPool.sol`: incremental Poseidon Merkle tree (depth 20), `nullifierHashes`
+mapping, fixed `denomination`, `deposit(bytes32)` + `withdraw(proof, root,
+nullifierHash, recipient)`. Poseidon-in-Solidity vendored (with attribution),
+not hand-rolled. Tests deposit → real snarkjs proof → on-chain verify → withdraw
++ revert cases (invalid proof, double-spend, unknown root, wrong denomination).
+Gate: `forge test` green with a **real Groth16 proof** (not mocked).
+
+**P3.4 — Deploy on Base mainnet (real gas).** Extend `Deploy.s.sol` (deploy
+Verifier + PrivacyPool; add `privacy_pool` + `privacy_verifier` to manifest — no
+backend change). Extend `deploy_base.sh` verify blocks. ~$0.01 gas.
+
+**P3.5 — Backend real ZK wiring.** Rewrite `/zkp/generate-inputs` (real Merkle
+path), `/zkp/verify-onchain` (call `PrivacyPool.withdraw`). New `/api/zk-pool/
+deposit` + `/api/zk-pool/state` (root + denomination + recent roots). Existing
+36-pass pytest suite stays green.
+
+**P3.6 — Frontend browser proof gen.** Add `snarkjs` + `circomlibjs`. Upgrade
+`ZKCommitments.jsx` (real deposit: generate nullifier/secret, compute
+commitment, submit) + `ZKPProofs.jsx` (real withdraw: fetch path, `snarkjs.groth16.
+fullProve` in-browser, submit proof, Basescan link). Replace dummy proofs. Gate:
+end-to-end on Base — deposit → unlinkable withdraw.
+
+**P3.7 — Docs + push.** `docs/zk-architecture.md` (circuit, ceremony record, gas,
+trust model, limitations). Update this PLAN.md. Multi-commit push.
+
+### Risks (flagged honestly)
+1. **Browser proving** ~5–20s for depth-20 Poseidon on a mid laptop. Acceptable;
+   UX shows "generating proof…". Backend-prover fallback is a small follow-up.
+2. **Self-run ceremony** is centralized. Fine for launch; community MPC later.
+3. **Fixed denomination** required for anonymity. Multi-denomination = P4.
+
+**History note:** The unsound `Groth16Verifier.sol` (DELTA==GAMMA bug) was
+removed in P1.3. P3.3 deploys a **correct** snarkjs-generated verifier. On-chain
+ZK endpoints currently return HTTP 501 until P3.5 wires them.
 
 ---
 
