@@ -84,7 +84,10 @@ fi
 # 3. Build
 # ---------------------------------------------------------------------------
 say "Step 3/6 — anchor build (compiles → BPF .so)  [~2-4 min]"
-anchor build
+# Force platform-tools v1.53: a dependency requires Rust edition 2024, but the
+# default Solana platform-tools (v1.45) ships cargo 1.79 (predates edition2024).
+# v1.53 ships cargo 1.89 → builds cleanly. Verified working 2026-07-02.
+anchor build -- --tools-version v1.53
 SO="$ANCHOR_DIR/target/deploy/upl_sol.so"
 [[ -f "$SO" ]] || die "build finished but $SO not found"
 ok "built: $SO"
