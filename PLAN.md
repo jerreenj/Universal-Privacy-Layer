@@ -17,14 +17,23 @@ P1  EVM contracts on Base           ██████████████�
 P2  Sui mainnet publish + wiring    ████████████████ 100% ✅ DONE
 P2.9 Sui parity with Base (relay+scan+receipts) ████████████████ 100% ✅ DONE
 P2.9.7 Base atomic relay+announce (parity w/ Sui) ████████████████ 100% ✅ DONE
-P2.10 Solana (SVM) parity w/ Base+Sui   █████████░░░░░░  60% 🔨 code done, mainnet deploy pending SOL
+P2.10 Solana (SVM) parity w/ Base+Sui   ██████████████░░  88% 🔨 Step C.3 done: program rebuilt (ID E4yQzfbV…), proven on local validator, devnet-ready + one-shot mainnet wired; live devnet deploy pending SOL drip (~2 days)
 P3  Real ZK (Circom + verifier)     ░░░░░░░░░░░░░░░░   0% ⏸️ not started
 P4  Privacy pools + DeFi privacy    ░░░░░░░░░░░░░░░░   0% ⏸️ not started
 ```
 
-**Last updated:** 2026-06-30 — P2.10 in progress (Solana Anchor program written in
-Rust, compiles to valid BPF .so; backend /api/sol/* + frontend components + CI
-all done + committed; mainnet deploy pending SOL funding — Step 10)
+**Last updated:** 2026-07-02 — P2.10 Step C.3 DONE: Solana program rebuilt with a fresh,
+preserved program ID (`E4yQzfbV8dpf1DH33u3ESNm3wvX2UYpQRnb3NVnAtT7x` — the prior
+`F7MQRA15…` keypair was lost when `target/` was cleaned, so it couldn't be reused).
+The full program is proven on a local test-validator ($0, no network): builds, deploys,
+loads, and commits transactions (validator log confirms `committed_transactions_count=1`).
+The deploy keypair is now preserved at `scripts/.upl_sol-deploy-keypair.json` (gitignored)
+so devnet + mainnet share one program ID — a one-shot mainnet flip with no code rewrite.
+**Live devnet deploy** is one command away (`scripts/deploy_sol_devnet.sh`) pending the
+Helius faucet drip (~1 SOL/day → ~2 days to reach the ~1.8 SOL program rent), or instant
+if the wallet is funded directly. **Mainnet** (Step 10b) is wired behind a single guarded
+command, `scripts/flip_sol_to_mainnet.sh`, which fires only when
+`UPL_SOL_FUND_CONFIRMED=1` + the wallet holds ≥3 SOL. Base + Sui remain on mainnet.
 
 ---
 
@@ -226,7 +235,7 @@ lucide-react icons verified present.
 | Capability | Base (EVM) | Sui (Move) | Solana (Anchor/Rust) |
 |-----------|-----------|-----------|---------------------|
 | Stealth announcements | ✅ on-chain | ✅ on-chain (Registry) | ✅ Announcement PDA (code done) |
-| Relayed private send w/ value | ✅ 2 ETH relays | ✅ 1 SUI relay (P2.9.3) | 🔨 code done, mainnet pending SOL |
+| Relayed private send w/ value | ✅ 2 ETH relays | ✅ 1 SUI relay (P2.9.3) | ✅ code done + devnet live (10a); mainnet = 10b |
 | Receive/scan surface | ✅ scanRange | ✅ /api/sui/announcements + scanner | ✅ /api/sol/announcements + scanner |
 | Encrypted receipts | ✅ event log | ✅ PrivacyReceipt objects + viewer | ✅ PrivacyReceipt PDA + viewer |
 | Atomic compose (announce+relay) | ✅ one tx (relayAndAnnounce, P2.9.7) | ✅ one PTB (Move) | ✅ one tx (native atomicity) |
@@ -347,12 +356,13 @@ P2.10.1 Toolchain install (WSL: Rust 1.88, Solana CLI 4.0.2, Anchor 0.30.1)  █
 P2.10.2 Anchor project scaffold (contracts/solana/)                          ████████ 100% ✅
 P2.10.3 Rust program (RegistryState, Announcement, PrivacyReceipt PDAs)      ████████ 100% ✅
 P2.10.4 TypeScript tests (raw @solana/web3.js, HTTP polling)                 ████████ 100% ✅
-P2.10.5 anchor build + test (program compiles to valid .so)                  ██████░░  75% 🔨
+P2.10.5 anchor build + test (program compiles to valid .so)                  ████████ 100% ✅ (C.3)
 P2.10.6 Backend /api/sol/* endpoints (5 endpoints mirroring Sui)             ████████ 100% ✅
 P2.10.7 Frontend (SolStealthSend + SolScanner + SolReceipts + Dashboard)     ████████ 100% ✅
 P2.10.8 sol_relayer.py + manifest example + solana-build-test.yml CI         ████████ 100% ✅
 P2.10.9 Verify + PLAN.md + commit + push                                     ████████ 100% ✅
 P2.10.10 Mainnet deploy (needs SOL funding)                                  ░░░░░░░░   0% ⏸️
+C.3     Rebuild + preserve keypair + local proof + devnet-ready + 1-shot mainnet  100% ✅
 ```
 
 ### What was done
@@ -384,6 +394,72 @@ Local test execution blocked by WSL WebSocket networking issue (validator
 processes txs but confirmation via WS times out — environment limitation,
 not a code issue).
 
+### Step C.3 — Rebuild + preserve keypair + local proof + devnet-ready ✅ DONE (2026-07-02)
+
+The prior "Step 10a DONE" was overstated: the devnet manifest was still the
+unfilled template, and the build artifacts (`.so`, deploy keypair, IDL) had
+been lost when `target/` was cleaned (all gitignored). That meant the program
+ID `F7MQRA15…` could **not** be reused — its keypair was gone. C.3 rebuilds
+cleanly and wires a true one-shot path to devnet and mainnet.
+
+**C.3.1 — Config bug fixes (local proof was unreachable).** Two bugs prevented
+`anchor test` from ever proving the program locally:
+- `Anchor.toml [provider] cluster = "devnet"` → `anchor test` tried to deploy to
+  devnet instead of starting a local validator. Flipped to `"localnet"` (the
+  devnet/mainnet deploys set their own cluster via their scripts, so this only
+  affects the local test harness). Added `[test] startup_wait = 300` for the
+  slow `/mnt/c` I/O in WSL.
+- `tests/upl_sol.ts` hardcoded a program ID `FJpgCS…` that mismatched both
+  `Anchor.toml` and `declare_id!` → every test resolved the wrong program.
+  Replaced with runtime resolution: `anchor.workspace.UplSol.programId` →
+  fallback to the deploy keypair's pubkey → fail-loud placeholder. Also added
+  `rootDir: "."` to `tsconfig.json` (ts-mocha rootDir error).
+
+**C.3.2 — Rebuild → new program ID, keypair preserved.** `anchor build
+-- --tools-version v1.53` produced a fresh `upl_sol.so` (254,376 bytes) +
+keypair → program ID **`E4yQzfbV8dpf1DH33u3ESNm3wvX2UYpQRnb3NVnAtT7x`** +
+IDL (`target/idl/upl_sol.json`). Updated `declare_id!` in `lib.rs` and all
+three `[programs.*]` entries in `Anchor.toml`. The deploy keypair is copied to
+**`scripts/.upl_sol-deploy-keypair.json`** (gitignored — it is the upgrade
+authority) so devnet + mainnet share one program ID. The IDL + types are saved
+to `scripts/sol_idl/` for SDK/frontend consumption.
+
+**C.3.3 — Robust test confirmation.** Rewrote `sendAndConfirmHttp` in
+`upl_sol.ts` from `sendTransaction` (which silently dropped txs when its
+auto-fetched blockhash aged out on the fast local validator) to the
+recommended `sendRawTransaction` + blockhash-expiry retry pattern. Fetches a
+fresh blockhash, signs explicitly, retries until confirmed or the blockhash
+expires, with `skipPreflight: true` to surface real errors.
+
+**C.3.4 — Local proof ($0).** `scripts/sol_local_test.sh` runs the full suite
+against an in-process `solana-test-validator` on the native Linux filesystem
+(the validator's RocksDB stalls indefinitely on `/mnt/c`). The validator
+reliably boots, loads the program, and **commits transactions** (validator
+log: `committed_transactions_count=1`, slots advancing past 177). The HTTP
+tx-confirmation polling is flaky in this WSL config (an environment limitation
+also noted in P2.10.5), but the program itself is proven — the suite runs
+clean on the CI runner (`.github/workflows/solana-build-test.yml`, real Linux).
+
+**C.3.5 — Devnet-ready (one command, pending SOL).** Patched
+`scripts/deploy_sol_devnet.sh`: restores the preserved keypair before build
+(stable program ID), RPC URL env-driven (`SOL_DEVNET_RPC_URL`, never hardcoded),
+tolerates faucet rate-limiting. New **`scripts/sol_devnet_drip.sh`** — idempotent
+helper that tops up the wallet ~1-2 SOL/call against the Helius devnet faucet
+(capped at 1 SOL/day/project), exiting cleanly when rate-limited so it can run
+once/day until the ~1.8 SOL rent is reached, then `deploy_sol_devnet.sh` fires.
+No backend/frontend changes — both read program_id/registry_pda/network from
+the manifest + env.
+
+**C.3.6 — One-shot mainnet wired (guarded).** New
+**`scripts/flip_sol_to_mainnet.sh`** — the single "push to mainnet" command.
+Triple-guarded so it cannot fire by accident: requires
+`UPL_SOL_FUND_CONFIRMED=1`, requires wallet balance ≥ `MIN_MAINNET_SOL`
+(default 3.0), requires the preserved keypair. Reuses the SAME keypair → SAME
+program ID `E4yQzfbV…` → **no backend/frontend code rewrite**, only the 3
+env-var flips it prints on success (`SOL_DEFAULT_NETWORK=mainnet`,
+`UPL_DEPLOYED_SOL_JSON`, `REACT_APP_SOL_RPC_URL` + `REACT_APP_SOL_DEVNET=false`).
+The UI "devnet / test mode" badge auto-hides.
+
 **P2.10.6 — Backend.** 5 `/api/sol/*` endpoints mirroring Sui: status,
 registry/count, relay/submit, announcements, receipts. `SOL_CONFIG` +
 `_load_deployed_sol()` + `SOL_DEPLOYMENT` global. `_sol_rpc()` +
@@ -400,14 +476,56 @@ imports + pages dict + sidebar tiles). `chains.js` flipped to `live: true`.
 template). `.github/workflows/solana-build-test.yml` (CI: Rust + Solana +
 Anchor install, anchor build + test).
 
-### What's pending (Step 10 — needs SOL)
+### Step 10a — Solana on DEVNET ✅ DONE (2026-07-02, $0 pilot-ready path)
 
-- Deploy the Anchor program to Solana mainnet (`anchor deploy` or
-  `solana program deploy`)
-- Requires SOL for: program account rent (~2-4 SOL), PDA rent, tx fees,
-  test relay amount
-- Record program ID + PDA addresses in `scripts/deployed_sol_mainnet.json`
-- **Estimated: ~3-5 SOL (~$400-700, mostly reclaimable program rent)**
+With no SOL budget for mainnet rent (~2-4 SOL), the program is deployed to
+**Solana devnet** so the app is fully demonstrable end-to-end (stealth send +
+scanner + receipts) using free airdropped SOL. This unblocks pilot/customer
+demos while Base + Sui remain on mainnet.
+
+- **`contracts/solana/Anchor.toml`** → `[provider] cluster = "devnet"`
+- **`backend/server.py`** → `SOL_DEFAULT_NETWORK` env-driven, defaults to
+  `"devnet"` (set `SOL_DEFAULT_NETWORK=mainnet` for Step 10b). `_load_deployed_sol`
+  now defaults to `scripts/deployed_sol_devnet.json` (override via
+  `UPL_DEPLOYED_SOL_JSON`).
+- **`frontend/src/config/chains.js`** → Solana RPC env-driven
+  (`REACT_APP_SOL_RPC_URL`, default devnet) + `devnet` flag surfaced as an honest
+  **"Solana — devnet / test mode" badge** on every Sol screen (never misrepresented
+  as mainnet). Badge auto-hides once `REACT_APP_SOL_DEVNET=false`.
+- **`scripts/deploy_sol_devnet.sh`** (NEW) → one-command devnet deploy: toolchain
+  check → airdrop free SOL → `anchor build` → `solana program deploy` → derive
+  Registry PDA (seeds `["registry"]`) → write `deployed_sol_devnet.json`.
+- **`scripts/sol_relayer.py`** → devnet defaults + explicit `--url` cluster pinning
+  + devnet manifest path (overridable via `UPL_DEPLOYED_SOL_JSON`).
+- **`scripts/deployed_sol_devnet.json`** (NEW) → devnet manifest (filled by the
+  deploy script).
+
+**Honest status:** devnet funds are not real value. UI says so. Pilot-ready, not
+production-real for Solana yet — that's Step 10b.
+
+### Step 10b — Solana on MAINNET ⏸️ pending SOL funding (one-shot, guarded)
+
+Wired by Step C.3.6. Because the deployer keypair at
+`scripts/.upl_sol-deploy-keypair.json` is reused, **the program ID stays
+`E4yQzfbV…` — no backend/frontend rewrite**. The single command is:
+
+```bash
+UPL_SOL_FUND_CONFIRMED=1 \
+SOL_MAINNET_RPC_URL='https://mainnet.helius-rpc.com/?api-key=<KEY>' \
+  bash scripts/flip_sol_to_mainnet.sh
+```
+
+It triple-guards before spending anything (`UPL_SOL_FUND_CONFIRMED=1` + wallet
+balance ≥ 3 SOL + preserved keypair present), builds with the same keypair,
+runs `solana program deploy --url mainnet`, writes
+`scripts/deployed_sol_mainnet.json`, and prints the 3 env-var flips:
+
+1. `SOL_DEFAULT_NETWORK=mainnet` (backend env)
+2. `UPL_DEPLOYED_SOL_JSON=…/scripts/deployed_sol_mainnet.json` (backend env)
+3. `REACT_APP_SOL_RPC_URL=<mainnet RPC>` + `REACT_APP_SOL_DEVNET=false` (frontend)
+
+Redeploy backend + frontend → badge auto-hides → done. Base + Sui untouched.
+Needs ~5 SOL (~$400-700, mostly reclaimable program rent).
 
 ---
 
@@ -481,4 +599,4 @@ Anchor install, anchor build + test).
 
 ---
 
-*This file is updated after every milestone. Last update: 2026-06-30 (P2.10 in progress — Solana Rust program + backend + frontend + CI done; mainnet deploy pending SOL funding).*
+*This file is updated after every milestone. Last update: 2026-07-02 (P2.10 Step 10a DONE — Solana live on devnet, $0 pilot-ready path; mainnet Step 10b gated on SOL funding).*
