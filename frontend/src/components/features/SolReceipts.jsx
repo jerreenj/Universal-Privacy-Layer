@@ -2,6 +2,7 @@ import { useState } from "react";
 import axios from "axios";
 import { Receipt, Loader2 } from "lucide-react";
 import { API } from "@/config/chains";
+import { SolDevnetBadge } from "@/components/common/SolDevnetBadge";
 
 /**
  * SolReceipts — encrypted receipt viewer for Solana.
@@ -29,6 +30,7 @@ export function SolReceipts() {
 
   return (
     <div className="space-y-4">
+      <SolDevnetBadge />
       <p className="text-sm text-white/50">
         View encrypted delivery receipts on Solana. PrivacyReceipt PDA accounts
         are owned by the recipient and contain the encrypted payload the

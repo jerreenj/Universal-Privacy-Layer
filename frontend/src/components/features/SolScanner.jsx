@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import { ScanLine, Loader2 } from "lucide-react";
 import { API } from "@/config/chains";
+import { SolDevnetBadge } from "@/components/common/SolDevnetBadge";
 
 /**
  * SolScanner — announcement scanner for Solana.
@@ -30,6 +31,7 @@ export function SolScanner() {
 
   return (
     <div className="space-y-4">
+      <SolDevnetBadge />
       <p className="text-sm text-white/50">
         Scan Solana stealth address announcements. The registry tracks all
         announcements by id; the recipient's client iterates these + uses the

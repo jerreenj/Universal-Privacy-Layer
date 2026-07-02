@@ -495,7 +495,10 @@ SOL_CONFIG = {
     "mainnet": {"rpc_url": "https://api.mainnet-beta.solana.com", "network": "mainnet"},
     "devnet": {"rpc_url": "https://api.devnet.solana.com", "network": "devnet"},
 }
-SOL_DEFAULT_NETWORK = "mainnet"
+# Env-driven so we run devnet ($0, pilot-ready) until SOL is funded, then
+# flip to mainnet with SOL_DEFAULT_NETWORK=mainnet — no code change needed.
+# (Phase P2.10 Step 10a → 10b.)
+SOL_DEFAULT_NETWORK = os.environ.get("SOL_DEFAULT_NETWORK", "devnet")
 
 
 def _load_deployed_sui() -> Optional[Dict[str, Any]]:
@@ -611,7 +614,9 @@ def _load_deployed_sol() -> Optional[Dict[str, Any]]:
     if env_path:
         manifest_path = Path(env_path)
     else:
-        manifest_path = ROOT_DIR.parent / "scripts" / "deployed_sol_mainnet.json"
+        # Default to the devnet manifest (P2.10 Step 10a — $0 pilot path).
+        # For mainnet (Step 10b) set UPL_DEPLOYED_SOL_JSON to the mainnet file.
+        manifest_path = ROOT_DIR.parent / "scripts" / "deployed_sol_devnet.json"
     if not manifest_path.exists():
         return None
     try:
@@ -626,7 +631,7 @@ def _load_deployed_sol() -> Optional[Dict[str, Any]]:
 
     result = dict(data)
     result["live"] = True
-    result.setdefault("network", "mainnet")
+    result.setdefault("network", SOL_DEFAULT_NETWORK)
     result.setdefault("registry_pda", None)
     result.setdefault("announcements_count", 0)
     result.setdefault("total_relayed", 0)
