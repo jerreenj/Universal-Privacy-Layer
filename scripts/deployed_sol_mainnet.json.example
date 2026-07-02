@@ -1,8 +1,9 @@
 {
   "network": "mainnet",
-  "sol_cli_version": "solana-cli 4.0.2",
+  "_note": "P2.10 Step 10b — Solana MAINNET manifest template. Written by scripts/flip_sol_to_mainnet.sh after the funded mainnet deploy. The program ID E4yQzfbV… is shared with devnet (same deployer keypair at scripts/.upl_sol-deploy-keypair.json), so flipping to mainnet changes NO code — only the 3 env vars the flip script prints.",
+  "sol_cli_version": "filled by flip_sol_to_mainnet.sh",
   "published_at": "REPLACE_WITH_DEPLOY_DATE",
-  "program_id": "REPLACE_WITH_DEPLOYED_PROGRAM_ID",
+  "program_id": "E4yQzfbV8dpf1DH33u3ESNm3wvX2UYpQRnb3NVnAtT7x",
   "registry_pda": "REPLACE_WITH_REGISTRY_STATE_PDA",
   "publisher_address": "REPLACE_WITH_DEPLOYER_ADDRESS",
   "announcements_count": 0,
