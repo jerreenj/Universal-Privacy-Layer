@@ -4,9 +4,10 @@ import { Send, Loader2, CheckCircle2, Key } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
+import { SolDevnetBadge } from "@/components/common/SolDevnetBadge";
 
 /**
- * SolStealthSend — a REAL private send on Solana mainnet.
+ * SolStealthSend — a REAL private send on Solana.
  *
  * Mirrors SuiStealthSend for the SVM chain. The backend `/api/sol/relay/submit`
  * calls the Anchor program's `relay_and_announce` instruction: announce +
@@ -66,8 +67,9 @@ export function SolStealthSend() {
 
   return (
     <div className="space-y-4">
+      <SolDevnetBadge />
       <p className="text-sm text-white/50">
-        Send a private transfer on Solana mainnet. The relayer atomically announces
+        Send a private transfer on Solana. The relayer atomically announces
         the stealth address, transfers <span className="font-mono text-white/70">SOL</span> to the
         recipient, and issues an encrypted receipt — all in one transaction.
       </p>

@@ -1,0 +1,13 @@
+{
+  "network": "devnet",
+  "_note": "P2.10 Step 10a — Solana DEVNET manifest. $0 pilot-ready path. The real program_id / registry_pda / deploy_tx / publisher_address are filled in by scripts/deploy_sol_devnet.sh after `anchor build` + `solana program deploy`. For mainnet (Step 10b), copy this to deployed_sol_mainnet.json, redeploy with the SAME keypair (same program ID), and set network=mainnet.",
+  "sol_cli_version": "solana-cli (filled by deploy script)",
+  "published_at": "REPLACE_WITH_DEPLOY_DATE",
+  "program_id": "REPLACE_WITH_DEPLOYED_PROGRAM_ID",
+  "registry_pda": "REPLACE_WITH_REGISTRY_STATE_PDA",
+  "publisher_address": "REPLACE_WITH_DEPLOYER_ADDRESS",
+  "announcements_count": 0,
+  "total_relayed": 0,
+  "deploy_tx": "REPLACE_WITH_DEPLOY_TX_SIGNATURE",
+  "test_relay_tx": null
+}

@@ -13,7 +13,8 @@ Usage:
   python scripts/sol_relayer.py relay-send --recipient <base58> --amount-lamports 1000000
 
 Required env (read from contracts/.env or environment):
-  SOL_RPC_URL          — Solana mainnet RPC (default: https://api.mainnet-beta.solana.com)
+  SOL_RPC_URL          — Solana RPC (default: https://api.devnet.solana.com; set to
+                         https://api.mainnet-beta.solana.com for mainnet Step 10b)
   SOL_RELAYER_PRIVATE_KEY  — the relayer wallet's keypair JSON file path
   SOL_PROGRAM_ID       — the deployed UPL Solana program ID
 """
@@ -28,7 +29,11 @@ from datetime import datetime, timezone
 
 REPO_ROOT = Path(__file__).parent.parent
 ENV_PATH = REPO_ROOT / "contracts" / ".env"
-MANIFEST_PATH = REPO_ROOT / "scripts" / "deployed_sol_mainnet.json"
+# Default to the devnet manifest (Step 10a). Override with UPL_DEPLOYED_SOL_JSON
+# (absolute or REPO_ROOT-relative) to point at a mainnet manifest for Step 10b.
+_env_manifest = os.environ.get("UPL_DEPLOYED_SOL_JSON")
+MANIFEST_PATH = (Path(_env_manifest) if _env_manifest and Path(_env_manifest).is_absolute()
+                 else REPO_ROOT / (_env_manifest or "scripts/deployed_sol_devnet.json"))
 
 
 def log(msg):
@@ -44,7 +49,7 @@ def load_env():
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
 
-    rpc = os.environ.get("SOL_RPC_URL", "https://api.mainnet-beta.solana.com")
+    rpc = os.environ.get("SOL_RPC_URL", "https://api.devnet.solana.com")
     key = os.environ.get("SOL_RELAYER_PRIVATE_KEY") or os.environ.get("SOL_PRIVATE_KEY")
     if not key:
         log("ERROR: No SOL_RELAYER_PRIVATE_KEY or SOL_PRIVATE_KEY in env")
@@ -53,7 +58,7 @@ def load_env():
 
 
 def load_manifest():
-    """Read deployed_sol_mainnet.json for the program ID + PDA addresses."""
+    """Read the Solana deployment manifest (devnet by default) for program ID + PDAs."""
     if not MANIFEST_PATH.exists():
         log(f"ERROR: {MANIFEST_PATH} not found — program not deployed yet")
         sys.exit(1)
@@ -61,12 +66,18 @@ def load_manifest():
     return data
 
 
+# Resolve the cluster URL to pass explicitly to every solana CLI call so we never
+# silently hit the wrong network regardless of the global `solana config`.
+_SOL_CLUSTER_URL = os.environ.get("SOL_RPC_URL", "https://api.devnet.solana.com")
+
+
 def run_solana(args, timeout=60):
-    """Run a solana CLI command and return its output."""
+    """Run a solana CLI command (pinned to _SOL_CLUSTER_URL via --url) and return its output."""
     import subprocess
-    result = subprocess.run(["solana"] + args, capture_output=True, text=True, timeout=timeout)
+    full_args = ["solana", "--url", _SOL_CLUSTER_URL] + args
+    result = subprocess.run(full_args, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
-        log(f"solana {' '.join(args)} failed: {result.stderr.strip()}")
+        log(f"solana {' '.join(full_args)} failed: {result.stderr.strip()}")
         return None
     return result.stdout.strip()
 

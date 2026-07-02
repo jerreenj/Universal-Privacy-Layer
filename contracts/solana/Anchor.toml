@@ -14,7 +14,10 @@ upl_sol = "F7MQRA15YwswZoLK319rs1sr35Km2KBfqvPgR7TPnp1t"
 url = "https://anchor.projectserum.com"
 
 [provider]
-cluster = "localnet"
+# Devnet for now (P2.10 Step 10a — $0 pilot-ready path). Flip to "mainnet"
+# for the funded mainnet deploy (Step 10b); the program ID stays the same
+# because the deployer keypair at target/deploy/upl_sol-keypair.json is reused.
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
