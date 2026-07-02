@@ -5,29 +5,70 @@ import { assert, expect } from "chai";
 import * as crypto from "crypto";
 
 // ─── HTTP-only transaction confirmation (WS doesn't work in WSL) ────────────
-// sendAndConfirmRaw polls getSignatureStatuses via HTTP instead of waiting
-// for a WebSocket event. This is the workaround for the WSL WebSocket issue.
+// sendAndConfirmHttp uses sendRawTransaction + blockhash-expiry confirmation,
+// polling getSignatureStatuses via HTTP instead of waiting for a WebSocket
+// event. This is the workaround for the WSL WebSocket issue AND for the silent
+// tx-drop seen when sendTransaction auto-fetches a blockhash that ages out
+// before the local validator processes it. We fetch a fresh blockhash, sign
+// explicitly, and retry sendRawTransaction until the blockhash expires.
 async function sendAndConfirmHttp(
   connection: anchor.web3.Connection,
   tx: Transaction,
   signers: Keypair[]
 ): Promise<string> {
-  // Send the transaction
-  const sig = await connection.sendTransaction(tx, signers, { skipPreflight: false });
-  // Poll for confirmation via HTTP
-  for (let i = 0; i < 60; i++) {
-    await new Promise((r) => setTimeout(r, 1000));
-    const status = await connection.getSignatureStatus(sig);
-    if (status?.value?.confirmationStatus === "confirmed" ||
-        status?.value?.confirmationStatus === "finalized" ||
-        status?.value?.confirmationStatus === "processed") {
-      if (status.value.err) {
-        throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
-      }
-      return sig;
-    }
+  // Fetch a fresh blockhash and bake it into the tx explicitly.
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  tx.recentBlockhash = blockhash;
+  if (!tx.feePayer && signers[0]) {
+    tx.feePayer = signers[0].publicKey;
   }
-  throw new Error(`Transaction ${sig} not confirmed after 60s`);
+  tx.sign(...signers);
+  const raw = tx.serialize();
+
+  // Retry sendRawTransaction (idempotent by signature) until confirmed or the
+  // blockhash expires — this is the recommended web3.js pattern for unreliable
+  // transport. skipPreflight:true surfaces real errors instead of masking them.
+  let sig: string | null = null;
+  let confirmed = false;
+  let lastErr: any = null;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    try {
+      sig = await connection.sendRawTransaction(raw, {
+        skipPreflight: true,
+        preflightCommitment: "processed",
+        maxRetries: 0,
+      });
+    } catch (e) {
+      lastErr = e;
+    }
+    if (sig) {
+      // Poll status for up to ~3s per attempt.
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const status = await connection.getSignatureStatus(sig);
+        const cs = status?.value?.confirmationStatus;
+        if (cs === "confirmed" || cs === "finalized" || cs === "processed") {
+          if (status!.value!.err) {
+            throw new Error(`Transaction failed: ${JSON.stringify(status!.value!.err)}`);
+          }
+          confirmed = true;
+          break;
+        }
+      }
+    }
+    if (confirmed) break;
+    // Stop retrying once the blockhash is no longer valid.
+    const current = await connection.getBlockHeight();
+    if (current > lastValidBlockHeight) break;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  if (!confirmed) {
+    throw new Error(
+      `Transaction ${sig || "(no sig)"} not confirmed before blockhash expired. ` +
+      `lastErr=${lastErr ? String(lastErr) : "none"}`
+    );
+  }
+  return sig!;
 }
 
 // UPL Solana — raw integration tests using @solana/web3.js directly.
@@ -36,9 +77,27 @@ async function sendAndConfirmHttp(
 // by `anchor test`; we just construct the tx calls ourselves.
 
 // ─── Program ID (matches declare_id! in lib.rs + the deploy keypair) ────────
-// This is updated by anchor test when it deploys — read from the deploy keypair.
-const PROGRAM_ID_STR = "FJpgCSo41ihgL1p6W9YCKJFJfBAXUfUBN8m3hxevdSVQ";
-const PROGRAM_ID = new PublicKey(PROGRAM_ID_STR);
+// Read from the Anchor workspace IDL if present; otherwise derive from the
+// deploy keypair file (anchor build always writes target/deploy/upl_sol-keypair.json).
+// This replaces a stale hardcoded literal that mismatched Anchor.toml /
+// declare_id!, which broke every test. Resolution order: workspace IDL →
+// keypair pubkey → fail-loud placeholder.
+let PROGRAM_ID: PublicKey;
+try {
+  PROGRAM_ID = anchor.workspace.UplSol.programId as PublicKey;
+} catch {
+  try {
+    // Fallback: the deploy keypair's pubkey IS the program ID. Read it directly.
+    const fs = require("fs");
+    const path = require("path");
+    const kpPath = path.join(__dirname, "..", "target", "deploy", "upl_sol-keypair.json");
+    const kpBytes = Uint8Array.from(JSON.parse(fs.readFileSync(kpPath, "utf-8")));
+    PROGRAM_ID = Keypair.fromSecretKey(kpBytes).publicKey;
+  } catch {
+    // Last resort — wrong placeholder; tests will fail loudly, which is correct.
+    PROGRAM_ID = new PublicKey("11111111111111111111111111111111");
+  }
+}
 
 // ─── Instruction discriminators (first 8 bytes of sha256("global:<name>")) ──
 function ixDiscriminator(name: string): Buffer {
