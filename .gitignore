@@ -42,6 +42,14 @@ contracts/sui/dependency_constr.lock
 contracts/sui/.sui/
 scripts/deployed_sui_mainnet.json
 
+# ─── Solana deploy keypair (P2.10 Step C.3) ─────────────────────
+# The program deploy keypair IS the upgrade authority. It is preserved locally
+# so devnet + mainnet share one program ID (one-shot mainnet, no rewrite), but
+# it must NEVER be committed — committing it exposes the upgrade authority.
+scripts/.upl_sol-deploy-keypair.json
+scripts/deployed_sol_devnet.json
+scripts/deployed_sol_mainnet.json
+
 # ─── Logs & test artifacts ──────────────────────────────────────
 *.log
 logs/
