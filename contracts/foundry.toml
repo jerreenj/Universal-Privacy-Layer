@@ -14,6 +14,15 @@ optimizer_runs = 200
 # existing P1 / P2.9.7 contracts (re-verified: all tests still green below).
 via_ir = true
 
+# P3.3: DISABLE the IR inliner. PrivacyPool calls PoseidonT3.poseidon ~42x
+# (zeros precompute in the ctor + 21/level in _insert). With the inliner ON,
+# via_ir folds the ~13KB of PoseidonT3 constants into PrivacyPool at EVERY call
+# site, blowing its runtime bytecode past EIP-170's 24576-byte limit (CI runs
+# `forge build --sizes`). Turning the inliner off keeps one shared poseidon body
+# (called, not duplicated) while still letting via_ir resolve the stack-too-deep.
+# This is the documented lever for "library too large to inline" under via_ir.
+optimizer_details = { inliner = false }
+
 remappings = [
     "@openzeppelin/=lib/openzeppelin-contracts/"
 ]

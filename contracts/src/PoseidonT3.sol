@@ -499,7 +499,7 @@ library PoseidonT3 {
     ///      Mechanically ported from the verified scripts/verify_poseidon_ref.js:
     ///      state=[0,a,b], ark0, (nRoundsF/2-1) full M rounds, one P round, nRoundsP
     ///      sparse rounds, (nRoundsF/2-1) full M rounds, final sigma + M-column-0 dot.
-    function poseidon(uint256 a, uint256 b) internal pure returns (uint256) {
+    function poseidon(uint256 a, uint256 b) external pure returns (uint256) {
         unchecked {
             uint256 s0 = uint256(0);
             uint256 s1 = a;
