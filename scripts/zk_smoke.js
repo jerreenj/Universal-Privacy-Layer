@@ -5,12 +5,15 @@
 //
 // Run inside the circuits dir after `circom withdraw.circom --r1cs --wasm`:
 //   node /path/to/zk_smoke.js
-const circomlibjs = require("circomlibjs");
-// Resolve the snarkjs npm module (not the global CLI shim). SMOKE_MODULE_DIR is
-// set by the runner to point at the dir where snarkjs is npm-installed.
-const snarkjs = require(process.env.SMOKE_MODULE_DIR
-  ? `${process.env.SMOKE_MODULE_DIR}/node_modules/snarkjs`
-  : "snarkjs");
+// Resolve circomlibjs + the snarkjs npm module (not the global CLI shim).
+// SMOKE_MODULE_DIR points at the dir where both are npm-installed (the ceremony
+// script + WSL smoke runner set it). Falls back to a plain require for when the
+// deps are installed in the repo itself.
+const MOD_DIR = process.env.SMOKE_MODULE_DIR;
+const requireMod = (name) =>
+  require(MOD_DIR ? `${MOD_DIR}/node_modules/${name}` : name);
+const circomlibjs = requireMod("circomlibjs");
+const snarkjs = requireMod("snarkjs");
 const path = require("path");
 const fs = require("fs");
 

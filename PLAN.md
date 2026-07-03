@@ -570,7 +570,7 @@ cross-chain routing on top.
 ```
 P3.0 Toolchain (circom + snarkjs + circomlib, WSL)            ████████ 100% ✅
 P3.1 withdraw.circom (Poseidon Merkle membership, depth 20)   ████████ 100% ✅
-P3.2 Powers of Tau ceremony (self-run) + proving/verify keys  ░░░░░░░░ 0% ⏸️
+P3.2 Powers of Tau ceremony (self-run) + proving/verify keys  ████████ 100% ✅
 P3.3 PrivacyPool.sol + Verifier.sol + Poseidon + Foundry test ░░░░░░░░ 0% ⏸️
 P3.4 Deploy PrivacyPool + Verifier on Base mainnet (real gas) ░░░░░░░░ 0% ⏸️
 P3.5 Backend: replace /zkp stubs with real Merkle/verify      ░░░░░░░░ 0% ⏸️
@@ -606,12 +606,29 @@ Reuses circomlib's `poseidon.circom` (not hand-rolled). Index bits constrained t
 - Replaces the earlier unsatisfiable `_verify_circuit.py` draft (fed `root=0`
   against `leaf=Poseidon(1,2)`, which can never satisfy the Merkle check).
 
-**P3.2 — Powers of Tau ceremony + keys (`scripts/zk_powers_of_tau.sh`).**
-Self-run ceremony: `powersoftau new bn128 14` → contribute → `prepare phase2` →
+**P3.2 — Powers of Tau ceremony + keys (`scripts/zk_powers_of_tau.sh`).** ✅ DONE
+Self-run ceremony (run end-to-end in WSL, 2026-07-03): `powersoftau new bn128 14`
+→ contribute (high-entropy OS-derived randomness) → `prepare phase2` →
 `groth16 setup` → phase-2 contribute → export `withdraw_final.zkey` (proving key)
-+ `verification_key.json`. **Honesty note:** this is a self-run ceremony (sound
-if the organizer is honest; standard for small/early projects). A multi-party
-community MPC is a later trust upgrade — documented, not hidden.
++ `verification_key.json` + **`Verifier.sol`** (snarkjs-generated Groth16 verifier,
+`Groth16Verifier.verifyProof(...)`, 182 lines). Idempotent; re-run overwrites
+artifacts. Round-trip gate: `zk_smoke.js` proves against the freshly minted final
+zkey → `verify: OK!`, tampered → `FAILED (correct)`.
+
+**Honesty notes (stated plainly, not hidden):**
+- This is a **self-run single-party ceremony**. Sound (produces valid proofs) if
+  the organizer is honest and discards the randomness after use; the standard
+  Groth16 "toxic waste" assumption applies (whoever knows lambda could forge
+  proofs). Acceptable for launch; a multi-party community MPC is a documented
+  future trust upgrade (P3.7 docs).
+- Build artifacts (`.zkey`, `.ptau`, `verification_key.json`) are gitignored —
+  distributed via release/CDN at frontend build time (P3.6). The `.ptau`
+  transcript stays offline with the ceremony organizer. Only **`Verifier.sol`**
+  is committed (it's source code, not secret-derived).
+- **License:** snarkjs-generated verifiers carry the GPL-3.0 header (snarkjs's
+  own license on generated files). The rest of the EVM contracts are MIT. This
+  is the standard situation for any project using snarkjs; documented in
+  `docs/zk-architecture.md` (P3.7) for downstream consumers.
 
 **P3.3 — `PrivacyPool.sol` + `Verifier.sol` + Foundry tests.**
 `snarkjs zkey export solidityverifier` generates the Groth16 verifier (correct
@@ -708,4 +725,4 @@ ZK endpoints currently return HTTP 501 until P3.5 wires them.
 
 ---
 
-*This file is updated after every milestone. Last update: 2026-07-03 (P3.1 DONE — withdraw.circom compiles to 5420 constraints + full Groth16 prove→verify round-trip green; circuit proven sound + satisfiable).*
+*This file is updated after every milestone. Last update: 2026-07-03 (P3.2 DONE — Powers of Tau ceremony run; withdraw_final.zkey + Verifier.sol generated; round-trip gate green; Solana CI unblocked → green).*
