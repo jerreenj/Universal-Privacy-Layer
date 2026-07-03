@@ -53,6 +53,16 @@ jobs:
         working-directory: contracts/solana
         run: anchor build
 
+      # `anchor test` runs the [scripts].test against an in-process
+      # solana-test-validator (cluster=localnet in Anchor.toml). Its provider
+      # wallet (~/.config/solana/id.json, set in Anchor.toml [provider].wallet)
+      # is the payer that genesis-airdrops, deploys the program, and funds the
+      # relayer/recipient keypairs in the test. That wallet does NOT exist on a
+      # fresh runner, so generate one. Throwaway test-only keypair (no real
+      # funds, never reused outside this ephemeral CI run).
+      - name: Generate test wallet keypair
+        run: solana-keygen new --no-bip39-passphrase --silent --no-outdated
+
       - name: Anchor test
         working-directory: contracts/solana
         run: anchor test
