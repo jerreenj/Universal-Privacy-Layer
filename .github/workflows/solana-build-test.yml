@@ -53,16 +53,52 @@ jobs:
         working-directory: contracts/solana
         run: anchor build
 
-      # `anchor test` runs the [scripts].test against an in-process
-      # solana-test-validator (cluster=localnet in Anchor.toml). Its provider
-      # wallet (~/.config/solana/id.json, set in Anchor.toml [provider].wallet)
-      # is the payer that genesis-airdrops, deploys the program, and funds the
-      # relayer/recipient keypairs in the test. That wallet does NOT exist on a
-      # fresh runner, so generate one. Throwaway test-only keypair (no real
-      # funds, never reused outside this ephemeral CI run).
+      # `anchor test`'s built-in validator spawn is fragile against the newer
+      # Agave solana-test-validator: it often prints "Unable to get latest
+      # blockhash. Test validator does not look started" in CI even though the
+      # validator works fine standalone (anchor-foundation/anchor#1861,
+      # otter-sec/anchor#3624 — startup_wait polling doesn't wait reliably).
+      #
+      # Fix: start solana-test-validator as a background process ourselves, poll
+      # until its RPC responds, then run `anchor test --skip-local-validator`.
+      # This is the standard CI workaround and avoids the timing race entirely.
       - name: Generate test wallet keypair
         run: solana-keygen new --no-bip39-passphrase --silent --force
 
-      - name: Anchor test
+      - name: Start local validator
         working-directory: contracts/solana
-        run: anchor test
+        run: |
+          solana-test-validator \
+            --reset \
+            --bind-address 127.0.0.1 \
+            --rpc-port 8899 \
+            --quiet \
+            > validator.log 2>&1 &
+          echo $! > validator.pid
+          # Poll the RPC until it answers (up to ~3 min for cold CI disks).
+          for i in $(seq 1 90); do
+            if curl -sf -X POST http://127.0.0.1:8899 \
+                 -H 'content-type: application/json' \
+                 -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' \
+                 | grep -q '"healthy"'; then
+              echo "validator is healthy after ${i} polls"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::validator did not become healthy in time"
+          cat validator.log
+          exit 1
+
+      - name: Anchor test (skip-local-validator)
+        working-directory: contracts/solana
+        # --skip-local-validator: anchor connects to the already-running
+        # validator at the [provider] cluster (localnet → http://127.0.0.1:8899),
+        # still performs its own program deploy from target/deploy/, then runs
+        # the [scripts].test. This avoids the spawn-timing race.
+        run: anchor test --skip-local-validator
+
+      - name: Validator log on failure
+        if: always()
+        working-directory: contracts/solana
+        run: cat validator.log || true
