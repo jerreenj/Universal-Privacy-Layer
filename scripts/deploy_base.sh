@@ -2,17 +2,20 @@
 # Deploy the UPL EVM contracts (contracts/src) to Base mainnet and emit a
 # `contracts/deployed_base.json` manifest the backend reads automatically.
 #
-# This is the P1.6 deliverable — the no-gas code so your funded deploy is one
-# command. The script:
+# P1.6 deployed the first three contracts (registry, relayer, wrapper). P3.4
+# extends this to also deploy the ZK privacy-pool stack: Groth16Verifier +
+# PrivacyPool. All five contracts deploy in a single broadcast.
+#
+# This is the no-gas code so your funded deploy is one command. The script:
 #   1. Sanity-checks the environment: `forge` + `cast` on PATH, required env
 #      vars set (BASE_RPC_URL, DEPLOYER_PRIVATE_KEY, FEE_RECIPIENT), and a
 #      non-zero funded deployer balance (refuses to proceed on empty gas).
 #   2. Fails fast on a compile regression via `forge build` before any
 #      on-chain work.
 #   3. Prints a deploy summary and requires interactive confirmation —
-#      feeRecipient is IMMUTABLE after deploy (no setter on
-#      UniswapPrivacyWrapper), so a wrong value means a costly redeploy.
-#   4. Broadcasts the Deploy.s.sol script which deploys all 3 contracts and
+#      feeRecipient AND pool denomination are IMMUTABLE after deploy (no
+#      setters), so a wrong value means a costly redeploy.
+#   4. Broadcasts the Deploy.s.sol script which deploys all 5 contracts and
 #      writes contracts/deployed_base.json (addresses + chainId).
 #   5. Enriches the manifest with provenance (deployedAt UTC ISO-8601 + git
 #      commit sha) via an inline python step.
@@ -28,9 +31,12 @@
 #   FEE_RECIPIENT        — immutable fee wallet for UniswapPrivacyWrapper
 #
 # Optional env:
-#   BASESCAN_API_KEY     — if set, verifies contracts on Basescan
-#   SWAP_ROUTER          — override default V3 SwapRouter (don't use SwapRouter02)
-#   WETH                 — override default Base WETH9
+#   BASESCAN_API_KEY       — if set, verifies contracts on Basescan
+#   SWAP_ROUTER            — override default V3 SwapRouter (don't use SwapRouter02)
+#   WETH                   — override default Base WETH9
+#   POOL_DENOMINATION_WEI  — privacy-pool deposit face value (default 0.1 ETH;
+#                            IMMUTABLE post-deploy — fixed denominations are
+#                            what make deposits unlinkable)
 
 set -euo pipefail
 
@@ -76,19 +82,22 @@ log "Building contracts (fail fast on compile regression)..."
 # ─── Confirmation gate ────────────────────────────────────────────────────────
 echo "" >&2
 echo "============================================================" >&2
-echo "  UPL P1.6 DEPLOY — ${NETWORK} (chainId ${CHAIN_ID})" >&2
+echo "  UPL DEPLOY — ${NETWORK} (chainId ${CHAIN_ID})" >&2
 echo "============================================================" >&2
 echo "  Deployer (owner + relayer): ${DEPLOYER_ADDR}" >&2
 echo "  Fee recipient (IMMUTABLE):  ${FEE_RECIPIENT}" >&2
 echo "  SwapRouter:                 ${SWAP_ROUTER:-0xE592427A0AEce92De3Edee1F18E0157C05861564 (default V3)}" >&2
 echo "  WETH:                       ${WETH:-0x4200000000000000000000000000000000000006 (default Base WETH9)}" >&2
+echo "  Pool denomination (IMMUTABLE): ${POOL_DENOMINATION_WEI:-100000000000000000} wei (default 0.1 ETH)" >&2
 echo "" >&2
 echo "  Contracts to deploy:" >&2
 echo "    1. StealthAddressRegistry  (no args, no owner)" >&2
 echo "    2. PrivacyRelayer          (deployer = owner + relayer)" >&2
 echo "    3. UniswapPrivacyWrapper   (swapRouter, WETH, feeRecipient — all immutable)" >&2
+echo "    4. Groth16Verifier         (no args; snarkjs-generated withdraw.circom verifier)" >&2
+echo "    5. PrivacyPool             (denomination, verifier — both immutable)" >&2
 echo "" >&2
-echo "  WARNING: feeRecipient CANNOT be changed after deploy." >&2
+echo "  WARNING: feeRecipient AND pool denomination CANNOT be changed after deploy." >&2
 echo "  WARNING: This spends real gas on Base mainnet." >&2
 echo "============================================================" >&2
 echo "" >&2
@@ -140,9 +149,14 @@ if [ -n "${BASESCAN_API_KEY:-}" ]; then
     REGISTRY_ADDR="$(python3 -c "import json; print(json.load(open('${MANIFEST}'))['base']['stealth_registry'])")"
     RELAYER_ADDR="$(python3 -c "import json; print(json.load(open('${MANIFEST}'))['base']['privacy_relayer'])")"
     WRAPPER_ADDR="$(python3 -c "import json; print(json.load(open('${MANIFEST}'))['base']['uniswap_wrapper'])")"
+    VERIFIER_ADDR="$(python3 -c "import json; print(json.load(open('${MANIFEST}'))['base']['privacy_verifier'])")"
+    POOL_ADDR="$(python3 -c "import json; print(json.load(open('${MANIFEST}'))['base']['privacy_pool'])")"
 
     SWAP_ROUTER_VAL="${SWAP_ROUTER:-0xE592427A0AEce92De3Edee1F18E0157C05861564}"
     WETH_VAL="${WETH:-0x4200000000000000000000000000000000000006}"
+    # PrivacyPool constructor args: (uint256 denomination, address verifier).
+    # denomination defaults to 0.1 ETH (1e17 wei) — must match Deploy.s.sol.
+    POOL_DENOMINATION_VAL="${POOL_DENOMINATION_WEI:-100000000000000000}"
 
     log "Verifying StealthAddressRegistry at ${REGISTRY_ADDR}..."
     ( cd "${CONTRACTS_DIR}" && forge verify-contract \
@@ -168,6 +182,23 @@ if [ -n "${BASESCAN_API_KEY:-}" ]; then
         --verifier-url "https://api.basescan.org/api" \
         --verifier etherscan \
         --etherscan-api-key "${BASESCAN_API_KEY}" ) || log "WARN: UniswapPrivacyWrapper verify may be pending (check Basescan)."
+
+    log "Verifying Groth16Verifier at ${VERIFIER_ADDR}..."
+    ( cd "${CONTRACTS_DIR}" && forge verify-contract \
+        "${VERIFIER_ADDR}" Groth16Verifier \
+        --chain-id "${CHAIN_ID}" \
+        --verifier-url "https://api.basescan.org/api" \
+        --verifier etherscan \
+        --etherscan-api-key "${BASESCAN_API_KEY}" ) || log "WARN: Groth16Verifier verify may be pending (check Basescan)."
+
+    log "Verifying PrivacyPool at ${POOL_ADDR}..."
+    ( cd "${CONTRACTS_DIR}" && forge verify-contract \
+        "${POOL_ADDR}" PrivacyPool \
+        --constructor-args "${POOL_DENOMINATION_VAL}" "${VERIFIER_ADDR}" \
+        --chain-id "${CHAIN_ID}" \
+        --verifier-url "https://api.basescan.org/api" \
+        --verifier etherscan \
+        --etherscan-api-key "${BASESCAN_API_KEY}" ) || log "WARN: PrivacyPool verify may be pending (check Basescan)."
 else
     log "BASESCAN_API_KEY not set — skipping Basescan verification (optional)."
 fi
@@ -176,6 +207,8 @@ fi
 REGISTRY_ADDR="$(python3 -c "import json; print(json.load(open('${MANIFEST}'))['base']['stealth_registry'])")"
 RELAYER_ADDR="$(python3 -c "import json; print(json.load(open('${MANIFEST}'))['base']['privacy_relayer'])")"
 WRAPPER_ADDR="$(python3 -c "import json; print(json.load(open('${MANIFEST}'))['base']['uniswap_wrapper'])")"
+VERIFIER_ADDR="$(python3 -c "import json; print(json.load(open('${MANIFEST}'))['base']['privacy_verifier'])")"
+POOL_ADDR="$(python3 -c "import json; print(json.load(open('${MANIFEST}'))['base']['privacy_pool'])")"
 
 echo "" >&2
 echo "============================================================" >&2
@@ -184,6 +217,8 @@ echo "============================================================" >&2
 echo "  StealthAddressRegistry:  ${BASESCAN_BASE}/address/${REGISTRY_ADDR}" >&2
 echo "  PrivacyRelayer:          ${BASESCAN_BASE}/address/${RELAYER_ADDR}" >&2
 echo "  UniswapPrivacyWrapper:   ${BASESCAN_BASE}/address/${WRAPPER_ADDR}" >&2
+echo "  Groth16Verifier:         ${BASESCAN_BASE}/address/${VERIFIER_ADDR}" >&2
+echo "  PrivacyPool:             ${BASESCAN_BASE}/address/${POOL_ADDR}" >&2
 echo "" >&2
 echo "  Manifest: ${MANIFEST}" >&2
 echo "" >&2
@@ -194,4 +229,6 @@ echo "         --rpc-url \${BASE_RPC_URL} --private-key \${DEPLOYER_PRIVATE_KEY}
 echo "    2. Restart the backend (or push to trigger Azure redeploy) so" >&2
 echo "       it reads deployed_base.json at import time." >&2
 echo "    3. Verify the /api/deployments endpoint reports the real addresses." >&2
+echo "    4. PrivacyPool is live — P3.5 wires the backend ZK endpoints" >&2
+echo "       (/api/zk-pool/deposit, /api/zk-pool/state) to this address." >&2
 echo "============================================================" >&2

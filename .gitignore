@@ -67,6 +67,9 @@ upl_database/
 .vscode/
 .idea/
 *.swp
+# Windows reserved-name artifact (e.g. `nul` from a redirected command);
+# harmless but should never be tracked.
+nul
 
 # ─── Platform & caches ───────────────────────────────────────────
 .emergent/
