@@ -61,7 +61,7 @@ jobs:
       # fresh runner, so generate one. Throwaway test-only keypair (no real
       # funds, never reused outside this ephemeral CI run).
       - name: Generate test wallet keypair
-        run: solana-keygen new --no-bip39-passphrase --silent --no-outdated
+        run: solana-keygen new --no-bip39-passphrase --silent --force
 
       - name: Anchor test
         working-directory: contracts/solana
