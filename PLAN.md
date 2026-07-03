@@ -571,7 +571,7 @@ cross-chain routing on top.
 P3.0 Toolchain (circom + snarkjs + circomlib, WSL)            ████████ 100% ✅
 P3.1 withdraw.circom (Poseidon Merkle membership, depth 20)   ████████ 100% ✅
 P3.2 Powers of Tau ceremony (self-run) + proving/verify keys  ████████ 100% ✅
-P3.3 PrivacyPool.sol + Verifier.sol + Poseidon + Foundry test ░░░░░░░░ 0% ⏸️
+P3.3 PrivacyPool.sol + Verifier.sol + Poseidon + Foundry test ░░░░░░░░ 30% 🔨 (Verifier.sol done)
 P3.4 Deploy PrivacyPool + Verifier on Base mainnet (real gas) ░░░░░░░░ 0% ⏸️
 P3.5 Backend: replace /zkp stubs with real Merkle/verify      ░░░░░░░░ 0% ⏸️
 P3.6 Frontend: real browser proof gen (snarkjs)               ░░░░░░░░ 0% ⏸️
@@ -630,15 +630,31 @@ zkey → `verify: OK!`, tampered → `FAILED (correct)`.
   is the standard situation for any project using snarkjs; documented in
   `docs/zk-architecture.md` (P3.7) for downstream consumers.
 
-**P3.3 — `PrivacyPool.sol` + `Verifier.sol` + Foundry tests.**
-`snarkjs zkey export solidityverifier` generates the Groth16 verifier (correct
-pairings — the P1.3 DELTA==GAMMA bug class is structurally impossible). New
-`PrivacyPool.sol`: incremental Poseidon Merkle tree (depth 20), `nullifierHashes`
-mapping, fixed `denomination`, `deposit(bytes32)` + `withdraw(proof, root,
-nullifierHash, recipient)`. Poseidon-in-Solidity vendored (with attribution),
-not hand-rolled. Tests deposit → real snarkjs proof → on-chain verify → withdraw
-+ revert cases (invalid proof, double-spend, unknown root, wrong denomination).
-Gate: `forge test` green with a **real Groth16 proof** (not mocked).
+**P3.3 — `PrivacyPool.sol` + `Verifier.sol` + Foundry tests.** 🔨 30%
+**Verifier.sol — DONE** (P3.2): the snarkjs-generated `Groth16Verifier` with
+correct pairings (the P1.3 DELTA==GAMMA bug class is structurally impossible).
+`verifyProof(uint[2] _pA, uint[2][2] _pB, uint[2] _pC, uint[3] _pubSignals)`
+where `_pubSignals = [nullifierHash, root, recipient]`. Compiles clean under
+Solc 0.8.20, passes `forge fmt --check`.
+
+**Remaining (the focused next step):**
+- `PrivacyPool.sol`: incremental Poseidon Merkle tree (depth 20),
+  `nullifierHashes` mapping, fixed `denomination`, `deposit(bytes32)` +
+  `withdraw(proof, root, nullifierHash, recipient)` that calls `Groth16Verifier`.
+- **Poseidon-in-Solidity vendoring** — the crux. The on-chain Merkle tree needs a
+  PoseidonT3 (2-input) library whose constants match circomlib EXACTLY (else
+  commitments/roots diverge from the circuit and every proof fails). circomlib
+  uses the *optimized* Poseidon (sparse partial rounds via S constants + a P
+  matrix), so a naive full-round port would be unsound. Status: constants ARE in
+  the vendored `poseidon_constants.circom`; a generator + JS reference verifier
+  were drafted but the constants-extraction parser needs one more pass to handle
+  circomlib's nested-array layout correctly. **This is deliberately not rushed** —
+  an incorrect hasher makes the whole pool unsound, so it gets a dedicated,
+  verified-against-the-known-vector (`poseidon(1,2)=7853200120776062878684798364095072458815029376092732009249414926327459813530`)
+  pass before merge.
+- Foundry test: deposit → real snarkjs proof → on-chain `Groth16Verifier` →
+  withdraw + revert cases (invalid proof, double-spend, unknown root).
+- Gate: `forge test` green with a **real Groth16 proof** (not mocked).
 
 **P3.4 — Deploy on Base mainnet (real gas).** Extend `Deploy.s.sol` (deploy
 Verifier + PrivacyPool; add `privacy_pool` + `privacy_verifier` to manifest — no
@@ -725,4 +741,4 @@ ZK endpoints currently return HTTP 501 until P3.5 wires them.
 
 ---
 
-*This file is updated after every milestone. Last update: 2026-07-03 (P3.2 DONE — Powers of Tau ceremony run; withdraw_final.zkey + Verifier.sol generated; round-trip gate green; Solana CI unblocked → green).*
+*This file is updated after every milestone. Last update: 2026-07-03 (P3.2 DONE — Powers of Tau + Verifier.sol; P3.3 30% — Verifier.sol done, Poseidon-Solidity vendoring is the focused next step; Solana CI unblocked → green).*
