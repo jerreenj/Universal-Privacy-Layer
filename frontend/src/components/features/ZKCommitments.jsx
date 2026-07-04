@@ -1,290 +1,244 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { Lock, Unlock, Check, X, Loader2, Shield, Hash } from "lucide-react";
+import { ethers } from "ethers";
+import { Link } from "react-router-dom";
+import { Lock, Loader2, Shield, Hash, Download, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
+import {
+  computeCommitment,
+  computeNullifierHash,
+  fetchPoolState,
+  ZK_ASSETS_BASE,
+} from "@/lib/zk-browser";
 
-// Client-side SHA-256
-async function sha256(message) {
-  const msgBuffer = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
-  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+// Minimal PrivacyPool ABI — only the deposit() call the user makes themselves.
+// Match `backend/server.py` PRIVACY_POOL_ABI kept in lock-step.
+const PRIVACY_POOL_DEPOSIT_ABI = [
+  "function deposit(uint256 commitment) external payable",
+  "function denomination() view returns (uint256)",
+  "function currentRoot() view returns (uint256)",
+  "function nextLeafIndex() view returns (uint256)",
+  "event Deposit(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
+];
+
+// Format a BN254 field element to a 0x-prefixed 32-byte hex string.
+function toBytes32(n) {
+  const hex = BigInt(n).toString(16);
+  return "0x" + hex.padStart(64, "0");
 }
 
-// Generate cryptographically secure blinding factor
-function generateBlindingFactor() {
-  const arr = new Uint8Array(32);
-  crypto.getRandomValues(arr);
-  return Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
+function truncate(s, n = 18) {
+  if (!s) return "";
+  return s.slice(0, n) + "…";
 }
-
-const RANGES = ["0-0.01 ETH", "0.01-0.1 ETH", "0.1-1 ETH", "1-10 ETH", "10-100 ETH", "100+ ETH"];
 
 export function ZKCommitments() {
   const { address, chain } = useWallet();
-  const [tab, setTab] = useState("commit");
+  const [tab, setTab] = useState("deposit");
   const [loading, setLoading] = useState(false);
-  const [commitments, setCommitments] = useState([]);
+  const [poolState, setPoolState] = useState(null);
 
-  // Commit form
-  const [amountWei, setAmountWei] = useState("");
-  const [amountRange, setAmountRange] = useState(RANGES[2]);
-  const [commitLabel, setCommitLabel] = useState("");
-  const [lastCommit, setLastCommit] = useState(null);
-  const [blindingFactor, setBlindingFactor] = useState("");
+  // Deposit form
+  const [depositNote, setDepositNote] = useState(null);
+  const [showSecrets, setShowSecrets] = useState(false);
+  const [txStatus, setTxStatus] = useState(null);
+  const [savedToDisk, setSavedToDisk] = useState(false);
 
-  // Verify form
-  const [verifyId, setVerifyId] = useState("");
-  const [verifyAmount, setVerifyAmount] = useState("");
-  const [verifyBlinding, setVerifyBlinding] = useState("");
-  const [verifyResult, setVerifyResult] = useState(null);
+  // Pool liveness check (Base only)
+  const baseChain = CHAINS.base;
+  const poolAddr = baseChain?.contracts?.privacyPool;
 
-  const fetchCommitments = useCallback(async () => {
-    if (!address) return;
+  const refreshPool = useCallback(async () => {
     try {
-      const res = await axios.get(`${API}/zk-commitments/${address}`);
-      setCommitments(res.data.commitments || []);
-    } catch {}
-  }, [address]);
-
-  useEffect(() => { fetchCommitments(); }, [fetchCommitments]);
-
-  const createCommitment = async () => {
-    if (!address) return toast.error("Connect wallet first");
-    if (!amountWei) return toast.error("Enter amount in wei");
-    setLoading(true);
-    try {
-      // Client-side: generate blinding factor and compute commitment
-      const bf = generateBlindingFactor();
-      setBlindingFactor(bf);
-      const commitHash = await sha256(amountWei + bf);
-
-      const res = await axios.post(`${API}/zk-commitments/create`, {
-        owner_address: address,
-        commitment_hash: commitHash,
-        amount_range: amountRange,
-        chain: chain,
-        label: commitLabel || null,
-      });
-
-      setLastCommit({
-        ...res.data,
-        blinding_factor: bf,
-        amount_wei: amountWei,
-      });
-      toast.success("Commitment created — save your blinding factor!");
-      fetchCommitments();
-    } catch {
-      toast.error("Failed to create commitment");
-    }
-    setLoading(false);
-  };
-
-  const verifyCommitment = async () => {
-    if (!verifyId || !verifyAmount || !verifyBlinding) return toast.error("Fill all fields");
-    setLoading(true);
-    try {
-      const res = await axios.post(`${API}/zk-commitments/verify`, {
-        commitment_id: verifyId,
-        amount_wei: verifyAmount,
-        blinding_factor: verifyBlinding,
-      });
-      setVerifyResult(res.data);
-      if (res.data.is_valid) toast.success("Commitment verified!");
-      else toast.error("Verification failed — hashes don't match");
+      const data = await fetchPoolState();
+      setPoolState(data);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Verification failed");
+      setPoolState({ live: false, error: e?.message ?? String(e) });
     }
-    setLoading(false);
+  }, []);
+
+  useEffect(() => { refreshPool(); }, [refreshPool]);
+
+  const onDeposit = async () => {
+    if (!address) return toast.error("Connect wallet to Base first");
+    if (!poolState?.live) return toast.error("PrivacyPool not live on Base yet");
+    if (!poolAddr) return toast.error("PrivacyPool address missing — refresh or wait for /api/deployments");
+    setLoading(true);
+    setTxStatus("Generating secrets…");
+    try {
+      // 1. Generate the secret materials in the browser (NEVER sent anywhere).
+      const { randomFieldElement } = await import("@/lib/zk-browser");
+      const nullifier = randomFieldElement();
+      const secret = randomFieldElement();
+
+      // 2. Compute commitment = Poseidon(nullifier, secret) and cache
+      //    nullifierHash so the user can re-confirm later.
+      const commitmentHex = await computeCommitment(nullifier, secret);
+      const nullifierHash = await computeNullifierHash(nullifier);
+
+      setTxStatus("Sending tx to PrivacyPool.deposit(commitment)…");
+
+      // 3. Send the on-chain deposit. We pass denomination's worth of ETH.
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const pool = new ethers.Contract(poolAddr, PRIVACY_POOL_DEPOSIT_ABI, signer);
+
+      const denom = BigInt(poolState.denomination);
+      const tx = await pool.deposit(toBytes32(commitmentHex), {
+        value: denom,
+        gasLimit: 200_000,
+      });
+      setTxStatus("Waiting for confirmation…");
+      const receipt = await tx.wait();
+
+      // 4. Build the "note" the user MUST save to withdraw later.
+      const note = {
+        chain: "base",
+        pool: poolAddr,
+        denomination_wei: denom.toString(),
+        nullifier,
+        secret,
+        commitment: commitmentHex,
+        nullifierHash,
+        tx_hash: receipt?.hash ?? tx.hash,
+        leaf_index: null, // filled in from /api/zk-pool/state on next refresh
+        note_id: "upl-zk-" + crypto.randomUUID().slice(0, 8),
+        saved_at: new Date().toISOString(),
+      };
+
+      setDepositNote(note);
+      setSavedToDisk(false);
+      // Also tell the backend about the deposit so it can serve Merkle paths.
+      try {
+        await axios.post(`${API}/zk-pool/deposit`, {
+          commitment: toBytes32(commitmentHex),
+          tx_hash: receipt?.hash ?? tx.hash,
+        });
+      } catch (e) {
+        // Non-fatal — the chain is the source of truth.
+        console.warn("Backend deposit record failed (non-fatal):", e);
+      }
+      await refreshPool();
+      toast.success("Deposit confirmed — SAVE THE NOTE!");
+      setTxStatus(null);
+    } catch (e) {
+      console.error(e);
+      toast.error(e?.shortMessage ?? e?.message ?? "Deposit failed");
+      setTxStatus(null);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  // Allow the user to download the note as JSON so they keep it offline.
+  const downloadNote = () => {
+    if (!depositNote) return;
+    const blob = new Blob([JSON.stringify(depositNote, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${depositNote.note_id}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setSavedToDisk(true);
+  };
+
+  const live = !!poolState?.live;
+  const denomEth = poolState?.denomination
+    ? Number(BigInt(poolState.denomination)) / 1e18
+    : null;
 
   return (
-    <div className="space-y-4" data-testid="zk-commitments">
-      <p className="text-sm text-white/50">
-        Hide transaction amounts using zero-knowledge commitments. Commit to an amount without revealing it. Verify later by revealing the blinding factor. All math runs in your browser.
-      </p>
+    <div className="space-y-4">
+      <div className="text-sm text-white/50">
+        Make a private deposit into the UPL PrivacyPool on Base. The deposit is
+        unlinkable from any future withdrawal — only you can spend it, and only
+        if you save the note this page gives you.
+      </div>
 
-      {/* Tabs */}
-      <div className="flex gap-0 border border-white/20">
-        {["commit", "verify", "history"].map((t) => (
-          <button
-            key={t}
-            data-testid={`zk-tab-${t}`}
-            onClick={() => setTab(t)}
-            className={`flex-1 p-2.5 text-sm font-medium transition-all ${tab === t ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"}`}
-          >
-            {t === "commit" ? "Commit" : t === "verify" ? "Verify" : "History"}
+      {/* Pool status bar */}
+      <div className={`border p-3 text-xs ${live ? "border-green-500/30 bg-green-500/5 text-green-300" : "border-yellow-500/30 bg-yellow-500/5 text-yellow-300"}`}>
+        {live ? (
+          <>
+            <Shield className="w-3 h-3 inline mr-1" />
+            Pool live on Base · denomination {denomEth ?? "?"} ETH · root <span className="font-mono">{truncate(poolState.currentRoot, 14)}</span>
+          </>
+        ) : (
+          <>PrivacyPool not live on Base yet — {poolState?.message ?? poolState?.error ?? "deploy pending"}</>
+        )}
+      </div>
+
+      <div className="flex border border-white/10">
+        {["deposit", "note"].map((t) => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`flex-1 py-2 text-xs uppercase tracking-wider ${tab === t ? "bg-white/10" : "bg-transparent text-white/50"}`}>
+            {t}
           </button>
         ))}
       </div>
 
-      {/* COMMIT TAB */}
-      {tab === "commit" && (
+      {/* DEPOSIT TAB */}
+      {tab === "deposit" && (
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-gray-500 uppercase mb-1">Amount (wei) — only you know this</label>
-            <input
-              data-testid="zk-commit-amount"
-              value={amountWei}
-              onChange={(e) => setAmountWei(e.target.value)}
-              placeholder="1000000000000000000"
-              className="w-full bg-white/5 border border-white/20 p-3 text-sm font-mono outline-none"
-            />
+            <label className="block text-xs text-white/50 uppercase mb-1">Network</label>
+            <input value="Base Mainnet" readOnly
+              className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none text-white/70" />
           </div>
-          <div>
-            <label className="block text-xs text-gray-500 uppercase mb-1">Public Range (visible to others)</label>
-            <select
-              data-testid="zk-commit-range"
-              value={amountRange}
-              onChange={(e) => setAmountRange(e.target.value)}
-              className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none"
-            >
-              {RANGES.map((r) => <option key={r} value={r} className="bg-black">{r}</option>)}
-            </select>
+          <div className="bg-white/5 border border-white/10 p-3 text-xs text-white/60 space-y-1">
+            <div>• A Poseidon commitment is generated locally (nullifier + secret).</div>
+            <div>• The commitment is sent to <code>PrivacyPool.deposit()</code> as the leaf.</div>
+            <div>• The pool stores the leaf in a depth-20 Merkle tree; you receive a note.</div>
+            <div>• To withdraw: load the note in the <Link to="/zk-proofs" className="underline">ZK Proofs</Link> tab and generate a Groth16 proof.</div>
           </div>
-          <div>
-            <label className="block text-xs text-gray-500 uppercase mb-1">Label (optional)</label>
-            <input
-              data-testid="zk-commit-label"
-              value={commitLabel}
-              onChange={(e) => setCommitLabel(e.target.value)}
-              placeholder="e.g. Payment to Alice"
-              className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none"
-            />
-          </div>
-          <div className="text-xs text-white/30">
-            Chain: <span style={{ color: CHAINS[chain]?.color }}>{CHAINS[chain]?.name}</span>
-          </div>
-
-          <button
-            data-testid="zk-commit-button"
-            onClick={createCommitment}
-            disabled={loading}
-            className="w-full bg-white/10 border border-white/20 p-3 text-sm font-semibold hover:bg-white/15 flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-            Create ZK Commitment
+          <button onClick={onDeposit} disabled={loading || !live}
+            data-testid="zk-deposit-btn"
+            className="w-full py-3 bg-white/10 border border-white/20 font-bold uppercase tracking-wider hover:bg-white/20 disabled:opacity-50 flex items-center justify-center gap-2">
+            {loading
+              ? <Loader2 className="w-5 h-5 animate-spin" />
+              : <Lock className="w-5 h-5" />}
+            {txStatus ?? (live ? `Deposit ${denomEth ?? "?"} ETH` : "Pool not live")}
           </button>
-
-          {lastCommit && (
-            <div className="bg-green-500/10 border border-green-500/30 p-4 space-y-2" data-testid="zk-commit-result">
-              <div className="text-sm font-semibold text-green-400 flex items-center gap-2">
-                <Shield className="w-4 h-4" /> Commitment Created
-              </div>
-              <div className="text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-white/40">ID</span>
-                  <span className="font-mono text-white/60">{lastCommit.commitment_id?.slice(0, 16)}...</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-white/40">Hash</span>
-                  <span className="font-mono text-white/60">{lastCommit.commitment_hash?.slice(0, 20)}...</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-white/40">Blinding Factor</span>
-                  <span className="font-mono text-red-400">{lastCommit.blinding_factor?.slice(0, 20)}...</span>
-                </div>
-              </div>
-              <div className="text-xs text-red-400/80 mt-2">
-                SAVE your blinding factor — it is the key to proving this commitment later. It cannot be recovered.
-              </div>
-            </div>
-          )}
         </div>
       )}
 
-      {/* VERIFY TAB */}
-      {tab === "verify" && (
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-gray-500 uppercase mb-1">Commitment ID</label>
-            <input
-              data-testid="zk-verify-id"
-              value={verifyId}
-              onChange={(e) => setVerifyId(e.target.value)}
-              placeholder="uuid..."
-              className="w-full bg-white/5 border border-white/20 p-3 text-sm font-mono outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 uppercase mb-1">Amount (wei)</label>
-            <input
-              data-testid="zk-verify-amount"
-              value={verifyAmount}
-              onChange={(e) => setVerifyAmount(e.target.value)}
-              placeholder="1000000000000000000"
-              className="w-full bg-white/5 border border-white/20 p-3 text-sm font-mono outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 uppercase mb-1">Blinding Factor</label>
-            <input
-              data-testid="zk-verify-blinding"
-              value={verifyBlinding}
-              onChange={(e) => setVerifyBlinding(e.target.value)}
-              placeholder="hex..."
-              className="w-full bg-white/5 border border-white/20 p-3 text-sm font-mono outline-none"
-            />
-          </div>
-
-          <button
-            data-testid="zk-verify-button"
-            onClick={verifyCommitment}
-            disabled={loading}
-            className="w-full bg-white/10 border border-white/20 p-3 text-sm font-semibold hover:bg-white/15 flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlock className="w-4 h-4" />}
-            Verify Commitment
-          </button>
-
-          {verifyResult && (
-            <div className={`border p-4 ${verifyResult.is_valid ? "border-green-500/30 bg-green-500/10" : "border-red-500/30 bg-red-500/10"}`} data-testid="zk-verify-result">
-              <div className="flex items-center gap-2 mb-2">
-                {verifyResult.is_valid
-                  ? <><Check className="w-4 h-4 text-green-400" /><span className="text-sm font-semibold text-green-400">Valid Commitment</span></>
-                  : <><X className="w-4 h-4 text-red-400" /><span className="text-sm font-semibold text-red-400">Invalid — Hashes Don't Match</span></>}
-              </div>
-              <div className="text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-white/40">Stored Hash</span>
-                  <span className="font-mono text-white/50">{verifyResult.stored_hash?.slice(0, 24)}...</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-white/40">Recomputed</span>
-                  <span className="font-mono text-white/50">{verifyResult.recomputed_hash?.slice(0, 24)}...</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* HISTORY TAB */}
-      {tab === "history" && (
-        <div className="space-y-2">
-          {commitments.length === 0 ? (
+      {/* NOTE TAB */}
+      {tab === "note" && (
+        <div className="space-y-3" data-testid="zk-commit-note">
+          {!depositNote ? (
             <div className="text-center py-8 text-white/30 text-sm">
               <Hash className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              No commitments yet
+              No deposit yet. Make one in the Deposit tab.
             </div>
           ) : (
-            commitments.map((c) => (
-              <div key={c.commitment_id} className="bg-white/5 border border-white/10 p-3" data-testid={`zk-history-${c.commitment_id}`}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium">{c.label || "Unlabeled"}</span>
-                  <span className={`text-xs px-2 py-0.5 border ${c.revealed ? "border-green-500/40 text-green-400" : "border-white/20 text-white/40"}`}>
-                    {c.revealed ? "Revealed" : "Hidden"}
-                  </span>
-                </div>
-                <div className="text-xs text-white/40 space-y-0.5">
-                  <div>Range: {c.amount_range}</div>
-                  <div>Hash: {c.commitment_hash?.slice(0, 24)}...</div>
-                  <div>Chain: {CHAINS[c.chain]?.name || c.chain}</div>
-                  <div>{new Date(c.created_at).toLocaleDateString()}</div>
-                </div>
+            <>
+              <div className="bg-yellow-500/10 border border-yellow-500/30 p-3 text-xs text-yellow-200">
+                <strong>Save this note!</strong> The nullifier and secret can never be
+                recovered. Without them you cannot withdraw.
               </div>
-            ))
+              <pre className="bg-black border border-white/20 p-3 text-xs font-mono break-all whitespace-pre-wrap">
+{JSON.stringify(
+  showSecrets
+    ? depositNote
+    : { ...depositNote, nullifier: "0x…(hidden)", secret: "0x…(hidden)" },
+  null, 2
+)}
+              </pre>
+              <div className="flex gap-2">
+                <button onClick={() => setShowSecrets((s) => !s)}
+                  className="flex-1 py-2 bg-white/5 border border-white/20 text-xs uppercase tracking-wider hover:bg-white/10 flex items-center justify-center gap-2">
+                  {showSecrets ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showSecrets ? "Hide" : "Reveal"} secrets
+                </button>
+                <button onClick={downloadNote}
+                  className="flex-1 py-2 bg-white/10 border border-white/20 text-xs uppercase tracking-wider hover:bg-white/15 flex items-center justify-center gap-2">
+                  <Download className="w-4 h-4" /> Download JSON
+                </button>
+              </div>
+              {savedToDisk && <div className="text-xs text-green-400">Saved ✓</div>}
+            </>
           )}
         </div>
       )}
