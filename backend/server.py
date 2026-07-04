@@ -2020,6 +2020,65 @@ async def zk_pool_withdraw(req: ZKPoolWithdrawRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─── P3.8 — secp256k1 Stealth-Address Ownership ZK (PoC / RESEARCH-ONLY) ───
+# ⚠ NOT FOR PRODUCTION USE. ⚠
+# See docs/secp256k1-stealth-zk.md for the full research doc + audit
+# checklist. Every code path under /api/zk-stealth/* must be gated by an
+# explicit "research_only": true in the response and a prominent UI
+# disclaimer. No real funds may be sent to a stealth address gated by a
+# PoC verifier until (a) external cryptographic audit, (b) MPC
+# Powers-of-Tau ceremony, AND (c) audit of the deployed Groth16 verifier
+# (StealthOwnerVerifier.sol).
+#
+# Scheme: Poseidon(spend_privkey, view_privkey, ephemeral_pubkey_x)
+#                  = stealth_commitment.
+# See contracts/circuits/stealth_owner.circom for the canonical constraints.
+
+
+class ZKStealthOwnerRequest(BaseModel):
+    stealth_commitment: str           # 0x-prefixed 32-byte hex or decimal
+    ephemeral_pubkey_x: str           # 0x-prefixed 32-byte hex or decimal
+    witness_hash: Optional[str] = None  # hash of the witness (NOT the witness)
+    proof_payload: Optional[dict] = None  # full Groth16 proof, if frontend emitted
+
+
+@api_router.post("/zk-stealth/owner")
+async def zk_stealth_owner_check(req: ZKStealthOwnerRequest):
+    """
+    PoC ownership-check endpoint. Returns research_only with the same
+    fields regardless of whether the witness is correct — we DON'T trust
+    a frontend claim; the on-chain StealthOwnerVerifier.sol does.
+
+    Once StealthOwnerVerifier.sol is deployed + audited AND the on-chain
+    address is in deployments; this endpoint will proxy the call to
+    verifier.verifyProof(proof_payload).
+    """
+    try:
+        from backend.zk_stealth import stealth_poc_check
+        result = stealth_poc_check(
+            stealth_commitment=req.stealth_commitment,
+            ephemeral_pubkey_x=req.ephemeral_pubkey_x,
+            witness_hash=req.witness_hash,
+        )
+        # HARD disclaimer in every response. Frontend MUST show this.
+        result["research_only"] = True
+        result["audit_required"] = True
+        result["do_not_use_with_real_funds"] = True
+        result["endpoint"] = "/api/zk-stealth/owner"
+        return result
+    except Exception as e:
+        logger.warning(f"zk-stealth/owner error: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "research_only": True,
+                "audit_required": True,
+                "do_not_use_with_real_funds": True,
+                "error": str(e),
+            },
+        )
+
+
 # --- 2. PRIVATE RELAYER ON-CHAIN ---
 # ABI surface is reconciled 1:1 with PrivacyRelayer.sol (P1.1). The relayer is a
 # GAS-ONLY META-TX FORWARDER: `relay()` is guarded by the `onlyRelayer` modifier,
