@@ -1719,8 +1719,8 @@ PRIVACY_POOL_ABI = [
 async def zk_pool_state():
     """
     Public state of the PrivacyPool on Base.
-    Returns denomination, current root, recent roots (for proof validity window),
-    next leaf index, and whether the pool is live (has a deployed address).
+    Returns denomination, current root (rebuilt from DB deposits if on-chain
+    root is not yet available), next leaf index, etc.
     """
     try:
         deployed = _load_deployed_addresses()
@@ -1738,12 +1738,23 @@ async def zk_pool_state():
         pool = w3.eth.contract(address=pool_addr, abi=PRIVACY_POOL_ABI)
 
         denomination = pool.functions.denomination().call()
-        current_root = pool.functions.currentRoot().call()
+        onchain_root = pool.functions.currentRoot().call()
         next_leaf = pool.functions.nextLeafIndex().call()
 
-        # Return the last ROOT_HISTORY_SIZE roots (PrivacyPool keeps 100)
-        # For the first commit we return only the current root; P3.5-B will
-        # add the ring-buffer read when we implement deposit indexing.
+        # Rebuild root from stored deposits (P3.5-B)
+        cursor = db.pool_deposits.find({}, {"commitment": 1}).sort("created_at", 1)
+        tree = IncrementalMerkleTree()
+        stored_count = 0
+        async for doc in cursor:
+            try:
+                leaf = int(doc["commitment"], 16)
+                tree.insert(leaf)
+                stored_count += 1
+            except Exception:
+                continue
+
+        effective_root = tree.root if stored_count > 0 else onchain_root
+
         return {
             "live": True,
             "chain": "base",
@@ -1751,8 +1762,10 @@ async def zk_pool_state():
             "privacy_pool": pool_addr,
             "verifier": verifier_addr,
             "denomination": str(denomination),
-            "currentRoot": str(current_root),
+            "currentRoot": str(effective_root),
+            "onchainRoot": str(onchain_root),
             "nextLeafIndex": next_leaf,
+            "storedDeposits": stored_count,
             "rootHistorySize": 100,
             "merkleDepth": 20,
         }
