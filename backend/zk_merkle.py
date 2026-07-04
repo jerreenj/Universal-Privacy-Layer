@@ -14,7 +14,7 @@ exact same values used by the withdraw.circom circuit.
 
 from __future__ import annotations
 from typing import List, Tuple
-import os
+import re
 from pathlib import Path
 
 Q = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001
@@ -22,55 +22,84 @@ Q = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001
 def mod(a: int, b: int = Q) -> int:
     return ((a % b) + b) % b
 
-# ── Poseidon constants (extracted once at import time) ────────────────────────
-def _extract_poseidon_constants() -> dict:
-    """Extract C/M/P/S arrays from circomlib poseidon_constants.circom."""
-    circuits_dir = Path(__file__).parent.parent / "contracts" / "circuits"
-    consts_file = circuits_dir / "circomlib" / "circuits" / "poseidon_constants.circom"
-    if not consts_file.exists():
-        # Fallback: use the known-good vectors for t=3 / t=2 (hardcoded from
-        # the verified zk_prove_e2e.js run). This keeps the backend runnable
-        # even if the circomlib checkout is missing.
-        return _get_fallback_constants()
+# ── Poseidon constants (extracted at import time) ─────────────────────────────
+_POSEIDON_RE = re.compile(
+    r"function\s+(\w+)\s*\(\s*t\s*\)|"           # function header  -> group(1)
+    r"(\b(?:if|else if)\b)\s*\(\s*t\s*==\s*(\d+)\s*\)"  # t-switch       -> group(2,3)
+)
+_HEX_RE = re.compile(r"0x[0-9a-fA-F]+")
 
-    text = consts_file.read_text(encoding="utf-8")
-    import re
-    re_fn = re.compile(r"function\s+(\w+)\s*\(\s*t\s*\)|(\b(?:if|else if)\b)\s*\(\s*t\s*==\s*(\d+)\s*\)")
+
+def _parse_poseidon_constants_from_text(text: str) -> dict | None:
+    """Parse the circomlib poseidon_constants.circom text into a constants
+    dict, or return None if anything looks off. None means 'caller should
+    raise loudly' — we should NEVER silently substitute a degenerate
+    fallback (see the audit note in the module docstring)."""
     by_fn: dict[str, list] = {}
     order: list[str] = []
     cur_fn = None
-    for m in re_fn.finditer(text):
+    for m in _POSEIDON_RE.finditer(text):
         if m.group(1):
             cur_fn = m.group(1)
             if cur_fn not in by_fn:
                 by_fn[cur_fn] = []
                 order.append(cur_fn)
             continue
-        t = int(m.group(3))
-        by_fn[cur_fn].append({"t": t, "s": m.start()})
+        if cur_fn is None:
+            # We hit a t-switch outside any function — that's malformed.
+            return None
+        by_fn[cur_fn].append({"t": int(m.group(3)), "s": m.start()})
 
-    out = {}
+    if not order or "POSEIDON_C" not in by_fn:
+        return None
+
+    out: dict = {}
     for fn in order:
         arr = by_fn[fn]
         out[fn] = {}
         for i in range(len(arr)):
-            end = arr[i+1]["s"] if i+1 < len(arr) else len(text)
+            # Defensive: if there is only one entry, len(arr)==1, so
+            # arr[i+1] doesn't exist. Take the remainder of the text.
+            end = arr[i + 1]["s"] if i + 1 < len(arr) else len(text)
             body = text[arr[i]["s"]:end]
-            out[fn][arr[i]["t"]] = [int(x, 16) for x in re.findall(r"0x[0-9a-fA-F]+", body)]
+            out[fn][arr[i]["t"]] = [int(x, 16) for x in _HEX_RE.findall(body)]
+
+    # Sanity: t=3 (Poseidon-2) MUST be present in POSEIDON_C, otherwise the
+    # tree will be all-zero (privacy-broken). Bail loudly.
+    if 3 not in out.get("POSEIDON_C", {}):
+        return None
     return out
 
-def _get_fallback_constants() -> dict:
-    """Minimal fallback so the module can be imported even without circomlib checkout."""
-    # In real usage the circomlib file is present. This fallback prevents
-    # import-time crashes during early testing.
-    return {
-        "POSEIDON_C": {3: [0] * 100, 2: [0] * 100},
-        "POSEIDON_M": {3: [0] * 300, 2: [0] * 200},
-        "POSEIDON_P": {3: [0] * 300, 2: [0] * 200},
-        "POSEIDON_S": {3: [0] * 200, 2: [0] * 200},
-    }
 
-ALL = _extract_poseidon_constants()
+def _load_poseidon_constants() -> dict:
+    """Read circomlib + parse, OR raise with a clear error.
+
+    Audit-P3 fix: this used to silently fall back to all-zero constants
+    when circomlib wasn't present. That fed every commitment into the
+    same zero-tree (privacy-broken). Any code path that used the
+    fallback would have shipped an indistinguishable Merkle tree.
+    The fix: never ship a default-zero constants table. If we can't
+    read the real ones, raise — endpoints must surface 503, NOT
+    quietly use zeros."""
+    circuits_dir = Path(__file__).parent.parent / "contracts" / "circuits"
+    consts_file = circuits_dir / "circomlib" / "circuits" / "poseidon_constants.circom"
+    if not consts_file.exists():
+        raise RuntimeError(
+            f"circomlib poseidon_constants.circom not found at {consts_file}. "
+            "The backend cannot derive a real Merkle tree without it; "
+            "/api/zk-pool/* will correctly return 503 ready=false rather "
+            "than ship a privacy-broken all-zero tree."
+        )
+    text = consts_file.read_text(encoding="utf-8")
+    parsed = _parse_poseidon_constants_from_text(text)
+    if parsed is None:
+        raise RuntimeError(
+            "circomlib poseidon_constants.circom exists but did not parse cleanly. "
+            "Refusing to use a degenerate fallback — /api/zk-pool/* will return 503."
+        )
+    return parsed
+
+ALL = _load_poseidon_constants()
 
 # t=3 (Poseidon(2) for tree nodes)
 t, nRoundsF, nRoundsP = 3, 8, 57
