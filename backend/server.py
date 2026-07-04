@@ -1883,6 +1883,81 @@ class ZKPoolWithdrawRequest(BaseModel):
     proof_c: List[str]
 
 
+# --- /api/zk-pool/path — look up the Merkle path for a saved commitment ---
+# Called by ZKPProofs.jsx AFTER the user makes a deposit. The frontend posts
+# { commitment: "0x...", nullifier_hash: "0x..." } and receives back the
+# exact (root, leafIndex, merklePathElements, merklePathIndices) the
+# withdraw.circom circuit needs. We rebuild the tree from the stored
+# pool_deposits collection in chronological order. Lazy-loads zk_merkle so
+# module-load is never broken even if Poseidon constants are unavailable.
+# NOT marked @api_router because we want to return clean JSON errors with
+# a 503 status when zk_merkle is not present in this image.
+
+
+async def _serve_zk_pool_path(req: ZKPoolDepositRequest):
+    try:
+        (
+            _IMT, _p2, _p1, _cc, _nh,
+        ) = _try_import_zk_merkle()
+        if _IMT is None:
+            return JSONResponse(
+                status_code=503,
+                content={"ready": False, "error": "zk_merkle unavailable"},
+            )
+
+        commit_hex = req.commitment
+        commit_int = int(commit_hex, 16) if commit_hex.startswith("0x") else int(commit_hex)
+
+        temp_tree = _IMT()
+        found = False
+        leaf_index = -1
+        elements = []
+        indices = []
+        async for doc in db.pool_deposits.find({}, {"commitment": 1}).sort("created_at", 1):
+            try:
+                leaf = int(doc["commitment"], 16)
+                if leaf == commit_int:
+                    leaf_index, elements, indices = temp_tree.get_path(leaf)
+                    found = True
+                    break
+                temp_tree.insert(leaf)
+            except Exception:
+                continue
+
+        if not found:
+            return JSONResponse(
+                status_code=404,
+                content={"ready": False, "error": "Commitment not found"},
+            )
+
+        return {
+            "ready": True,
+            "live": True,
+            "root": str(temp_tree.root),
+            "leafIndex": leaf_index,
+            "merklePathElements": [str(x) for x in elements],
+            "merklePathIndices": [str(x) for x in indices],
+            "merkleDepth": 20,
+        }
+    except Exception as e:
+        logger.warning(f"zk-pool/path error: {e}")
+        return JSONResponse(status_code=500, content={"ready": False, "error": str(e)})
+
+
+@api_router.post("/zk-pool/path")
+async def zk_pool_path(req: ZKPoolDepositRequest):
+    """
+    Look up the Merkle path for a given commitment.
+
+    Body: { commitment: "0x..." (hex 32-byte), nullifier_hash: "0x..." }
+
+    Returns the exact (root, leafIndex, merklePathElements, merklePathIndices)
+    the withdraw.circom circuit needs, so the frontend can build the Groth16
+    proof in the browser via snarkjs.
+    """
+    return await _serve_zk_pool_path(req)
+
+
 @api_router.post("/zk-pool/withdraw")
 async def zk_pool_withdraw(req: ZKPoolWithdrawRequest):
     """
