@@ -1,80 +1,67 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 import { ScanLine, Loader2 } from "lucide-react";
 import { API } from "@/config/chains";
-import { SolDevnetBadge } from "@/components/common/SolDevnetBadge";
 
-/**
- * SolScanner — announcement scanner for Solana.
- * Mirrors SuiScanner. Calls GET /api/sol/announcements to show the
- * announcement id range the recipient scanner surface can iterate.
- */
+// Minimal placeholder: title + Chain section + "Deployed on" indicator.
 export function SolScanner() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [limit, setLimit] = useState("50");
+  const [loading, setLoading] = useState(true);
+  const [sol, setSol] = useState(null);
+  const [tick, setTick] = useState(0);
 
-  const scan = async () => {
-    setLoading(true);
-    try {
-      const res = await axios.get(`${API}/sol/announcements`, {
-        params: { limit: parseInt(limit) || 50 },
-      });
-      setData(res.data);
-    } catch (e) {
-      setData(null);
-    }
-    setLoading(false);
-  };
-
-  useEffect(() => { scan(); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const { data } = await axios.get(`${API}/sol/status`);
+        if (!cancelled) setSol(data || null);
+      } catch {
+        if (!cancelled) setSol(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tick]);
 
   return (
-    <div className="space-y-4">
-      <SolDevnetBadge />
-      <p className="text-sm text-white/50">
-        Scan Solana stealth address announcements. The registry tracks all
-        announcements by id; the recipient's client iterates these + uses the
-        ephemeral pubkey + view tag to detect transfers it can claim (EIP-5564).
-      </p>
-
-      <div className="flex gap-2">
-        <input type="number" min="1" max="100" value={limit} onChange={e => setLimit(e.target.value)}
-          className="flex-1 bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white"
-          placeholder="limit (1-100)" />
-        <button onClick={scan} disabled={loading}
-          className="px-4 py-3 border border-white/20 hover:bg-white/10 text-sm flex items-center gap-2">
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
-          Re-scan
-        </button>
+    <div className="space-y-4" data-testid="sol-scanner">
+      <div className="bg-white/5 border border-white/10 p-4 text-sm text-white/70 flex items-center gap-3">
+        <ScanLine className="w-4 h-4 text-purple-300" />
+        <div>
+          <div className="font-semibold text-white">Chain</div>
+          <div>Solana {sol?.devnet ? "Devnet" : "Mainnet"} (chain id 1399811149)</div>
+        </div>
       </div>
 
-      {data && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-3 gap-2">
-            <div className="bg-white/5 border border-white/10 p-3 text-center">
-              <div className="text-xs text-white/40">Total</div>
-              <div className="font-mono text-lg text-purple-400">{data.next_id}</div>
-            </div>
-            <div className="bg-white/5 border border-white/10 p-3 text-center">
-              <div className="text-xs text-white/40">Showing</div>
-              <div className="font-mono text-lg text-purple-400">{data.count}</div>
-            </div>
-            <div className="bg-white/5 border border-white/10 p-3 text-center">
-              <div className="text-xs text-white/40">From id</div>
-              <div className="font-mono text-lg text-purple-400">{data.after_id}</div>
-            </div>
-          </div>
-          <div className="max-h-64 overflow-y-auto space-y-1">
-            {data.announcements.map(a => (
-              <div key={a.id} className="bg-white/5 border border-white/10 p-2 font-mono text-xs text-white/60">
-                announcement #{a.id}
-              </div>
-            ))}
-          </div>
-          {data.note && <p className="text-[11px] text-white/30 italic">{data.note}</p>}
+      <div className="bg-white/5 border border-white/10 p-4 text-sm">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-white/60 uppercase tracking-wider text-xs">Deployed on</span>
+          <button
+            type="button"
+            onClick={() => setTick((t) => t + 1)}
+            className="text-xs text-white/50 hover:text-white underline"
+            disabled={loading}
+          >
+            refresh
+          </button>
         </div>
-      )}
+        {loading ? (
+          <div className="text-white/60 flex items-center gap-2">
+            <Loader2 className="w-3 h-3 animate-spin" /> loading...
+          </div>
+        ) : sol?.live ? (
+          <div className="space-y-1 font-mono text-xs break-all">
+            <div><span className="text-white/40">program</span> {sol.program_id}</div>
+          </div>
+        ) : (
+          <div className="text-yellow-300 text-xs">
+            Program not deployed on Solana - see /api/sol/status. PoC UI;
+            full form behind audit gate.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

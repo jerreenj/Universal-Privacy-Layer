@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
@@ -84,9 +84,32 @@ function LoadingFallback() {
 
 export function Dashboard() {
   const { address, balance, chain, fetchBalance, hiddenBalance } = useWallet();
-  const [page, setPage] = useState("home");
+  const [page, _setPage] = useState("home");
   const [showBal, setShowBal] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Hash-based navigation so the BROWSER back button works.
+  // Dashboard is mounted at /<path> for every route (see App.js), so we
+  // track sub-page state in window.location.hash and listen on popstate.
+  const setPage = (id) => {
+    _setPage(id);
+    try {
+      const next = id === "home" ? "/" : `#/${id}`;
+      if (window.location.hash !== next) {
+        window.history.pushState(null, "", next);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    const fromHash = () => {
+      const m = (window.location.hash || "").match(/^#\/([^/]+)/);
+      _setPage(m ? m[1] : "home");
+    };
+    fromHash(); // sync on mount
+    window.addEventListener("popstate", fromHash);
+    return () => window.removeEventListener("popstate", fromHash);
+  }, []);
 
   if (!address) return <Landing />;
 
