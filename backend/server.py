@@ -1722,18 +1722,50 @@ def _try_import_zk_merkle():
 
 
 async def _rebuild_tree_from_db() -> "IncrementalMerkleTree | None":
-    """Rebuild the incremental Poseidon Merkle tree from stored deposits."""
+    """Rebuild the incremental Poseidon Merkle tree from stored deposits.
+
+    Returns (tree, skipped_count, last_error). The audit-P3 fix exposed
+    that silently `continue`-ing on a malformed commitment row makes
+    MongoDB insert bugs invisible. We now log + count every skip and
+    surface the last error so callers can include it in the API response.
+    """
     IncrementalMerkleTree, *_ = _try_import_zk_merkle()
     if IncrementalMerkleTree is None:
         return None
     tree = IncrementalMerkleTree()
     cursor = db.pool_deposits.find({}, {"commitment": 1}).sort("created_at", 1)
+    skipped = 0
+    last_skipped_reason = None
     async for doc in cursor:
         try:
             leaf = int(doc["commitment"], 16)
+            if not (0 <= leaf < (1 << 256)):
+                last_skipped_reason = "out-of-field"
+                skipped += 1
+                logger.warning(
+                    "zk-pool: skipping deposit row id=%s — commitment out of BN254 field",
+                    doc.get("_id"),
+                )
+                continue
             tree.insert(leaf)
-        except Exception:
-            continue
+        except (ValueError, TypeError) as e:
+            last_skipped_reason = "parse-error"
+            skipped += 1
+            logger.warning(
+                "zk-pool: skipping deposit row id=%s — commitment parse error: %s",
+                doc.get("_id"),
+                e,
+            )
+        except Exception as e:
+            last_skipped_reason = "insert-error"
+            skipped += 1
+            logger.warning(
+                "zk-pool: skipping deposit row id=%s — Poseidon insert error: %s",
+                doc.get("_id"),
+                e,
+            )
+    if skipped > 0:
+        logger.warning(f"zk-pool: tree rebuild skipped {skipped} malformed rows")
     return tree
 
 async def generate_withdraw_inputs(nullifier: int, secret: int) -> dict:
