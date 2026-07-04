@@ -1799,8 +1799,16 @@ async def generate_withdraw_inputs(nullifier: int, secret: int) -> dict:
                     }
                     break
                 temp_tree.insert(leaf)
-            except Exception:
-                continue
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    "zk-pool: generate_withdraw skip row id=%s — parse error: %s",
+                    doc.get("_id"), e,
+                )
+            except Exception as e:
+                logger.warning(
+                    "zk-pool: generate_withdraw skip row id=%s — Poseidon insert error: %s",
+                    doc.get("_id"), e,
+                )
     except Exception as e:
         raise RuntimeError(f"deposit cursor read failed: {e}")
 
