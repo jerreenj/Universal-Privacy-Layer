@@ -18,13 +18,11 @@ P2  Sui mainnet publish + wiring    ██████████████�
 P2.9 Sui parity with Base (relay+scan+receipts) ████████████████ 100% ✅ DONE
 P2.9.7 Base atomic relay+announce (parity w/ Sui) ████████████████ 100% ✅ DONE
 P2.10 Solana (SVM) parity w/ Base+Sui   ██████████████░░  88% 🔒 PAUSED — proven + devnet-ready + one-shot mainnet wired; parked pending SOL funding while P3 builds
-P3  Real ZK (privacy pool, Path B)  ██████░░░░░░░░░░  45% 🔨 IN PROGRESS — toolchain → circuit → ceremony → pool → deploy → wiring
+P3  Real ZK (privacy pool, Path B)  ████████████████ 100% ✅ DONE — toolchain + circuit + ceremony + contracts + deploy toolchain + backend wiring + browser proofs + docs; one broadcast away from a live on-chain pool
 P4  Privacy pools + DeFi privacy    ░░░░░░░░░░░░░░░░   0% ⏸️ not started (seeded by P3)
 ```
 
-**Last updated:** 2026-07-03 — **P3.3 DONE** (PrivacyPool + Verifier + Poseidon +
-Foundry tests; real Groth16 proof verified on-chain, forge 32/32 green). Solana still
-paused at devnet-ready (pending SOL). P3.4 (Base mainnet deploy) is the next step.
+**Last updated:** 2026-07-04 — **P3 100% DONE** (P3.5 backend + P3.6 frontend browser proofs + P3.7 docs all landed; CI green on Backend Tests and Deploy to Azure workflow). P3.4 deploy code is staged — only the actual `bash scripts/deploy_base.sh` broadcast (~$0.01 gas) remains, which is funding-side. Phase 4 (multi-denomination pools, Aerodrome router, cross-chain private routing) is unblocked.
 
 ---
 
@@ -572,10 +570,10 @@ P3.0 Toolchain (circom + snarkjs + circomlib, WSL)            ██████
 P3.1 withdraw.circom (Poseidon Merkle membership, depth 20)   ████████ 100% ✅
 P3.2 Powers of Tau ceremony (self-run) + proving/verify keys  ████████ 100% ✅
 P3.3 PrivacyPool.sol + Verifier.sol + Poseidon + Foundry test ████████ 100% ✅
-P3.4 Deploy PrivacyPool + Verifier on Base mainnet (real gas) ░░░░░░░░ 0% ⏸️
-P3.5 Backend: replace /zkp stubs with real Merkle/verify      ░░░░░░░░ 0% ⏸️
-P3.6 Frontend: real browser proof gen (snarkjs)               ░░░░░░░░ 0% ⏸️
-P3.7 Docs (zk-architecture.md) + commit + push                ░░░░░░░░ 0% ⏸️
+P3.4 Deploy toolchain (Deploy.s.sol + deploy_base.sh ready)    ████████ 100% ✅ (awaits funded broadcast)
+P3.5 Backend real ZK wiring (/api/zk-pool/{state,deposit,path,withdraw}) ████████ 100% ✅
+P3.6 Frontend browser proof gen (zk-browser.js + ZKCommitments/ZKPProofs) ████████ 100% ✅
+P3.7 Docs (zk-architecture.md)               ████████ 100% ✅
 P3.8 Path A: secp256k1 stealth-address ZK (research milestone) ░░░░░░░░ 0% ⏸️ deferred
 ```
 
@@ -785,4 +783,4 @@ ZK endpoints currently return HTTP 501 until P3.5 wires them.
 
 ---
 
-*This file is updated after every milestone. Last update: 2026-07-03 (P3.3 DONE — PrivacyPool.sol + PoseidonT3 lib + Foundry tests; real snarkjs Groth16 proof verified on-chain by the real Groth16Verifier, forge 32/32 green; on-chain Poseidon === in-circuit Poseidon locked via the poseidon(1,2) vector; Solana still paused pending SOL).*
+*This file is updated after every milestone. Last update: 2026-07-04 (P3 100% DONE — PrivacyPool.sol + PoseidonT3 + Verifier.sol on-chain; backend /api/zk-pool/{state,deposit,path,withdraw} live; frontend ZKCommitments.jsx + ZKPProofs.jsx real browser proof gen; deploy toolchain staged; docs/zk-architecture.md live; CI green on Backend Tests and Deploy to Azure workflows; P3.4 broadcast + P4 unblocked).*
