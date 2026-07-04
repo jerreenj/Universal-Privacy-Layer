@@ -1,11 +1,17 @@
 {
   "base": {
     "chainId": 8453,
-    "deployedAt": "2026-06-30T07:21:00Z",
-    "commit": "0b8d01e",
-    "privacy_relayer": "0xCea5b3dD22c5306dEF78767b27Ec9E276c5e1C42",
-    "stealth_registry": "0x05077cB4c4214b89dD35F949b587d31e79b3B0c9",
-    "uniswap_wrapper": "0x01A7EB9acb55B80254609dCB8112f1cd65D67c8F",
-    "redeployNote": "P2.9.7: PrivacyRelayer redeployed for atomic relayAndAnnounce. Previous: 0x994F6Ce29B073f82317E8F175D8aac15C2671365"
+    "deployedAt": "2026-07-04T22:32:00Z",
+    "commit": "P3.4-broadcast-audit-fixes",
+    "privacy_relayer": "0x0236451962b249c9a4D742b1ae99bD1F51692b7b",
+    "stealth_registry": "0x48363A533b23fa223C0f37DD99c556D9aAa62496",
+    "uniswap_wrapper": "0x9dB802599412729429765D73C7daca62Aac252F5",
+    "privacy_verifier": "0xcb2b6D1082e97557EF2d6aE5268f8e8d38DF72e3",
+    "privacy_pool": "0x3A7DA29bfd9853A0449c8c51F7007B7f5126C455",
+    "deployer": "0x3f44A6451439673D95082A1337045a25ec275394",
+    "fee_recipient": "0x3f44A6451439673D95082A1337045a25ec275394",
+    "denomination_wei": "100000000000000000",
+    "pool_owner": "0x3f44A6451439673D95082A1337045a25ec275394",
+    "redeployNote": "P3.4: PrivacyPool + Groth16Verifier deployed. PrivacyRelayer was redeployed (atomic relayAndAnnounce). StealthAddressRegistry + UniswapPrivacyWrapper redeployed at the new addresses above. Forge vm.writeJson quirk: in real broadcasts it persists only chainId, so the on-chain addresses were merged into the JSON from forge's ONCHAIN broadcast logs (this matches the same dry-run quirk observed earlier in this session)."
   }
 }
