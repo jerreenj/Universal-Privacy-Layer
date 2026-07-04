@@ -32,29 +32,29 @@ import {PoseidonT3} from "../src/PoseidonT3.sol";
 ///           9. Assert: recipient.balance += DENOMINATION; root unchanged;
 ///              isSpent(publicSignals[0]) == true; epochCounter advanced.
 contract PrivacyPoolBaseForkTest is Test {
-    PrivacyPool       internal pool;
-    Groth16Verifier   internal verifier;
+    PrivacyPool internal pool;
+    Groth16Verifier internal verifier;
 
     // The addresses from contracts/deployed_base.json (commit 96e9fb5 - P3.4
     // broadcast). Hardcoded so the forge test is hermetic (no env-file read
     // needed at forge test time).
-    address constant DEPLOYER       = 0x3f44A6451439673D95082A1337045a25ec275394;
-    address constant PRIVACY_POOL   = 0x3A7DA29bfd9853A0449c8c51F7007B7f5126C455;
+    address constant DEPLOYER = 0x3f44A6451439673D95082A1337045a25ec275394;
+    address constant PRIVACY_POOL = 0x3A7DA29bfd9853A0449c8c51F7007B7f5126C455;
     address constant GROTH16_VERIFIER = 0xcb2b6D1082e97557EF2d6aE5268f8e8d38DF72e3;
     address constant FRESH_RECIPIENT = 0x1111111111111111111111111111111111111111;
 
-    uint256 constant DENOMINATION = 0.1 ether;   // matches the deployed 0.1 ETH
-    string constant RPC_URL        = "https://mainnet.base.org";
+    uint256 constant DENOMINATION = 0.1 ether; // matches the deployed 0.1 ETH
+    string constant RPC_URL = "https://mainnet.base.org";
 
     // Deterministic note - fixed so the witness is reproducible.
     uint256 constant NULLIFIER = 0xc0ffee01c0ffee02c0ffee03c0ffee04c0ffee05c0ffee06c0ffee07c0ffee08;
-    uint256 constant SECRET    = 0xfeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface;
+    uint256 constant SECRET = 0xfeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface;
 
     // Forge's tmp dir pattern (contracts/test/ - the foundry.toml
     // fs_permissions allow read+execute on scripts/, which lets vm.ffi
     // spawn the prover helper).
-    string constant TMP_DIR     = "test/zk-fixtures/";
-    string constant WITNESS_IN  = "test/zk-fixtures/witness.json";
+    string constant TMP_DIR = "test/zk-fixtures/";
+    string constant WITNESS_IN = "test/zk-fixtures/witness.json";
     string constant WITNESS_OUT = "test/zk-fixtures/withdraw_proof.json";
 
     function setUp() public {
@@ -63,7 +63,7 @@ contract PrivacyPoolBaseForkTest is Test {
         vm.createSelectFork(RPC_URL);
 
         // Wire PrivacyPool + Verifier to the LIVE mainnet addresses.
-        pool     = PrivacyPool(payable(PRIVACY_POOL));
+        pool = PrivacyPool(payable(PRIVACY_POOL));
         verifier = Groth16Verifier(GROTH16_VERIFIER);
     }
 
@@ -78,10 +78,13 @@ contract PrivacyPoolBaseForkTest is Test {
         emit log_named_uint("[2/9] commitment", commitment);
 
         // --- STEP 3: pre-state snapshot -------------------------------------
-        uint256 root_pre    = pool.currentRoot();
-        uint256 next_pre    = pool.nextLeafIndex();
-        assertEq(root_pre,  15019797232609675441998260052101280400536945603062888308240081994073687793470,
-                 "unexpected empty-tree root on Base - denominator/init changed?");
+        uint256 root_pre = pool.currentRoot();
+        uint256 next_pre = pool.nextLeafIndex();
+        assertEq(
+            root_pre,
+            15019797232609675441998260052101280400536945603062888308240081994073687793470,
+            "unexpected empty-tree root on Base - denominator/init changed?"
+        );
         assertEq(next_pre, 0, "expected empty pool");
         emit log_named_uint("[3/9] pre-state nextLeafIndex", next_pre);
 
@@ -93,8 +96,8 @@ contract PrivacyPoolBaseForkTest is Test {
         pool.deposit{value: DENOMINATION}(bytes32(commitment));
 
         // --- STEP 5: post-state snapshot -----------------------------------
-        uint256 root_post   = pool.currentRoot();
-        uint256 next_post   = pool.nextLeafIndex();
+        uint256 root_post = pool.currentRoot();
+        uint256 next_post = pool.nextLeafIndex();
         assertEq(next_post, 1, "leaf not inserted at index 0");
         emit log_named_uint("[5/9] post-state nextLeafIndex", next_post);
         assertTrue(root_post != root_pre, "root didn't change - deposit didn't land");
@@ -106,9 +109,9 @@ contract PrivacyPoolBaseForkTest is Test {
         // elsewhere - the chain only saw the contract's poseidon calls,
         // so this is the canonical witness shape.
         uint256[] memory pathElements = new uint256[](20);
-        uint256[] memory pathIndices  = zerosArray(20);
+        uint256[] memory pathIndices = zerosArray(20);
         // Compute zeros[1..20] via Poseidon (same as contract's `_zeros`).
-        pathElements[0] = PoseidonT3.poseidon(0, 0);   // zeros[1]
+        pathElements[0] = PoseidonT3.poseidon(0, 0); // zeros[1]
         for (uint256 l = 2; l < 21; l++) {
             pathElements[l - 1] = PoseidonT3.poseidon(pathElements[l - 2], pathElements[l - 2]);
         }
@@ -145,27 +148,33 @@ contract PrivacyPoolBaseForkTest is Test {
         //    "b":[["<b00>","<b01>"],["<b10>","<b11>"]],
         //    "c":["<c0>","<c1>"],
         //    "publicSignals":["<p0>","<p1>","<p2>"]}
-        uint256[2]    memory a = [uint256(parseHexField(proof_json_raw, "\"a\":[", 0)),
-                                   uint256(parseHexField(proof_json_raw, "\"a\":[", 1))];
-        uint256[2][2] memory b = [[uint256(parseHexField(proof_json_raw, "\"b\":[", 0)),
-                                    uint256(parseHexField(proof_json_raw, "\"b\":[", 1))],
-                                   [uint256(parseHexField(proof_json_raw, "\"b\":[", 2)),
-                                    uint256(parseHexField(proof_json_raw, "\"b\":[", 3))]];
-        uint256[2]    memory c = [uint256(parseHexField(proof_json_raw, "\"c\":[", 0)),
-                                   uint256(parseHexField(proof_json_raw, "\"c\":[", 1))];
+        uint256[2] memory a = [
+            uint256(parseHexField(proof_json_raw, "\"a\":[", 0)), uint256(parseHexField(proof_json_raw, "\"a\":[", 1))
+        ];
+        uint256[2][2] memory b = [
+            [
+                uint256(parseHexField(proof_json_raw, "\"b\":[", 0)),
+                uint256(parseHexField(proof_json_raw, "\"b\":[", 1))
+            ],
+            [uint256(parseHexField(proof_json_raw, "\"b\":[", 2)), uint256(parseHexField(proof_json_raw, "\"b\":[", 3))]
+        ];
+        uint256[2] memory c = [
+            uint256(parseHexField(proof_json_raw, "\"c\":[", 0)), uint256(parseHexField(proof_json_raw, "\"c\":[", 1))
+        ];
         // Epic: prove_withdraw_ffi.js swaps b columns to EVM word-order.
         // The witness we wrote uses the in-circuit convention; the helper
         // has already done the swap. So we read them as-is.
 
         uint256 nullifierHash = uint256(parseHexField(proof_json_raw, "\"publicSignals\":[", 0));
-        uint256 proof_root    = uint256(parseHexField(proof_json_raw, "\"publicSignals\":[", 1));
-        assertEq(proof_root, root_post,
-                 "proof root != on-chain root - the witness/proof gen went against a different tree");
+        uint256 proof_root = uint256(parseHexField(proof_json_raw, "\"publicSignals\":[", 1));
+        assertEq(
+            proof_root, root_post, "proof root != on-chain root - the witness/proof gen went against a different tree"
+        );
 
         uint256 recip_bal_pre = FRESH_RECIPIENT.balance;
         vm.prank(DEPLOYER);
         emit log_named_string("[8b/9] withdrawing", "");
-        
+
         // pubSignals order (matches the circuit Public main): [nullifierHash, root, recipient]
         uint256[3] memory pubSignals;
         pubSignals[0] = nullifierHash;
@@ -174,8 +183,9 @@ contract PrivacyPoolBaseForkTest is Test {
         pool.withdraw(a, b, c, pubSignals);
 
         // --- STEP 9: assertions ---------------------------------------------
-        assertEq(FRESH_RECIPIENT.balance - recip_bal_pre, DENOMINATION,
-                 "fresh recipient didn't get the full denomination");
+        assertEq(
+            FRESH_RECIPIENT.balance - recip_bal_pre, DENOMINATION, "fresh recipient didn't get the full denomination"
+        );
         assertTrue(pool.nullifierHashes(nullifierHash), "nullifier hash not marked spent");
         // Root unchanged after withdraw (single deposit only).
         assertEq(pool.currentRoot(), root_post, "currentRoot changed after withdraw");
@@ -187,8 +197,11 @@ contract PrivacyPoolBaseForkTest is Test {
 
     function _witnessJson(uint256 commitment, uint256 root) internal pure returns (string memory) {
         bytes memory buf;
-        buf = _str(bytes("{\"root\":\"")); buf = _strUintHex(buf, root); buf = _str(bytes("\",\"recipient\":\""));
-        buf = _strUintHex160(buf, uint256(uint160(FRESH_RECIPIENT))); buf = _str(bytes("\",\"nullifier\":\""));
+        buf = _str(bytes("{\"root\":\""));
+        buf = _strUintHex(buf, root);
+        buf = _str(bytes("\",\"recipient\":\""));
+        buf = _strUintHex160(buf, uint256(uint160(FRESH_RECIPIENT)));
+        buf = _str(bytes("\",\"nullifier\":\""));
         buf = _strUintHex(buf, NULLIFIER);
         buf = _str(bytes("\",\"secret\":\""));
         buf = _strUintHex(buf, SECRET);
@@ -199,7 +212,7 @@ contract PrivacyPoolBaseForkTest is Test {
         uint256[20] memory elems;
         elems[0] = PoseidonT3.poseidon(0, 0);
         for (uint256 l = 1; l < 20; l++) {
-            elems[l] = PoseidonT3.poseidon(elems[l-1], elems[l-1]);
+            elems[l] = PoseidonT3.poseidon(elems[l - 1], elems[l - 1]);
         }
         for (uint256 l = 0; l < 20; l++) {
             buf = _strUintDec(buf, elems[l]);
@@ -217,7 +230,9 @@ contract PrivacyPoolBaseForkTest is Test {
 
     function zerosArray(uint256 n) internal pure returns (uint256[] memory z) {
         z = new uint256[](n);
-        for (uint256 i = 0; i < n; i++) z[i] = 0;
+        for (uint256 i = 0; i < n; i++) {
+            z[i] = 0;
+        }
     }
 
     function parseHexField(string memory s, string memory section, uint256 idx) internal pure returns (uint256) {
@@ -231,9 +246,12 @@ contract PrivacyPoolBaseForkTest is Test {
         uint256 fieldStart = type(uint256).max;
         for (uint256 i = start + needle.length; i < b.length; i++) {
             bytes1 c = b[i];
-            if (c == "[") depth++;
-            else if (c == "]") { if (depth == 0) break; depth--; }
-            else if (c == "," && depth == 0) {
+            if (c == "[") {
+                depth++;
+            } else if (c == "]") {
+                if (depth == 0) break;
+                depth--;
+            } else if (c == "," && depth == 0) {
                 if (fieldCount == idx) {
                     // Field ends here; the start of this field is the previous comma+1 or section start+1
                     // We re-scan to find the start.
@@ -251,8 +269,9 @@ contract PrivacyPoolBaseForkTest is Test {
         depth = 0;
         for (uint256 i = start + needle.length; i < b.length; i++) {
             bytes1 c = b[i];
-            if (c == "[") depth++;
-            else if (c == "]") {
+            if (c == "[") {
+                depth++;
+            } else if (c == "]") {
                 if (depth == 0) {
                     if (fieldCount == idx) fieldStart = i;
                     break;
@@ -275,19 +294,33 @@ contract PrivacyPoolBaseForkTest is Test {
         depth = 0;
         while (end < b.length) {
             bytes1 c = b[end];
-            if (c == "[") depth++;
-            else if (c == "]") { if (depth == 0) break; depth--; }
-            else if (c == "," && depth == 0) break;
+            if (c == "[") {
+                depth++;
+            } else if (c == "]") {
+                if (depth == 0) break;
+                depth--;
+            } else if (c == "," && depth == 0) {
+                break;
+            }
             end++;
         }
         // Strip whitespace + quotes
         uint256 a = fieldStart;
         uint256 zend = end;
         while (a < zend && (b[a] == " " || b[a] == "\"" || b[a] == "\n" || b[a] == "\r" || b[a] == "\t")) a++;
-        while (zend > a && (b[zend-1] == " " || b[zend-1] == "\"" || b[zend-1] == "\n" || b[zend-1] == "\r" || b[zend-1] == "\t")) zend--;
+        while (
+            zend > a
+                && (b[zend - 1] == " "
+                    || b[zend - 1] == "\""
+                    || b[zend - 1] == "\n"
+                    || b[zend - 1] == "\r"
+                    || b[zend - 1] == "\t")
+        ) zend--;
         // Convert rawBuf to uint (snarkjs emits 0x-prefixed decimal strings OR plain numbers).
         bytes memory fieldBytes = new bytes(zend - a);
-        for (uint256 i = 0; i < zend - a; i++) fieldBytes[i] = b[a + i];
+        for (uint256 i = 0; i < zend - a; i++) {
+            fieldBytes[i] = b[a + i];
+        }
         return _parseUintFromString(fieldBytes);
     }
 
@@ -295,26 +328,42 @@ contract PrivacyPoolBaseForkTest is Test {
     function _str(bytes memory b1) internal pure returns (bytes memory b2) {
         b2 = b1;
     }
+
     function _strUintHex(bytes memory b, uint256 v) internal pure returns (bytes memory o) {
         bytes memory rawBuf = new bytes(64);
-        for (uint256 i = 0; i < 64; i++) rawBuf[63 - i] = bytes1(uint8(48 + ((v >> (i * 4)) & 0xF) % 10));
+        for (uint256 i = 0; i < 64; i++) {
+            rawBuf[63 - i] = bytes1(uint8(48 + ((v >> (i * 4)) & 0xF) % 10));
+        }
         o = abi.encodePacked(b, rawBuf);
     }
+
     function _strUintHex160(bytes memory b, uint256 v) internal pure returns (bytes memory o) {
         bytes memory rawBuf = new bytes(40);
-        for (uint256 i = 0; i < 40; i++) rawBuf[39 - i] = bytes1(uint8(48 + ((v >> (i * 4)) & 0xF) % 10));
+        for (uint256 i = 0; i < 40; i++) {
+            rawBuf[39 - i] = bytes1(uint8(48 + ((v >> (i * 4)) & 0xF) % 10));
+        }
         o = abi.encodePacked(b, rawBuf);
     }
+
     function _strUintDec(bytes memory b, uint256 v) internal pure returns (bytes memory o) {
         // Convert uint -> decimal ASCII string.
         bytes memory tmp = new bytes(20);
         uint256 n = 0;
-        if (v == 0) { tmp[0] = bytes1(uint8(48)); n = 1; }
-        while (v > 0) { tmp[n++] = bytes1(uint8(48 + (v % 10))); v /= 10; }
+        if (v == 0) {
+            tmp[0] = bytes1(uint8(48));
+            n = 1;
+        }
+        while (v > 0) {
+            tmp[n++] = bytes1(uint8(48 + (v % 10)));
+            v /= 10;
+        }
         bytes memory s = new bytes(n);
-        for (uint256 i = 0; i < n; i++) s[i] = tmp[n - 1 - i];
+        for (uint256 i = 0; i < n; i++) {
+            s[i] = tmp[n - 1 - i];
+        }
         o = abi.encodePacked(b, s);
     }
+
     function _parseUintFromString(bytes memory s) internal pure returns (uint256 v) {
         bool isHex = false;
         if (s.length >= 2 && s[0] == "0" && (s[1] == "x" || s[1] == "X")) isHex = true;
@@ -332,22 +381,29 @@ contract PrivacyPoolBaseForkTest is Test {
             }
         }
     }
+
     function _indexOf(bytes memory hay, bytes memory needle, uint256 fromIndex) internal pure returns (uint256) {
         if (needle.length == 0) return fromIndex;
         if (hay.length < needle.length) return type(uint256).max;
         for (uint256 i = fromIndex; i + needle.length <= hay.length; i++) {
             bool matches = true;
             for (uint256 j = 0; j < needle.length; j++) {
-                if (hay[i + j] != needle[j]) { matches = false; break; }
+                if (hay[i + j] != needle[j]) {
+                    matches = false;
+                    break;
+                }
             }
             if (matches) return i;
         }
         return type(uint256).max;
     }
+
     function substr(string memory s, uint256 b, uint256 e) internal pure returns (string memory) {
         bytes memory sb = bytes(s);
         bytes memory o = new bytes(e - b);
-        for (uint256 i = 0; i < e - b; i++) o[i] = sb[b + i];
+        for (uint256 i = 0; i < e - b; i++) {
+            o[i] = sb[b + i];
+        }
         return string(o);
     }
 }
