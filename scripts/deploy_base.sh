@@ -118,27 +118,43 @@ log "Broadcasting Deploy.s.sol to ${NETWORK}..."
 # The script writes deployed_base.json inside contracts/ (fs_permissions).
 [ -f "${MANIFEST}" ] || die "deployed_base.json was not written — check forge script output above."
 
-# ─── Provenance enrichment ────────────────────────────────────────────────────
-# Add deployedAt (UTC ISO-8601) + commit (git sha) to the manifest. These
-# are provenance fields the backend logs at startup but does not use for routing.
+# ─── Provenance enrichment + Forge quirk merge ─────────────────────────────────
+# Forge's `vm.writeJson` quirk on real broadcasts persists only
+# `chainId` (the on-chain addresses console-print but never make it
+# to the JSON). The P3.4 hand-merge worked around it once. The new
+# scripts/merge_deploy_manifest.py reads forge's broadcast/.../run-latest.json
+# and merges the actual addresses + provenance into the manifest.
+# Hard-fails if any P3 contract address is missing — we'd rather ship
+# nothing than ship a partial manifest.
 GIT_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo 'unknown')"
+BROADCAST_DIR="${CONTRACTS_DIR}/broadcast/Deploy.s.sol"
 
-python3 - <<EOF
-import json, datetime, sys
-path = "${MANIFEST}"
-with open(path, "r") as f:
-    doc = json.load(f)
-ts = datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z"
-for chain in doc.values():
-    if isinstance(chain, dict):
-        chain.setdefault("deployedAt", "${ts:-}")
-        chain.setdefault("commit", "${GIT_COMMIT}")
-with open(path, "w") as f:
-    json.dump(doc, f, indent=2)
-    f.write("\n")
-EOF
+# Convert paths for whatever Python the host has available. This handles
+# git-bash on Windows (where '${MANIFEST}' is '/c/Users/...' which native
+# python can't read) AND native Windows python (where '${MANIFEST}' is
+# 'C:\\Users\\...'). The merge script handles both internally too but we
+# normalise to a python-friendly form upfront.
+if command -v cygpath >/dev/null 2>&1; then
+    MANIFEST_FOR_PY="$(cygpath -m "${MANIFEST}")"
+    REPO_ROOT_FOR_PY="$(cygpath -m "${REPO_ROOT}")"
+    BROADCAST_DIR_FOR_PY="$(cygpath -m "${BROADCAST_DIR}")"
+else
+    MANIFEST_FOR_PY="${MANIFEST}"
+    REPO_ROOT_FOR_PY="${REPO_ROOT}"
+    BROADCAST_DIR_FOR_PY="${BROADCAST_DIR}"
+fi
 
-log "Provenance added: deployedAt + commit (${GIT_COMMIT:0:12})"
+if ! python3 "${REPO_ROOT}/scripts/merge_deploy_manifest.py" \
+        "${REPO_ROOT_FOR_PY}" \
+        "${BROADCAST_DIR_FOR_PY}" \
+        "${MANIFEST_FOR_PY}" \
+        "${CHAIN_ID}" >&2; then
+    die "Post-broadcast merge failed (see merge_deploy_manifest.py output). "\
+        "Without this merge the manifest would be missing the deployed "\
+        "contract addresses. Halting before any Basescan verification."
+fi
+
+log "Manifest enriched: deployedBase.json now has the real on-chain addresses + provenance (commit ${GIT_COMMIT:0:12})"
 log "Manifest written: ${MANIFEST}"
 
 # ─── Optional Basescan verification ───────────────────────────────────────────
