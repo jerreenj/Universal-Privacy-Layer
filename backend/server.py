@@ -1701,7 +1701,7 @@ async def get_zkp_proof(proof_id: str):
 # The heavy lifting (Merkle path generation for withdraw) lives in zk_merkle.py
 # and will be wired in P3.5-B.
 
-from backend.zk_merkle import IncrementalMerkleTree, poseidon2, poseidon1
+from backend.zk_merkle import IncrementalMerkleTree, poseidon2, poseidon1, compute_commitment, compute_nullifier_hash
 
 PRIVACY_POOL_ABI = [
     {"inputs":[{"name":"_denomination","type":"uint256"},{"name":"_verifier","type":"address"}],"name":"constructor","type":"constructor"},
@@ -1759,6 +1759,34 @@ async def zk_pool_state():
     except Exception as e:
         logger.error(f"zk-pool/state error: {e}")
         return {"live": False, "error": str(e)}
+
+
+class ZKPoolDepositRequest(BaseModel):
+    commitment: str          # hex string of the Poseidon(nullifier, secret)
+    tx_hash: Optional[str] = None
+    leaf_index: Optional[int] = None
+
+
+@api_router.post("/zk-pool/deposit")
+async def zk_pool_deposit(req: ZKPoolDepositRequest):
+    """
+    Record a deposit into the PrivacyPool.
+    The frontend (or relayer) calls this after a successful on-chain deposit tx.
+    The backend stores the commitment so it can later serve Merkle paths.
+    """
+    try:
+        doc = {
+            "commitment": req.commitment,
+            "leaf_index": req.leaf_index,
+            "tx_hash": req.tx_hash,
+            "created_at": datetime.now(timezone.utc),
+        }
+        await db.pool_deposits.insert_one(doc)
+        return {"status": "recorded", "commitment": req.commitment}
+    except Exception as e:
+        logger.error(f"zk-pool/deposit error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to record deposit")
+
 
 # --- 2. PRIVATE RELAYER ON-CHAIN ---
 # ABI surface is reconciled 1:1 with PrivacyRelayer.sol (P1.1). The relayer is a
