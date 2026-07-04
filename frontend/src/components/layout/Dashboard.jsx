@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense } from "react";
+import { useEffect, useState, lazy } from "react";
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
@@ -7,6 +7,7 @@ import {
 import { CHAINS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { BackButton } from "@/components/common/BackButton";
+import { SafeSuspense } from "@/components/common/ChunkErrorBoundary";
 import { Navbar } from "@/components/layout/Navbar";
 import { Landing } from "@/components/layout/Landing";
 
@@ -41,37 +42,37 @@ const SolStealthSend            = lazy(() => import("@/components/features/SolSt
 const SolScanner                = lazy(() => import("@/components/features/SolScanner"));
 const SolReceipts               = lazy(() => import("@/components/features/SolReceipts"));
 
-/* Page metadata – references the lazy Component *type*, not a rendered element. */
+/* Page metadata – references the lazy Component *type*, not a rendered element. The `key` field is passed to ChunkErrorBoundary so it can show what failed. */
 const pages = {
-  receive:     { title: "Private Receive",             Component: StealthContent },
-  send:        { title: "Private Send",                Component: SendContent },
-  swap:        { title: "Private Swap",                Component: SwapContent },
-  uniswap:     { title: "Uniswap V3 Private Swap",     Component: UniswapPrivateSwap },
-  hyperliquid: { title: "Hyperliquid Private Trading", Component: HyperliquidPrivateTrading },
-  polymarket:  { title: "Polymarket Private Betting",  Component: PolymarketPrivateBetting },
-  balance:     { title: "Hidden Balance",              Component: HiddenBalanceDashboard },
-  history:     { title: "Transaction History",         Component: TransactionHistory },
-  wallet:      { title: "Dual Seed Setup",             Component: DualSeedSetup },
-  nft:         { title: "NFT Privacy",                 Component: NFTPrivacy },
-  approval:    { title: "Token Approval Privacy",      Component: TokenApprovalPrivacy },
-  contract:    { title: "Contract Privacy",            Component: ContractPrivacy },
-  chains:      { title: "Chain Status",                Component: ChainsStatus },
-  zkp:         { title: "ZKP Proofs",                  Component: ZKPProofs },
-  relayer:     { title: "On-Chain Relayer",            Component: OnChainRelayer },
-  split:       { title: "Cross-Chain Split",           Component: CrossChainSplit },
-  messaging:   { title: "Encrypted Messaging",         Component: EncryptedMessaging },
-  multisig:    { title: "Multisig Privacy",            Component: MultisigPrivacy },
-  developer:   { title: "Developer API",               Component: DeveloperAPI },
-  analyzer:    { title: "Wallet Privacy Analyzer",     Component: WalletPrivacyAnalyzer },
-  receipts:    { title: "Encrypted Receipts",          Component: EncryptedReceipts },
-  addressbook: { title: "Privacy Address Book",        Component: PrivacyAddressBook },
-  zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments },
-  suiSend:     { title: "Sui Stealth Send",            Component: SuiStealthSend },
-  suiScan:     { title: "Sui Announcement Scanner",     Component: SuiScanner },
-  suiReceipts: { title: "Sui Encrypted Receipts",       Component: SuiReceipts },
-  solSend:     { title: "Solana Stealth Send",          Component: SolStealthSend },
-  solScan:     { title: "Solana Announcement Scanner",  Component: SolScanner },
-  solReceipts: { title: "Solana Encrypted Receipts",    Component: SolReceipts },
+  receive:     { title: "Private Receive",             Component: StealthContent,          key: "receive" },
+  send:        { title: "Private Send",                Component: SendContent,             key: "send" },
+  swap:        { title: "Private Swap",                Component: SwapContent,             key: "swap" },
+  uniswap:     { title: "Uniswap V3 Private Swap",     Component: UniswapPrivateSwap,      key: "uniswap" },
+  hyperliquid: { title: "Hyperliquid Private Trading", Component: HyperliquidPrivateTrading, key: "hyperliquid" },
+  polymarket:  { title: "Polymarket Private Betting",  Component: PolymarketPrivateBetting, key: "polymarket" },
+  balance:     { title: "Hidden Balance",              Component: HiddenBalanceDashboard,  key: "balance" },
+  history:     { title: "Transaction History",         Component: TransactionHistory,      key: "history" },
+  wallet:      { title: "Dual Seed Setup",             Component: DualSeedSetup,           key: "wallet" },
+  nft:         { title: "NFT Privacy",                 Component: NFTPrivacy,              key: "nft" },
+  approval:    { title: "Token Approval Privacy",      Component: TokenApprovalPrivacy,    key: "approval" },
+  contract:    { title: "Contract Privacy",            Component: ContractPrivacy,         key: "contract" },
+  chains:      { title: "Chain Status",                Component: ChainsStatus,            key: "chains" },
+  zkp:         { title: "ZKP Proofs",                  Component: ZKPProofs,               key: "zkp" },
+  relayer:     { title: "On-Chain Relayer",            Component: OnChainRelayer,          key: "relayer" },
+  split:       { title: "Cross-Chain Split",           Component: CrossChainSplit,         key: "split" },
+  messaging:   { title: "Encrypted Messaging",         Component: EncryptedMessaging,      key: "messaging" },
+  multisig:    { title: "Multisig Privacy",            Component: MultisigPrivacy,         key: "multisig" },
+  developer:   { title: "Developer API",               Component: DeveloperAPI,            key: "developer" },
+  analyzer:    { title: "Wallet Privacy Analyzer",     Component: WalletPrivacyAnalyzer,   key: "analyzer" },
+  receipts:    { title: "Encrypted Receipts",          Component: EncryptedReceipts,       key: "receipts" },
+  addressbook: { title: "Privacy Address Book",        Component: PrivacyAddressBook,      key: "addressbook" },
+  zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments,           key: "zkcommit" },
+  suiSend:     { title: "Sui Stealth Send",            Component: SuiStealthSend,          key: "sui-stealth-send" },
+  suiScan:     { title: "Sui Announcement Scanner",    Component: SuiScanner,              key: "sui-scanner" },
+  suiReceipts: { title: "Sui Encrypted Receipts",      Component: SuiReceipts,             key: "sui-encrypted-receipts" },
+  solSend:     { title: "Solana Stealth Send",         Component: SolStealthSend,          key: "sol-stealth-send" },
+  solScan:     { title: "Solana Announcement Scanner", Component: SolScanner,              key: "sol-scanner" },
+  solReceipts: { title: "Solana Encrypted Receipts",   Component: SolReceipts,             key: "sol-encrypted-receipts" },
 };
 
 function LoadingFallback() {
@@ -120,16 +121,16 @@ export function Dashboard() {
   };
 
   if (page !== "home" && pages[page]) {
-    const { title, Component } = pages[page];
+    const { title, Component, key: featureKey } = pages[page];
     return (
       <div className="min-h-screen bg-black pt-16 md:pt-20 px-4 md:px-6">
         <Navbar />
         <div className="max-w-2xl mx-auto py-6 md:py-10">
           <BackButton onClick={() => setPage("home")} />
           <h1 className="text-2xl md:text-3xl font-bold mb-6">{title}</h1>
-          <Suspense fallback={<LoadingFallback />}>
+          <SafeSuspense featureName={featureKey} fallback={<LoadingFallback />}>
             <Component />
-          </Suspense>
+          </SafeSuspense>
         </div>
       </div>
     );
