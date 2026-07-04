@@ -93,6 +93,27 @@ export function ZKCommitments() {
       setTxStatus("Waiting for confirmation…");
       const receipt = await tx.wait();
 
+      // Extract the leaf_index from the Deposit(uint256 commitment,
+      // uint32 leafIndex, uint256 timestamp) event so the backend can
+      // serve Merkle paths WITHOUT scanning the full DB. The event is
+      // emitted by PrivacyPool._insert, so leafIndex is authoritative.
+      // If parse fails (rare ABI mismatch / re-org) we fall back to null
+      // — the backend then walks the tree by commitment, which still works.
+      let leafIndex = null;
+      try {
+        for (const log of receipt?.logs ?? []) {
+          try {
+            const parsed = pool.interface.parseLog(log);
+            if (parsed?.name === "Deposit") {
+              leafIndex = Number(parsed.args.leafIndex);
+              break;
+            }
+          } catch { /* not our event — skip */ }
+        }
+      } catch (e) {
+        console.warn("ZKCommitments: leaf_index parse failed", e);
+      }
+
       // 4. Build the "note" the user MUST save to withdraw later.
       const note = {
         chain: "base",
@@ -103,7 +124,7 @@ export function ZKCommitments() {
         commitment: commitmentHex,
         nullifierHash,
         tx_hash: receipt?.hash ?? tx.hash,
-        leaf_index: null, // filled in from /api/zk-pool/state on next refresh
+        leaf_index: leafIndex, // now populated from on-chain event
         note_id: "upl-zk-" + crypto.randomUUID().slice(0, 8),
         saved_at: new Date().toISOString(),
       };
