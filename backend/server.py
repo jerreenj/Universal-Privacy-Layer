@@ -1693,18 +1693,29 @@ async def get_zkp_proof(proof_id: str):
 
 # ── P3.5 — Real ZK Privacy Pool (PrivacyPool + Groth16Verifier) ───────────────
 # Public endpoint (no auth) — mirrors /api/deployments and /api/sui/status.
-# Returns the on-chain state of the PrivacyPool so the frontend can:
-#   - Show current root / denomination
-#   - Fetch a recent root for withdrawal proofs
-#   - Know the next leaf index (for deposit tracking)
 #
-# The heavy lifting (Merkle path generation for withdraw) lives in zk_merkle.py
-# and will be wired in P3.5-B.
+# IMPORTANT: zk_merkle import is LAZY (inside helpers) so any failure inside it
+# (missing circomlib lockfile, etc.) cannot crash module-load — the Docker
+# container starts cleanly even if poseidon constants are unavailable.
 
-from backend.zk_merkle import IncrementalMerkleTree, poseidon2, poseidon1, compute_commitment, compute_nullifier_hash
+def _try_import_zk_merkle():
+    """Lazy import so a circomlib/Poseidon failure never prevents server start."""
+    try:
+        from backend.zk_merkle import (
+            IncrementalMerkleTree, poseidon2, poseidon1,
+            compute_commitment, compute_nullifier_hash,
+        )
+        return IncrementalMerkleTree, poseidon2, poseidon1, compute_commitment, compute_nullifier_hash
+    except Exception as e:
+        logger.warning(f"zk_merkle import failed (P3.5 endpoints disabled): {e}")
+        return None, None, None, None, None
 
-async def _rebuild_tree_from_db() -> IncrementalMerkleTree:
-    """Rebuild the incremental Poseidon Merkle tree from all stored deposits."""
+
+async def _rebuild_tree_from_db() -> "IncrementalMerkleTree | None":
+    """Rebuild the incremental Poseidon Merkle tree from stored deposits."""
+    IncrementalMerkleTree, *_ = _try_import_zk_merkle()
+    if IncrementalMerkleTree is None:
+        return None
     tree = IncrementalMerkleTree()
     cursor = db.pool_deposits.find({}, {"commitment": 1}).sort("created_at", 1)
     async for doc in cursor:
@@ -1716,21 +1727,19 @@ async def _rebuild_tree_from_db() -> IncrementalMerkleTree:
     return tree
 
 async def generate_withdraw_inputs(nullifier: int, secret: int) -> dict:
-    """
-    Given nullifier + secret, compute commitment, find its position in the
-    current tree (from DB deposits), and return the exact Merkle path the
-    withdraw.circom circuit expects.
-    """
+    """Compute commitment + nullifier + Merkle path from the stored tree."""
+    (
+        _IMT, _p2, _p1, compute_commitment, compute_nullifier_hash,
+    ) = _try_import_zk_merkle()
+    if compute_commitment is None:
+        raise RuntimeError("zk_merkle module unavailable")
+
     commitment = compute_commitment(nullifier, secret)
     nullifier_hash = compute_nullifier_hash(nullifier)
 
-    tree = await _rebuild_tree_from_db()
-
-    # We need the path at the time the leaf was inserted.
-    # For simplicity in P3.5 we rebuild the full tree and then
-    # re-insert the target leaf to capture its path.
-    # A production version would store the path at deposit time.
-    temp_tree = IncrementalMerkleTree()
+    # Replay stored deposits to find this commitment's index + path.
+    from backend.zk_merkle import IncrementalMerkleTree as _IMT2
+    temp_tree = _IMT2()
     path = None
     index = None
     cursor = db.pool_deposits.find({}, {"commitment": 1}).sort("created_at", 1)
@@ -1828,8 +1837,14 @@ async def zk_pool_state():
             "merkleDepth": 20,
         }
     except Exception as e:
-        logger.error(f"zk-pool/state error: {e}")
-        return {"live": False, "error": str(e)}
+        logger.warning(f"zk-pool/state not yet reachable (P3.4 pending broadcast): {e}")
+        return {
+            "live": False,
+            "chain": "base",
+            "ready": True,
+            "message": "PrivacyPool not yet deployed on Base (P3.4 pending broadcast)",
+            "error": str(e),
+        }
 
 
 class ZKPoolDepositRequest(BaseModel):
