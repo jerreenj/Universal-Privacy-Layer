@@ -1729,34 +1729,38 @@ async def _rebuild_tree_from_db() -> "IncrementalMerkleTree | None":
 async def generate_withdraw_inputs(nullifier: int, secret: int) -> dict:
     """Compute commitment + nullifier + Merkle path from the stored tree."""
     (
-        _IMT, _p2, _p1, compute_commitment, compute_nullifier_hash,
+        IncrementalMerkleTree, _p2, _p1, compute_commitment, compute_nullifier_hash,
     ) = _try_import_zk_merkle()
-    if compute_commitment is None:
+    if compute_commitment is None or IncrementalMerkleTree is None:
         raise RuntimeError("zk_merkle module unavailable")
 
     commitment = compute_commitment(nullifier, secret)
     nullifier_hash = compute_nullifier_hash(nullifier)
 
-    # Replay stored deposits to find this commitment's index + path.
-    from backend.zk_merkle import IncrementalMerkleTree as _IMT2
-    temp_tree = _IMT2()
+    # Replay stored deposits in chronological order, building the tree
+    # as we go, until we hit the target commitment. The path captured at
+    # that point is exactly what `withdraw.circom` expects.
+    temp_tree = IncrementalMerkleTree()
     path = None
     index = None
     cursor = db.pool_deposits.find({}, {"commitment": 1}).sort("created_at", 1)
-    async for doc in cursor:
-        try:
-            leaf = int(doc["commitment"], 16)
-            if leaf == commitment:
-                index, elements, indices = temp_tree.get_path(leaf)
-                path = {
-                    "leafIndex": index,
-                    "merklePathElements": [str(x) for x in elements],
-                    "merklePathIndices": [str(x) for x in indices],
-                }
-                break
-            temp_tree.insert(leaf)
-        except Exception:
-            continue
+    try:
+        async for doc in cursor:
+            try:
+                leaf = int(doc["commitment"], 16)
+                if leaf == commitment:
+                    index, elements, indices = temp_tree.get_path(leaf)
+                    path = {
+                        "leafIndex": index,
+                        "merklePathElements": [str(x) for x in elements],
+                        "merklePathIndices": [str(x) for x in indices],
+                    }
+                    break
+                temp_tree.insert(leaf)
+            except Exception:
+                continue
+    except Exception as e:
+        raise RuntimeError(f"deposit cursor read failed: {e}")
 
     if path is None:
         raise ValueError("Commitment not found in stored deposits")
