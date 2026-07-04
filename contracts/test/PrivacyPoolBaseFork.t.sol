@@ -58,9 +58,17 @@ contract PrivacyPoolBaseForkTest is Test {
     string constant WITNESS_OUT = "test/zk-fixtures/withdraw_proof.json";
 
     function setUp() public {
-        // 1. Fork Base. After this every top-level call to a known address
-        //    routes through a forked EVM that mirrors the live chain.
-        vm.createSelectFork(RPC_URL);
+        // The fork test requires a live RPC. CI runs `forge test` with no
+        // --fork-url; if we forked unconditionally, op-revm would attempt to
+        // read the LATEST Base block which uses the Isthmus L1 format this
+        // bundled op-revm can't decode. Opt in explicitly via env so that
+        // default-CI doesn't crash:
+        //   FORK_RPC_URL=https://mainnet.base.org forge test --match-path ...
+        string memory forkUrl = vm.envOr("FORK_RPC_URL", string(""));
+        if (bytes(forkUrl).length == 0) {
+            vm.skip(true);
+        }
+        vm.createSelectFork(forkUrl);
 
         // Wire PrivacyPool + Verifier to the LIVE mainnet addresses.
         pool = PrivacyPool(payable(PRIVACY_POOL));
