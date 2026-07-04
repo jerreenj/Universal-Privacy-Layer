@@ -7,7 +7,7 @@ import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import {
   computeCommitment,
-  nullifierHash as computeNullifierHash,
+  computeNullifierHash,
   fetchPoolState,
   generateWithdrawProof,
 } from "@/lib/zk-browser";
