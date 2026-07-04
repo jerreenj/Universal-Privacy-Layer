@@ -1691,6 +1691,75 @@ async def get_zkp_proof(proof_id: str):
         logger.error(f"ZKP proof fetch error: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
 
+# ── P3.5 — Real ZK Privacy Pool (PrivacyPool + Groth16Verifier) ───────────────
+# Public endpoint (no auth) — mirrors /api/deployments and /api/sui/status.
+# Returns the on-chain state of the PrivacyPool so the frontend can:
+#   - Show current root / denomination
+#   - Fetch a recent root for withdrawal proofs
+#   - Know the next leaf index (for deposit tracking)
+#
+# The heavy lifting (Merkle path generation for withdraw) lives in zk_merkle.py
+# and will be wired in P3.5-B.
+
+from backend.zk_merkle import IncrementalMerkleTree, poseidon2, poseidon1
+
+PRIVACY_POOL_ABI = [
+    {"inputs":[{"name":"_denomination","type":"uint256"},{"name":"_verifier","type":"address"}],"name":"constructor","type":"constructor"},
+    {"inputs":[{"name":"commitment","type":"uint256"}],"name":"deposit","outputs":[],"stateMutability":"payable","type":"function"},
+    {"inputs":[{"name":"nullifierHash","type":"uint256"},{"name":"root","type":"uint256"},{"name":"recipient","type":"address"},{"name":"proof_a","type":"uint256[2]"},{"name":"proof_b","type":"uint256[2][2]"},{"name":"proof_c","type":"uint256[2]"}],"name":"withdraw","outputs":[],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[],"name":"denomination","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"verifier","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"nextLeafIndex","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"currentRoot","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"root","type":"uint256"}],"name":"isKnownRoot","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"nullifierHash","type":"uint256"}],"name":"isSpent","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+]
+
+@api_router.get("/zk-pool/state")
+async def zk_pool_state():
+    """
+    Public state of the PrivacyPool on Base.
+    Returns denomination, current root, recent roots (for proof validity window),
+    next leaf index, and whether the pool is live (has a deployed address).
+    """
+    try:
+        deployed = _load_deployed_addresses()
+        pool_addr = deployed.get("base", {}).get("privacy_pool")
+        verifier_addr = deployed.get("base", {}).get("privacy_verifier")
+
+        if not pool_addr or pool_addr == "0x0000000000000000000000000000000000000000":
+            return {
+                "live": False,
+                "chain": "base",
+                "message": "PrivacyPool not yet deployed on Base (P3.4 pending broadcast)"
+            }
+
+        w3 = Web3(Web3.HTTPProvider(os.environ.get("BASE_RPC_URL", "https://mainnet.base.org")))
+        pool = w3.eth.contract(address=pool_addr, abi=PRIVACY_POOL_ABI)
+
+        denomination = pool.functions.denomination().call()
+        current_root = pool.functions.currentRoot().call()
+        next_leaf = pool.functions.nextLeafIndex().call()
+
+        # Return the last ROOT_HISTORY_SIZE roots (PrivacyPool keeps 100)
+        # For the first commit we return only the current root; P3.5-B will
+        # add the ring-buffer read when we implement deposit indexing.
+        return {
+            "live": True,
+            "chain": "base",
+            "chainId": 8453,
+            "privacy_pool": pool_addr,
+            "verifier": verifier_addr,
+            "denomination": str(denomination),
+            "currentRoot": str(current_root),
+            "nextLeafIndex": next_leaf,
+            "rootHistorySize": 100,
+            "merkleDepth": 20,
+        }
+    except Exception as e:
+        logger.error(f"zk-pool/state error: {e}")
+        return {"live": False, "error": str(e)}
+
 # --- 2. PRIVATE RELAYER ON-CHAIN ---
 # ABI surface is reconciled 1:1 with PrivacyRelayer.sol (P1.1). The relayer is a
 # GAS-ONLY META-TX FORWARDER: `relay()` is guarded by the `onlyRelayer` modifier,
