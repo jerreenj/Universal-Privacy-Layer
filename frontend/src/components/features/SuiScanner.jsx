@@ -1,102 +1,65 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
-import { ScanLine, Loader2, RefreshCw } from "lucide-react";
-import { toast } from "sonner";
+import { ScanLine, Loader2 } from "lucide-react";
 import { API } from "@/config/chains";
 
-/**
- * SuiScanner — a recipient-side scanner for Sui stealth-address announcements.
- *
- * The Sui analog of the EVM frontend scanner. Reads `/api/sui/announcements`
- * (the live id range + count from the shared Registry) so a recipient can see
- * how many announcements exist and fetch their ids. The recipient's wallet
- * filters by view tag client-side (EIP-5564): for each announcement whose view
- * tag matches a derived candidate, the wallet attempts to derive the stealth
- * private key and checks whether the spend commitment matches — a match means
- * the announcement is for them.
- *
- * Per-record reads (ephemeral_pub_key / view_tag / stealth_hash) are fetched
- * via the event stream or per-id dynamic-field reads; this surface shows the
- * live id range + count, which is what the scanner polls to detect new
- * announcements addressed to the recipient.
- */
+// Announcement Scanner — Deployed On panel.
+//
+// Per the design rule, the chain name is shown ONLY on the Dashboard
+// home (the chain-select pill row). Inside this feature we render
+// ONLY the live "Deployed on" data block — no chain identity chrome.
+// The full announcement-list scanner with view-tag filtering ships
+// behind the feature expansion gate in a later phase.
 export function SuiScanner() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [limit, setLimit] = useState("50");
+  const [loading, setLoading] = useState(true);
+  const [sui, setSui] = useState(null);
+  const [tick, setTick] = useState(0);
 
-  const scan = async () => {
-    setLoading(true);
-    try {
-      const res = await axios.get(`${API}/sui/announcements`, {
-        params: { limit: parseInt(limit) || 50 },
-      });
-      setData(res.data);
-    } catch (e) {
-      toast.error(e.response?.data?.detail?.slice(0, 100) || "Scan failed");
-    }
-    setLoading(false);
-  };
-
-  useEffect(() => { scan(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const { data } = await axios.get(`${API}/sui/status`);
+        if (!cancelled) setSui(data || null);
+      } catch {
+        if (!cancelled) setSui(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tick]);
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-white/50">
-        Scan the Sui mainnet stealth-address registry for announcements. Your
-        wallet filters by view tag (EIP-5564) and attempts to derive the stealth
-        key for each match — a derived key whose spend commitment matches means
-        the announcement is for you.
-      </p>
-
-      <div className="flex gap-2 items-end">
-        <div className="flex-1">
-          <label className="block text-xs text-gray-500 uppercase mb-2">Limit</label>
-          <input type="number" min="1" max="100" value={limit} onChange={e => setLimit(e.target.value)}
-            className="w-full bg-white/5 border border-white/20 p-3 font-mono text-sm outline-none focus:border-white" />
+    <div className="space-y-4" data-testid="sui-scanner">
+      <div className="bg-white/5 border border-white/10 p-4 text-sm">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-white/60 uppercase tracking-wider text-xs">Deployed on</span>
+          <button
+            type="button"
+            onClick={() => setTick((t) => t + 1)}
+            className="text-xs text-white/50 hover:text-white underline"
+            disabled={loading}
+          >
+            refresh
+          </button>
         </div>
-        <button onClick={scan} disabled={loading}
-          className="px-4 py-3 border border-white/20 hover:bg-white/10 text-sm flex items-center gap-2">
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          Re-scan
-        </button>
-      </div>
-
-      {data && (
-        <div className="space-y-3">
-          <div className="bg-white/5 border border-white/10 p-3 grid grid-cols-3 gap-2 text-center">
-            <div>
-              <div className="text-[10px] text-white/40 uppercase">Total</div>
-              <div className="font-mono text-sm text-cyan-400">{data.next_id}</div>
-            </div>
-            <div>
-              <div className="text-[10px] text-white/40 uppercase">Showing</div>
-              <div className="font-mono text-sm text-cyan-400">{data.count}</div>
-            </div>
-            <div>
-              <div className="text-[10px] text-white/40 uppercase">From id</div>
-              <div className="font-mono text-sm text-cyan-400">{data.after_id}</div>
-            </div>
+        {loading ? (
+          <div className="text-white/60 flex items-center gap-2">
+            <Loader2 className="w-3 h-3 animate-spin" /> loading...
           </div>
-
-          {data.announcements.length === 0 ? (
-            <div className="text-center text-white/40 text-sm py-8 flex flex-col items-center gap-2">
-              <ScanLine className="w-8 h-8 opacity-40" />
-              No announcements in this range
-            </div>
-          ) : (
-            <div className="space-y-1 max-h-64 overflow-y-auto">
-              {data.announcements.map(a => (
-                <div key={a.id} className="bg-white/5 border border-white/10 p-2 flex items-center justify-between text-xs">
-                  <span className="text-white/50">announcement #</span>
-                  <span className="font-mono text-cyan-300">{a.id}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          <p className="text-[11px] text-white/40 leading-relaxed">{data.note}</p>
-        </div>
-      )}
+        ) : sui?.live ? (
+          <div className="space-y-1 font-mono text-xs break-all">
+            <div><span className="text-white/40">package</span> {sui.package_id}</div>
+          </div>
+        ) : (
+          <div className="text-yellow-300 text-xs">
+            Package not deployed — see /api/sui/status. PoC UI; full form
+            behind audit gate.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

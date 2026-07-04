@@ -3,7 +3,11 @@ import axios from "axios";
 import { Receipt, Loader2 } from "lucide-react";
 import { API } from "@/config/chains";
 
-// Minimal placeholder: title + Chain section + "Deployed on" indicator.
+// Solana Encrypted Receipts — Deployed On panel.
+//
+// Per the design rule, the chain name is shown ONLY on the Dashboard
+// home (the chain-select pill row). Inside this feature we render
+// ONLY the live "Deployed on" data block — no chain identity chrome.
 export function SolReceipts() {
   const [loading, setLoading] = useState(true);
   const [sol, setSol] = useState(null);
@@ -27,14 +31,6 @@ export function SolReceipts() {
 
   return (
     <div className="space-y-4" data-testid="sol-receipts">
-      <div className="bg-white/5 border border-white/10 p-4 text-sm text-white/70 flex items-center gap-3">
-        <Receipt className="w-4 h-4 text-purple-300" />
-        <div>
-          <div className="font-semibold text-white">Chain</div>
-          <div>Solana {sol?.devnet ? "Devnet" : "Mainnet"} (chain id 1399811149)</div>
-        </div>
-      </div>
-
       <div className="bg-white/5 border border-white/10 p-4 text-sm">
         <div className="flex items-center justify-between mb-2">
           <span className="text-white/60 uppercase tracking-wider text-xs">Deployed on</span>
@@ -57,8 +53,8 @@ export function SolReceipts() {
           </div>
         ) : (
           <div className="text-yellow-300 text-xs">
-            Program not deployed on Solana - see /api/sol/status. PoC UI;
-            full form behind audit gate.
+            Program not deployed — see /api/sol/status. PoC UI; full form
+            behind audit gate.
           </div>
         )}
       </div>
