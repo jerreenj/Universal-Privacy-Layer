@@ -1808,19 +1808,35 @@ async def zk_pool_state():
         onchain_root = pool.functions.currentRoot().call()
         next_leaf = pool.functions.nextLeafIndex().call()
 
-        # Rebuild root from stored deposits (P3.5-B)
+        # Rebuild root from stored deposits (P3.5-B).
+        # Use the lazy import helper — IncrementalMerkleTree is intentionally
+        # NOT in module scope so module-load can't fail on a circomlib parse
+        # error (see #audit-P3 hardening). If the import fails, stored_count
+        # stays 0 and we fall back to the on-chain root.
         cursor = db.pool_deposits.find({}, {"commitment": 1}).sort("created_at", 1)
-        tree = IncrementalMerkleTree()
         stored_count = 0
-        async for doc in cursor:
+        effective_root = onchain_root
+        (
+            IncrementalMerkleTree, *_rest,
+        ) = _try_import_zk_merkle()
+        if IncrementalMerkleTree is not None:
+            tree = IncrementalMerkleTree()
             try:
-                leaf = int(doc["commitment"], 16)
-                tree.insert(leaf)
-                stored_count += 1
-            except Exception:
-                continue
-
-        effective_root = tree.root if stored_count > 0 else onchain_root
+                async for doc in cursor:
+                    try:
+                        leaf = int(doc["commitment"], 16)
+                        tree.insert(leaf)
+                        stored_count += 1
+                    except Exception:
+                        continue
+                if stored_count > 0:
+                    effective_root = tree.root
+            except Exception as e:
+                logger.warning(
+                    f"zk-pool/state: tree rebuild failed, falling back to onchain root: {e}"
+                )
+                stored_count = 0
+                effective_root = onchain_root
 
         return {
             "live": True,
