@@ -34,7 +34,12 @@ remappings = [
 # collide with foundry's shared JSON-builder state); that step is post-broadcast.
 fs_permissions = [
     {access = "read",  path = "./deployed_base.json"},
-    {access = "write", path = "./deployed_base.json"}
+    {access = "write", path = "./deployed_base.json"},
+    {access = "read",  path = "./scripts/"}
 ]
+
+# P3.5 fork E2E: PrivacyPoolBaseFork.t.sol uses vm.ffi to invoke
+# scripts/prove_withdraw_ffi.js for snarkjs proof generation.
+ffi = true
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
