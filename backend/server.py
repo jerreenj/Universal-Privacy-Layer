@@ -85,7 +85,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                     "/api/deployments", "/api/sui/status", "/api/sui/registry/count", "/api/sui/relay/submit",
                     "/api/sui/announcements",
                     "/api/sol/status", "/api/sol/registry/count", "/api/sol/relay/submit",
-                    "/api/sol/announcements"}
+                    "/api/sol/announcements",
+                    # Phase 3 (P3.5): the privacy-pool state endpoint is
+                    # public so the deposit UI can read denomination / root
+                    # / liveness status before the user is logged in.
+                    # /api/zk-pool/withdraw / /api/zk-pool/path / /api/zk-pool/deposit
+                    # remain behind auth.
+                    "/api/zk-pool/state",
+                    # P3.8 PoC ownership-check is public so the UI can probe
+                    # inputs before/without auth — there's no on-chain
+                    # action. Behind an audit-required banner.
+                    "/api/zk-stealth/owner"}
     PUBLIC_PREFIXES = ()
 
     async def dispatch(self, request: StarletteRequest, call_next):
