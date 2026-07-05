@@ -1,10 +1,8 @@
-import { useState, lazy } from "react";
+import { useState, lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
-import { SafeSuspense } from "@/components/common/ChunkErrorBoundary";
 
 /**
  * Announcement Scanner (SVM) — generic wrapper with a Sui↔Solana toggle.
- * Renders the matching chain's scanner below the toggle.
  */
 const SuiScanner = lazy(() => import("@/components/features/SuiScanner"));
 const SolScanner = lazy(() => import("@/components/features/SolScanner"));
@@ -42,10 +40,10 @@ export function ScannerSVM() {
           </button>
         ))}
       </div>
-      <SafeSuspense key={chain} featureName={`scanner-${chain}`} fallback={<Fallback />}>
+      <Suspense key={chain} fallback={<Fallback />}>
         {chain === "sui" && <SuiScanner />}
         {chain === "sol" && <SolScanner />}
-      </SafeSuspense>
+      </Suspense>
     </div>
   );
 }

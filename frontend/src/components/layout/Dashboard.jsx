@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
@@ -7,7 +7,6 @@ import {
 import { CHAINS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { BackButton } from "@/components/common/BackButton";
-import { SafeSuspense } from "@/components/common/ChunkErrorBoundary";
 import { Navbar } from "@/components/layout/Navbar";
 import { Landing } from "@/components/layout/Landing";
 
@@ -128,9 +127,9 @@ export function Dashboard() {
         <div className="max-w-2xl mx-auto py-6 md:py-10">
           <BackButton onClick={() => setPage("home")} />
           <h1 className="text-2xl md:text-3xl font-bold mb-6">{title}</h1>
-          <SafeSuspense featureName={featureKey} fallback={<LoadingFallback />}>
+          <Suspense fallback={<LoadingFallback />}>
             <Component />
-          </SafeSuspense>
+          </Suspense>
         </div>
       </div>
     );

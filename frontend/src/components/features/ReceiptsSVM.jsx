@@ -1,10 +1,8 @@
-import { useState, lazy } from "react";
+import { useState, lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
-import { SafeSuspense } from "@/components/common/ChunkErrorBoundary";
 
 /**
  * Encrypted Receipts (SVM) — generic wrapper with a Sui↔Solana toggle.
- * Renders the matching chain's receipts lookup below the toggle.
  */
 const SuiReceipts = lazy(() => import("@/components/features/SuiReceipts"));
 const SolReceipts = lazy(() => import("@/components/features/SolReceipts"));
@@ -42,10 +40,10 @@ export function ReceiptsSVM() {
           </button>
         ))}
       </div>
-      <SafeSuspense key={chain} featureName={`receipts-${chain}`} fallback={<Fallback />}>
+      <Suspense key={chain} fallback={<Fallback />}>
         {chain === "sui" && <SuiReceipts />}
         {chain === "sol" && <SolReceipts />}
-      </SafeSuspense>
+      </Suspense>
     </div>
   );
 }

@@ -1,12 +1,9 @@
-import { useState, lazy } from "react";
+import { useState, lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
-import { SafeSuspense } from "@/components/common/ChunkErrorBoundary";
 
 /**
- * Stealth Send (SVM) — generic wrapper that lets the user pick the chain
- * (Sui or Solana) inside the feature, then renders the matching relay
- * form. Per the design rule, the chain name lives ONLY on the Dashboard
- * pill row; this panel just shows a Sui↔Solana toggle + the form.
+ * Stealth Send (SVM) — generic wrapper with a Sui↔Solana toggle inside.
+ * No chain names on the Dashboard; chain is selected within this feature.
  */
 const SuiStealthSend = lazy(() => import("@/components/features/SuiStealthSend"));
 const SolStealthSend = lazy(() => import("@/components/features/SolStealthSend"));
@@ -44,14 +41,10 @@ export function StealthSendSVM() {
           </button>
         ))}
       </div>
-      {/* SafeSuspense already wraps children in <Suspense>, so we don't
-          double-wrap here. The key forces a fresh boundary when the chain
-          toggles so a stale error from one chain doesn't bleed into the
-          other. */}
-      <SafeSuspense key={chain} featureName={`stealth-send-${chain}`} fallback={<Fallback />}>
+      <Suspense key={chain} fallback={<Fallback />}>
         {chain === "sui" && <SuiStealthSend />}
         {chain === "sol" && <SolStealthSend />}
-      </SafeSuspense>
+      </Suspense>
     </div>
   );
 }
