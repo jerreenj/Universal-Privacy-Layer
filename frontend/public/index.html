@@ -43,17 +43,25 @@
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
     
-    <!-- Service Worker Registration -->
+    <!--
+      Service worker: KILLED.
+      The previous SW (v1 cache-first, then v2 network-first) was the root
+      cause of "blank page after deploy" — stale chunks in the browser's
+      cache produced silent ChunkLoadErrors that unmounted the React tree.
+      We no longer register a SW; instead we UNREGISTER any prior one so
+      returning visitors are freed from whatever stale SW they picked up
+      on an earlier visit. Plain HTTP cache (with our no-cache headers on
+      index.html + content-hashed chunks) handles everything correctly.
+    -->
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function() {
-          navigator.serviceWorker.register('/service-worker.js')
-            .then(function(registration) {
-              console.log('UPL ServiceWorker registered:', registration.scope);
-            })
-            .catch(function(error) {
-              console.log('UPL ServiceWorker registration failed:', error);
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            regs.forEach(function(r) {
+              console.log('UPL: unregistering stale service worker', r.scope);
+              r.unregister();
             });
+          }).catch(function() {});
         });
       }
     </script>
