@@ -38,11 +38,15 @@ export function StealthMeta({ address }) {
   }, [address]);
 
   const generate = () => {
-    // Simple mock that doesn't depend on @noble/secp256k1
+    // Generate spend + view keypairs using ethers v6 SigningKey.
+    // NOTE: in ethers v6, `new ethers.Wallet(pk).publicKey` is undefined —
+    // the public key lives on SigningKey.compressedPublicKey. Using the
+    // wrong API here was the crash that produced "This section couldn't
+    // be displayed" on the Private Receive tab.
     const spendPriv = ethers.Wallet.createRandom().privateKey;
     const viewPriv = ethers.Wallet.createRandom().privateKey;
-    const spendPub = new ethers.Wallet(spendPriv).publicKey;
-    const viewPub = new ethers.Wallet(viewPriv).publicKey;
+    const spendPub = new ethers.SigningKey(spendPriv).compressedPublicKey; // 0x02/03 + 32 bytes
+    const viewPub = new ethers.SigningKey(viewPriv).compressedPublicKey;
     const metaAddress = `st:eth:${spendPub.slice(2)}${viewPub.slice(2)}`;
 
     setMeta({ metaAddress });
