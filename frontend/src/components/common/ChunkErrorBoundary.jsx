@@ -100,23 +100,66 @@ export class ChunkErrorBoundary extends React.Component {
   }
 
   render() {
-    if (this.state.error && isChunkError(this.state.error) && recentlyReloaded()) {
-      // Reload loop guard — show a manual button instead of looping.
+    // NO error → render children normally.
+    if (!this.state.error) return this.props.children;
+
+    // ── Error is set. NEVER return children here — children would
+    //    re-throw the same error, React would unmount the whole tree,
+    //    and the user would see a blank screen. Always render a
+    //    visible fallback (this is the fix for the blank-screen bug). ──
+
+    const err = this.state.error;
+    const chunkErr = isChunkError(err);
+
+    // Chunk error + haven't reloaded recently → trigger reload.
+    // (componentDidCatch already called forceHardReload; this branch is
+    // just the render-side guard for the brief moment before navigation.)
+    if (chunkErr && !recentlyReloaded()) {
       return (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <p className="text-sm text-white/70 mb-3">
-            A part of this page didn't load. Try again.
-          </p>
-          <button
-            onClick={() => forceHardReload()}
-            className="px-4 py-2 border border-white/30 hover:border-white hover:bg-white hover:text-black text-sm"
-          >
-            Reload page
-          </button>
+        <div className="flex items-center justify-center py-12">
+          <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
         </div>
       );
     }
-    return this.props.children;
+
+    // Chunk error + already reloaded (loop guard) OR any other error →
+    // show a visible error panel with Back + Reload buttons. The user
+    // is NEVER left on a blank screen.
+    const msg = (err && (err.message || err.toString())) || "Unknown error";
+    return (
+      <div className="space-y-4" data-testid="feature-error">
+        <div className="bg-red-500/10 border border-red-500/30 p-4 text-sm text-red-300 space-y-2">
+          <div className="font-semibold">
+            {chunkErr ? "This page didn't finish loading." : "This feature hit an error."}
+          </div>
+          <div className="text-xs text-red-200/70 font-mono break-all">{String(msg).slice(0, 300)}</div>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => forceHardReload()}
+            className="flex-1 px-4 py-2 border border-white/30 hover:border-white hover:bg-white hover:text-black text-sm font-medium"
+          >
+            Reload page
+          </button>
+          <button
+            onClick={() => {
+              try {
+                window.history.pushState(null, "", "/");
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              } catch {
+                window.location.href = "/";
+              }
+            }}
+            className="flex-1 px-4 py-2 border border-white/30 hover:border-white hover:bg-white hover:text-black text-sm font-medium"
+          >
+            Back to Dashboard
+          </button>
+        </div>
+        <p className="text-[11px] text-white/30 leading-relaxed">
+          If this keeps happening, try a hard refresh (Ctrl+Shift+R / Cmd+Shift+R) to clear your browser cache.
+        </p>
+      </div>
+    );
   }
 }
 

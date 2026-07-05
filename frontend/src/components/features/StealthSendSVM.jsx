@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from "react";
+import { useState, lazy } from "react";
 import { Loader2 } from "lucide-react";
 import { SafeSuspense } from "@/components/common/ChunkErrorBoundary";
 
@@ -44,11 +44,13 @@ export function StealthSendSVM() {
           </button>
         ))}
       </div>
-      <SafeSuspense featureName={`stealth-send-${chain}`} fallback={<Fallback />}>
-        <Suspense fallback={<Fallback />}>
-          {chain === "sui" && <SuiStealthSend />}
-          {chain === "sol" && <SolStealthSend />}
-        </Suspense>
+      {/* SafeSuspense already wraps children in <Suspense>, so we don't
+          double-wrap here. The key forces a fresh boundary when the chain
+          toggles so a stale error from one chain doesn't bleed into the
+          other. */}
+      <SafeSuspense key={chain} featureName={`stealth-send-${chain}`} fallback={<Fallback />}>
+        {chain === "sui" && <SuiStealthSend />}
+        {chain === "sol" && <SolStealthSend />}
       </SafeSuspense>
     </div>
   );

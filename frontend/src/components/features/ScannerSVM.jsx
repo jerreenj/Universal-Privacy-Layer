@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from "react";
+import { useState, lazy } from "react";
 import { Loader2 } from "lucide-react";
 import { SafeSuspense } from "@/components/common/ChunkErrorBoundary";
 
@@ -42,11 +42,9 @@ export function ScannerSVM() {
           </button>
         ))}
       </div>
-      <SafeSuspense featureName={`scanner-${chain}`} fallback={<Fallback />}>
-        <Suspense fallback={<Fallback />}>
-          {chain === "sui" && <SuiScanner />}
-          {chain === "sol" && <SolScanner />}
-        </Suspense>
+      <SafeSuspense key={chain} featureName={`scanner-${chain}`} fallback={<Fallback />}>
+        {chain === "sui" && <SuiScanner />}
+        {chain === "sol" && <SolScanner />}
       </SafeSuspense>
     </div>
   );

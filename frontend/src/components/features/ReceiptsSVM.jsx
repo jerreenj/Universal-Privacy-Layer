@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from "react";
+import { useState, lazy } from "react";
 import { Loader2 } from "lucide-react";
 import { SafeSuspense } from "@/components/common/ChunkErrorBoundary";
 
@@ -42,11 +42,9 @@ export function ReceiptsSVM() {
           </button>
         ))}
       </div>
-      <SafeSuspense featureName={`receipts-${chain}`} fallback={<Fallback />}>
-        <Suspense fallback={<Fallback />}>
-          {chain === "sui" && <SuiReceipts />}
-          {chain === "sol" && <SolReceipts />}
-        </Suspense>
+      <SafeSuspense key={chain} featureName={`receipts-${chain}`} fallback={<Fallback />}>
+        {chain === "sui" && <SuiReceipts />}
+        {chain === "sol" && <SolReceipts />}
       </SafeSuspense>
     </div>
   );
