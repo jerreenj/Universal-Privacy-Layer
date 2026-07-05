@@ -31,7 +31,11 @@ export function AccessGate({ onGranted }) {
         style={{ animation: shake ? "shake 0.5s" : "none" }}>
         <div className="w-2 h-2 rounded-full bg-green-400 mx-auto mb-6 animate-pulse" />
         <h2 className="text-sm font-semibold tracking-[0.2em] uppercase text-white/60 mb-1">Privacy Cloak</h2>
-        <p className="text-xs text-white/20 mb-8">Restricted Access</p>
+        <p className="text-xs text-white/20 mb-2">Restricted Access</p>
+        <p className="text-[10px] text-white/30 mb-8 leading-relaxed px-2">
+          Enter the invite code from your onboarding email, Telegram invite,
+          or DM to privacycloak.in.
+        </p>
         <input
           data-testid="access-code-input"
           type="password"

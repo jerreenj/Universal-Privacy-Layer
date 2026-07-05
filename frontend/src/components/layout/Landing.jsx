@@ -25,7 +25,7 @@ export function Landing() {
         </div>
 
         <MagnetizeButton onClick={connectWallet} disabled={connecting} particleCount={14} className="px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm">
-          {connecting ? "..." : `Connect`}
+          {connecting ? "..." : `Connect Wallet`}
         </MagnetizeButton>
       </div>
 
@@ -46,7 +46,7 @@ export function Landing() {
                   <span>{v.name}</span>
                   <span className="text-white/30 text-xs ml-auto">{v.symbol}</span>
                   {v.deployed && <span className="text-[9px] text-green-400 font-semibold">● Deployed</span>}
-                  {!v.live && <span className="text-[10px] text-yellow-400">Soon</span>}
+                  {!v.live && <span className="text-[10px] text-yellow-400" title="Mainnet deployment pending — currently disabled">Soon</span>}
                   {chain === k && v.live && !v.deployed && <div className="w-2 h-2 rounded-full bg-green-400" />}
                 </button>
               ))}
@@ -70,12 +70,25 @@ export function Landing() {
         </p>
 
         <div className="flex items-center justify-center gap-4 sm:gap-8 md:gap-12 mb-6 md:mb-8">
-          {[["100%", "Private"], [LIVE_COUNT.toString(), "Chains"], ["10", "Pillars"]].map(([val, lbl]) => (
+          {[
+            ["100%", "Non-Custodial"],
+            [LIVE_COUNT.toString(), "Live Chains"],
+            [String(Object.keys(VM_GROUPS).length), "VM Families"],
+          ].map(([val, lbl]) => (
             <div key={lbl} className="text-center">
               <span className="block text-lg sm:text-xl md:text-2xl font-bold text-white">{val}</span>
               <span className="text-[9px] sm:text-[10px] md:text-xs text-white/40 uppercase tracking-wider">{lbl}</span>
             </div>
           ))}
+        </div>
+
+        <div className="max-w-md mx-auto px-2 mb-6 md:mb-10">
+          <p className="text-white/30 text-[11px] sm:text-xs leading-relaxed">
+            Send privately, receive at one-time stealth addresses, swap through
+            Uniswap, trade perps on Hyperliquid, bet on Polymarket, join
+            multisigs, sign EIP-712 messages, generate Groth16 proofs — all
+            without doxxing your wallet.
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-2 mb-4 md:mb-6 px-2">
@@ -95,7 +108,7 @@ export function Landing() {
               onClick={() => { if (v.live) { switchChain(k); } }}>
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: v.color }} />
               <span className="text-white/60">{v.name}</span>
-              {!v.live && <span className="text-[8px] sm:text-[10px] text-yellow-400 ml-0.5">Soon</span>}
+              {!v.live && <span className="text-[8px] sm:text-[10px] text-yellow-400 ml-0.5" title="Mainnet deployment pending — currently disabled">Soon</span>}
             </div>
           ))}
         </div>

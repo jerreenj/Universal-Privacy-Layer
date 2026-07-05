@@ -17,13 +17,13 @@ export function Navbar() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-black/90 backdrop-blur-xl border-b border-white/10">
       <div className="max-w-6xl mx-auto px-4 md:px-6 py-3 md:py-4 flex items-center justify-between">
-        <div className="flex items-center gap-2 md:gap-3 cursor-pointer" onClick={() => navigate("/")}>
+        <div className="flex items-center gap-2 md:gap-3 cursor-pointer group" onClick={() => navigate("/")} title="Back to landing">
           <div className="flex flex-col leading-none">
-            <span className="font-heading text-lg md:text-xl font-bold tracking-tight">
+            <span className="font-heading text-lg md:text-xl font-bold tracking-tight transition-colors group-hover:text-green-400">
               <span className="text-white">PRIVACY</span>{" "}
-              <span className="text-green-400">CLOAK</span>
+              <span className="text-green-400 group-hover:text-white">CLOAK</span>
             </span>
-            <span className="text-[9px] md:text-[10px] text-white/40 uppercase tracking-[0.2em] mt-0.5">
+            <span className="text-[9px] md:text-[10px] text-white/40 uppercase tracking-[0.2em] mt-0.5 group-hover:text-white/60 transition-colors">
               Universal Privacy Layer
             </span>
           </div>
@@ -50,7 +50,7 @@ export function Navbar() {
                         <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
                         {v.name}
                         {v.deployed && <span className="text-[9px] text-green-400 ml-auto font-semibold">● Deployed</span>}
-                        {!v.live && <span className="text-[10px] text-yellow-400 ml-auto">Soon</span>}
+                        {!v.live && <span className="text-[10px] text-yellow-400 ml-auto" title="Mainnet deployment pending — currently disabled">Soon</span>}
                         {chain === k && v.live && !v.deployed && <div className="w-2 h-2 rounded-full bg-green-400 ml-auto" />}
                       </button>
                     ))}
@@ -61,8 +61,10 @@ export function Navbar() {
           </div>
 
           {address && (
-            <button onClick={disconnect} className="px-3 py-2 border border-white/20 hover:bg-white hover:text-black transition-all text-sm font-mono">
-              {address.slice(0, 6)}...{address.slice(-4)}
+            <button onClick={disconnect} title="Disconnect wallet"
+              className="flex items-center gap-1.5 px-3 py-2 border border-white/20 hover:border-red-500/60 hover:text-red-400 transition-all text-sm font-mono">
+              <span>{address.slice(0, 6)}...{address.slice(-4)}</span>
+              <span className="text-white/40 hover:text-red-400 text-xs" aria-hidden="true">×</span>
             </button>
           )}
         </div>

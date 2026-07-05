@@ -5550,7 +5550,7 @@ if STATIC_DIR.is_dir():
     # the server, producing ChunkLoadError + blank pages after every
     # redeploy. Same for service-worker.js (must always be re-fetched so
     # the new SW version activates immediately).
-    @app.get("/{full_path:path}")
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     async def serve_spa(full_path: str):
         # If the file exists in build dir, serve it (favicon, manifest, etc.)
         file_path = STATIC_DIR / full_path
