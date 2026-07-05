@@ -474,8 +474,18 @@ def _load_deployed_addresses(static_contracts: Dict[str, Dict[str, Any]]) -> Dic
         logging.warning("UPL contracts: %s is not a JSON object — ignoring, using static placeholders.", path)
         return out
 
-    ADDRESS_KEYS = ("privacy_relayer", "stealth_registry", "uniswap_wrapper")
-    provenance_keys = ("chainId", "deployedAt", "commit")
+    ADDRESS_KEYS = (
+        "privacy_relayer", "stealth_registry", "uniswap_wrapper",
+        # Phase 3 (P3.4): PrivacyPool + Groth16Verifier added to the allowlist so
+        # they survive the loader's strict 0x40-hex validation. Without these,
+        # /api/zk-pool/state would still see the static placeholder values and
+        # falsely report "PrivacyPool not yet deployed" even when the JSON has
+        # the real mainnet address. (Previously only the relay + registry + uniswap
+        # wrapper were recognised.)
+        "privacy_pool", "privacy_verifier",
+        "deployer", "fee_recipient", "pool_owner",
+    )
+    provenance_keys = ("chainId", "deployedAt", "commit", "redeployedNote")
     for chain, overrides in deployed.items():
         base = out.get(chain)
         if base is None:
@@ -1955,7 +1965,7 @@ async def zk_pool_state():
     root is not yet available), next leaf index, etc.
     """
     try:
-        deployed = _load_deployed_addresses()
+        deployed = UPL_CONTRACTS
         pool_addr = deployed.get("base", {}).get("privacy_pool")
         verifier_addr = deployed.get("base", {}).get("privacy_verifier")
 
@@ -2149,7 +2159,7 @@ async def zk_pool_withdraw(req: ZKPoolWithdrawRequest):
     and calls PrivacyPool.withdraw on-chain.
     """
     try:
-        deployed = _load_deployed_addresses()
+        deployed = UPL_CONTRACTS
         pool_addr = deployed.get("base", {}).get("privacy_pool")
         if not pool_addr:
             raise HTTPException(status_code=400, detail="PrivacyPool not deployed")
