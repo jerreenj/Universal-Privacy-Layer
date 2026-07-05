@@ -70,25 +70,12 @@ export function Landing() {
         </p>
 
         <div className="flex items-center justify-center gap-4 sm:gap-8 md:gap-12 mb-6 md:mb-8">
-          {[
-            ["100%", "Non-Custodial"],
-            [LIVE_COUNT.toString(), "Live Chains"],
-            [String(Object.keys(VM_GROUPS).length), "VM Families"],
-          ].map(([val, lbl]) => (
+          {[["100%", "Private"], [LIVE_COUNT.toString(), "Chains"], ["10", "Pillars"]].map(([val, lbl]) => (
             <div key={lbl} className="text-center">
               <span className="block text-lg sm:text-xl md:text-2xl font-bold text-white">{val}</span>
               <span className="text-[9px] sm:text-[10px] md:text-xs text-white/40 uppercase tracking-wider">{lbl}</span>
             </div>
           ))}
-        </div>
-
-        <div className="max-w-md mx-auto px-2 mb-6 md:mb-10">
-          <p className="text-white/30 text-[11px] sm:text-xs leading-relaxed">
-            Send privately, receive at one-time stealth addresses, swap through
-            Uniswap, trade perps on Hyperliquid, bet on Polymarket, join
-            multisigs, sign EIP-712 messages, generate Groth16 proofs — all
-            without doxxing your wallet.
-          </p>
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-2 mb-4 md:mb-6 px-2">
