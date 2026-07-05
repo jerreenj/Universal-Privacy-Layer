@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, lazy, Suspense } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from "react";
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
@@ -94,6 +94,12 @@ export function Dashboard() {
   const [page, _setPage] = useState("home");
   const [showBal, setShowBal] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Captured scroll position at the moment the user leaves the dashboard
+  // home view (clicking a tile OR hitting browser back). React state
+  // survives both the click-bound setPage and the popstate-bound fromHash,
+  // so this is a more reliable handoff than sessionStorage alone (which
+  // can race with the browser's own scroll restoration).
+  const [savedScrollY, setSavedScrollY] = useState(0);
 
   // Defensive: if chain is somehow undefined or not in CHAINS, fall back
   // to "base" so CHAINS[safeChain] never throws "Cannot read properties of
@@ -104,7 +110,25 @@ export function Dashboard() {
   // Hash-based navigation so the BROWSER back button works.
   // Dashboard is mounted at /<path> for every route (see App.js), so we
   // track sub-page state in window.location.hash and listen on popstate.
+  //
+  // SCROLL PRESERVATION:
+  // We disable the browser's automatic scroll restoration
+  // (`history.scrollRestoration = 'manual'`) and manage it ourselves.
+  // When LEAVING home, we capture `window.scrollY` synchronously in the
+  // click handler (BEFORE React re-renders to the new page and the DOM
+  // shrinks, which would clamp the scroll). When RETURNING to home,
+  // we restore the captured Y via a requestAnimationFrame so the layout
+  // has settled by then. This works for both the in-app "Back to
+  // Dashboard" button AND the browser's native back arrow.
   const setPage = (id) => {
+    // Capture scroll at click-time, while the dashboard is still in the DOM.
+    // We capture into React state (survives re-render) AND sessionStorage
+    // (survives a full page reload) so the user never lands at scrollY=0.
+    if (page === "home" && id !== "home") {
+      const y = window.scrollY;
+      setSavedScrollY(y);
+      try { sessionStorage.setItem("upl-dashboard-scroll", String(y)); } catch {}
+    }
     _setPage(id);
     try {
       const next = id === "home" ? "/" : `#/${id}`;
@@ -115,9 +139,21 @@ export function Dashboard() {
   };
 
   useEffect(() => {
+    // Take over scroll management from the browser.
+    if ("scrollRestoration" in history) {
+      try { history.scrollRestoration = "manual"; } catch {}
+    }
+
     const fromHash = () => {
       const m = (window.location.hash || "").match(/^#\/([^/]+)/);
-      _setPage(m ? m[1] : "home");
+      const next = m ? m[1] : "home";
+      // Capture scroll when leaving home via the browser back/forward button.
+      if (page === "home" && next !== "home") {
+        const y = window.scrollY;
+        setSavedScrollY(y);
+        try { sessionStorage.setItem("upl-dashboard-scroll", String(y)); } catch {}
+      }
+      _setPage(next);
     };
     fromHash(); // sync on mount
     window.addEventListener("popstate", fromHash);
@@ -125,33 +161,34 @@ export function Dashboard() {
   }, []);
 
   // ── Scroll-preservation across feature navigation ─────────────────
-  // We save the dashboard's scroll position when the user leaves home
-  // (clicks a tile), and restore it when they come back (clicks Back
-  // to Dashboard OR hits the browser back button). Without this the
-  // browser scrolls to 0 on every return — painful for anyone who
-  // scrolled down before clicking.
-  const prevPageRef = useRef("home");
-  useEffect(() => {
-    const prev = prevPageRef.current;
-    const curr = page;
-    if (prev === "home" && curr !== "home") {
-      // Just left home — save current scroll.
-      try { sessionStorage.setItem("upl-dashboard-scroll", String(window.scrollY)); } catch {}
-    } else if (curr === "home" && prev !== "home") {
-      // Just returned to home — restore saved scroll.
+  // Restore scroll when arriving at the dashboard home. We use
+  // useLayoutEffect (runs SYNCHRONOUSLY after the DOM commit but BEFORE
+  // the browser paints) — this is the only reliable hook for "I need
+  // the new DOM's scroll height to be accurate NOW." Then we re-scroll
+  // in a requestAnimationFrame as a belt-and-braces catch for late
+  // asynchronous layout shifts (font loading, lazy chunks resolving).
+  useLayoutEffect(() => {
+    if (page !== "home") return;
+    // 1) Restore from React state (the freshest value, captured
+    //    synchronously at the click that left home).
+    let targetY = savedScrollY || 0;
+    // 2) Fall back to sessionStorage if state is empty (e.g. user
+    //    hit browser back from outside the app).
+    if (targetY === 0) {
       try {
-        const y = sessionStorage.getItem("upl-dashboard-scroll");
-        if (y != null) {
-          // requestAnimationFrame fires after the DOM has been
-          // laid out, so the scroll height is correct.
-          requestAnimationFrame(() => {
-            try { window.scrollTo({ top: parseInt(y, 10), behavior: "auto" }); } catch {}
-          });
-        }
+        const fromSS = sessionStorage.getItem("upl-dashboard-scroll");
+        if (fromSS != null) targetY = parseInt(fromSS, 10) || 0;
       } catch {}
     }
-    prevPageRef.current = curr;
-  }, [page]);
+    if (targetY <= 0) return;
+    // First-set: right now, in the same frame as the DOM commit.
+    try { window.scrollTo(0, targetY); } catch {}
+    // Second-set: after the browser has had a chance to finalize
+    // font loading + image layout for the dashboard home view.
+    requestAnimationFrame(() => {
+      try { window.scrollTo(0, targetY); } catch {}
+    });
+  }, [page, savedScrollY]);
 
   if (!address) return <Landing />;
 
