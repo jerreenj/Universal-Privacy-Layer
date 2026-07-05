@@ -2,7 +2,7 @@ import { useEffect, useState, lazy } from "react";
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
-  Search, FileText, BookOpen, Hash
+  Search, FileText, BookOpen, Hash, Send, ScanLine, Receipt
 } from "lucide-react";
 import { CHAINS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -35,15 +35,16 @@ const WalletPrivacyAnalyzer     = lazy(() => import("@/components/features/Walle
 const EncryptedReceipts         = lazy(() => import("@/components/features/EncryptedReceipts"));
 const PrivacyAddressBook        = lazy(() => import("@/components/features/PrivacyAddressBook"));
 const ZKCommitments             = lazy(() => import("@/components/features/ZKCommitments"));
+const StealthSendSVM            = lazy(() => import("@/components/features/StealthSendSVM"));
+const ScannerSVM                = lazy(() => import("@/components/features/ScannerSVM"));
+const ReceiptsSVM               = lazy(() => import("@/components/features/ReceiptsSVM"));
 
 /* Page metadata – references the lazy Component *type*, not a rendered element. The `key` field is passed to ChunkErrorBoundary so it can show what failed.
  *
- * The six Sui/Solana chain-specific buttons (SuiStealthSend/SuiScanner/
- * SuiReceipts + SolStealthSend/SolScanner/SolReceipts) were removed from
- * this map AND from the button grid below. Rationale: chains are selected
- * INSIDE a feature when needed (e.g. cross-chain split, hidden balance),
- * not as separate top-level buttons. The lazy-imported files still exist
- * on disk so any future feature expansion can re-wire them.
+ * The six Sui/Solana chain-specific buttons were merged into THREE generic
+ * panels (Stealth Send / Scanner / Receipts) that ship a Sui↔Solana toggle
+ * INSIDE the feature. Per the design rule: no chain identity on the
+ * Dashboard home, just feature names.
  */
 const pages = {
   receive:     { title: "Private Receive",             Component: StealthContent,          key: "receive" },
@@ -69,6 +70,9 @@ const pages = {
   receipts:    { title: "Encrypted Receipts",          Component: EncryptedReceipts,       key: "receipts" },
   addressbook: { title: "Privacy Address Book",        Component: PrivacyAddressBook,      key: "addressbook" },
   zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments,           key: "zkcommit" },
+  svmSend:     { title: "Stealth Send (SVM)",          Component: StealthSendSVM,          key: "svm-send" },
+  svmScan:     { title: "Announcement Scanner (SVM)",  Component: ScannerSVM,              key: "svm-scanner" },
+  svmReceipts: { title: "Encrypted Receipts (SVM)",    Component: ReceiptsSVM,             key: "svm-receipts" },
 };
 
 function LoadingFallback() {
@@ -224,6 +228,9 @@ export function Dashboard() {
               { id: "multisig", icon: <Users className="w-5 h-5" />, title: "Multisig", color: "text-amber-400" },
               { id: "analyzer", icon: <Search className="w-5 h-5" />, title: "Privacy Analyzer", color: "text-cyan-400" },
               { id: "zkcommit", icon: <Hash className="w-5 h-5" />, title: "ZK Commitments", color: "text-lime-400" },
+              { id: "svmSend", icon: <Send className="w-5 h-5" />, title: "Stealth Send", color: "text-cyan-400" },
+              { id: "svmScan", icon: <ScanLine className="w-5 h-5" />, title: "Scanner", color: "text-cyan-400" },
+              { id: "svmReceipts", icon: <Receipt className="w-5 h-5" />, title: "Receipts", color: "text-cyan-400" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
