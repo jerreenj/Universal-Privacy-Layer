@@ -59,9 +59,14 @@ export const CHAINS = {
 };
 
 export const VM_GROUPS = {
-  [VM.EVM]:    { label: "EVM Chains",  walletName: "MetaMask",  icon: "M" },
+  // Order matters! JS Object.entries() iterates in insertion order, so
+  // the chain-selector dropdown renders these groups top-to-bottom in
+  // exactly this order. We put the SVM chains first because they are
+  // newer and more visually distinct (purple + cyan), and push the EVM
+  // mass to the bottom of the dropdown so the eye lands on the highlights.
   [VM.SOLANA]: { label: "Solana",      walletName: "Phantom",   icon: "P" },
   [VM.SUI]:    { label: "Sui",         walletName: "Sui Wallet",icon: "S" },
+  [VM.EVM]:    { label: "EVM Chains",  walletName: "MetaMask",  icon: "M" },
 };
 
 export const TOKENS = {
