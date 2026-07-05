@@ -142,28 +142,51 @@ def rate_limit(request: StarletteRequest, max_calls: int = 20, window: int = 60)
         raise HTTPException(status_code=429, detail="Too many requests")
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    # Public endpoints that don't require a session token
-    PUBLIC_PATHS = {"/api/health", "/api/", "/api/auth/verify-access", "/api/payments/info", "/api/payments/submit",
-                    "/api/deployments", "/api/sui/status", "/api/sui/registry/count", "/api/sui/relay/submit",
-                    "/api/sui/announcements",
-                    "/api/sol/status", "/api/sol/registry/count", "/api/sol/relay/submit",
-                    "/api/sol/announcements",
-                    # Phase 3 (P3.5): the privacy-pool state endpoint is
-                    # public so the deposit UI can read denomination / root
-                    # / liveness status before the user is logged in.
-                    # /api/zk-pool/withdraw / /api/zk-pool/path / /api/zk-pool/deposit
-                    # remain behind auth.
-                    "/api/zk-pool/state",
-                    # P3.8 PoC ownership-check is public so the UI can probe
-                    # inputs before/without auth — there's no on-chain
-                    # action. Behind an audit-required banner.
-                    "/api/zk-stealth/owner"}
-    PUBLIC_PREFIXES = ()
+    # Public endpoints that don't require a session token.
+    # Stealth send demo on Base — also public so customers can run a
+    # send/receive flow without holding a session token. Payment-info
+    # etc unchanged.
+    PUBLIC_PATHS = {
+        "/api/health",
+        "/api/",
+        "/api/auth/verify-access",
+        "/api/payments/info",
+        "/api/payments/submit",
+        "/api/deployments",
+        "/api/sui/status", "/api/sui/registry/count", "/api/sui/relay/submit",
+        "/api/sui/announcements",
+        "/api/sol/status", "/api/sol/registry/count", "/api/sol/relay/submit",
+        "/api/sol/announcements",
+        # Phase 3 (P3.5): privacy-pool state (denomination, root) is
+        # public so the deposit UI can read it before login.
+        "/api/zk-pool/state",
+        # P3.8 PoC ownership-check public.
+        "/api/zk-stealth/owner",
+        # Stealth send demo on Base — public for customer onboarding.
+        "/api/stealth/announce",
+        "/api/stealth/announcements",
+        # Dynamic-path prefixes handled separately (FastAPI brace templates
+        # can't be literal-listed).
+    }
+
+    # Dynamic-path prefixes. Anything matching one of these is public so
+    # customer-facing read-paths work without a session token.
+    _PUBLIC_DYNAMIC_PREFIXES = (
+        "/api/stealth/meta/",
+        "/api/stealth/scan/",
+        "/api/relayer/stats/",
+    )
+
+    def _is_public(self, path: str) -> bool:
+        if path in self.PUBLIC_PATHS:
+            return True
+        return any(path.startswith(p) for p in self._PUBLIC_DYNAMIC_PREFIXES)
 
     # Per-IP rate limits applied to /api/*. /api/v1/* uses its own per-key limit.
     WRITE_LIMIT = (30, 60)    # 30 POST/PUT/DELETE per 60s
     READ_LIMIT  = (200, 60)   # 200 GET per 60s
     SKIP_RL_PREFIXES = ("/api/v1/",)   # developer API has its own key-based RL
+
 
     async def dispatch(self, request: StarletteRequest, call_next):
         # ── Rate limit gate — only for /api/* paths we don't skip ────────────
@@ -187,7 +210,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 return resp
 
         # ── Auth gate — block all /api/* except public paths ──────────────────
-        if path.startswith("/api/") and path not in self.PUBLIC_PATHS:
+        if path.startswith("/api/") and not self._is_public(path):
             auth = request.headers.get("Authorization", "")
             if not auth.startswith("Bearer "):
                 return JSONResponse({"detail": "Authorization required"}, status_code=401)
@@ -4616,9 +4639,12 @@ async def post_announcement(request: StealthAnnouncement):
 async def get_announcements(chain: str = "all", limit: int = 500):
     """Get all stealth announcements for scanning. Recipients scan these to find their payments."""
     query = {} if chain == "all" else {"chain": chain}
+    # Don't sort by created_at here — Cosmos / Mongo without an index on that
+    # field raises 'index excluded' errors. Sort client-side below.
     docs = await db.stealth_announcements.find(
         query, {"_id": 0}
-    ).sort("created_at", -1).limit(min(limit, 1000)).to_list(min(limit, 1000))
+    ).limit(min(limit, 1000)).to_list(min(limit, 1000))
+    docs.sort(key=lambda d: d.get("created_at", ""), reverse=True)
     return {"announcements": docs, "count": len(docs)}
 
 # --- On-chain StealthAddressRegistry reads (P1.2) -------------------------
@@ -5514,6 +5540,19 @@ async def deployments():
     _meta_cache.set("deployments", payload)
     return payload
 
+
+# Global exception handler — surfaces the actual traceback in the response body
+# so live debugging on Azure (where we can't tail logs interactively) is fast.
+# Returns a JSON {detail, type, where, ...} instead of plain "Internal Server Error".
+import traceback as _tb
+@app.exception_handler(Exception)
+async def _upl_log_exception_handler(request, exc):
+    tb = _tb.format_exc()
+    logger.error(f"Unhandled error on {request.method} {request.url.path}: {exc!r}\n{tb}")
+    return JSONResponse(
+        {"detail": str(exc), "type": type(exc).__name__, "path": request.url.path},
+        status_code=500,
+    )
 
 # Include router
 app.include_router(api_router)
