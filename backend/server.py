@@ -160,9 +160,33 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                     "/api/zk-stealth/owner"}
     PUBLIC_PREFIXES = ()
 
+    # Per-IP rate limits applied to /api/*. /api/v1/* uses its own per-key limit.
+    WRITE_LIMIT = (30, 60)    # 30 POST/PUT/DELETE per 60s
+    READ_LIMIT  = (200, 60)   # 200 GET per 60s
+    SKIP_RL_PREFIXES = ("/api/v1/",)   # developer API has its own key-based RL
+
     async def dispatch(self, request: StarletteRequest, call_next):
-        # ── Auth gate — block all /api/* except public paths ──────────────────
+        # ── Rate limit gate — only for /api/* paths we don't skip ────────────
         path = request.url.path
+        if path.startswith("/api/") and not any(path.startswith(p) for p in self.SKIP_RL_PREFIXES):
+            is_write = request.method in ("POST", "PUT", "PATCH", "DELETE")
+            max_calls, window = self.WRITE_LIMIT if is_write else self.READ_LIMIT
+            ip = request.client.host if request.client else "unknown"
+            now = _time.time()
+            bucket = _rate_store[(ip, "w" if is_write else "r")]
+            bucket[:] = [t for t in bucket if now - t < window]
+            bucket.append(now)
+            if len(bucket) > max_calls:
+                resp = JSONResponse(
+                    {"detail": "Rate limit exceeded — slow down"},
+                    status_code=429,
+                )
+                # still send security headers on the 429
+                resp.headers["X-Content-Type-Options"] = "nosniff"
+                resp.headers["X-Frame-Options"] = "DENY"
+                return resp
+
+        # ── Auth gate — block all /api/* except public paths ──────────────────
         if path.startswith("/api/") and path not in self.PUBLIC_PATHS:
             auth = request.headers.get("Authorization", "")
             if not auth.startswith("Bearer "):
