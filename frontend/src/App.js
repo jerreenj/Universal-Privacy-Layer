@@ -4,12 +4,10 @@ import axios from "axios";
 import { Toaster } from "sonner";
 import "@/App.css";
 
-// Session management — must import before any components to set up interceptor
 import { getSessionToken, setOnSessionExpired } from "@/lib/session";
-
-// Config & Context
 import { API } from "@/config/chains";
 import { WalletProvider } from "@/context/WalletContext";
+import { FeatureErrorBoundary } from "@/components/common/FeatureErrorBoundary";
 
 const AccessGate = lazy(() => import("@/components/auth/AccessGate").then(m => ({ default: m.AccessGate })));
 const Dashboard = lazy(() => import("@/components/layout/Dashboard").then(m => ({ default: m.Dashboard })));

@@ -7,6 +7,7 @@ import {
 import { CHAINS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { BackButton } from "@/components/common/BackButton";
+import { FeatureErrorBoundary } from "@/components/common/FeatureErrorBoundary";
 import { Navbar } from "@/components/layout/Navbar";
 import { Landing } from "@/components/layout/Landing";
 
@@ -133,9 +134,11 @@ export function Dashboard() {
         <div className="max-w-2xl mx-auto py-6 md:py-10">
           <BackButton onClick={() => setPage("home")} />
           <h1 className="text-2xl md:text-3xl font-bold mb-6">{title}</h1>
-          <Suspense fallback={<LoadingFallback />}>
-            <Component />
-          </Suspense>
+          <FeatureErrorBoundary>
+            <Suspense fallback={<LoadingFallback />}>
+              <Component />
+            </Suspense>
+          </FeatureErrorBoundary>
         </div>
       </div>
     );
