@@ -36,6 +36,10 @@ export function WalletProvider({ children }) {
   const [chain, setChain] = useState("base");
   const [address, setAddress] = useState(null);
   const [balance, setBalance] = useState(null);
+  // Primary wallet balance people actually hold — USDC stablecoin.
+  // Fetched alongside native; surfaced as the headline balance in the
+  // Dashboard hero so users see the number that matters to them.
+  const [usdcBalance, setUsdcBalance] = useState(null);
   const [hiddenBalance, setHiddenBalance] = useState(null);
   const [signer, setSigner] = useState(null);
   const [solConn, setSolConn] = useState(null);
@@ -202,6 +206,57 @@ export function WalletProvider({ children }) {
     } catch {}
   }, [address, chain, vm, solConn]);
 
+  // Fetch USDC stablecoin balance — the PRIMARY number shown in the
+  // Dashboard hero. Stablecoin balances are what people actually hold,
+  // so we surface them above the volatile native-token balance.
+  const fetchUsdcBalance = useCallback(async () => {
+    if (!address) { setUsdcBalance(null); return; }
+    try {
+      if (vm === VM.EVM) {
+        const usdcAddr = CHAINS[chain]?.contracts?.usdc;
+        if (!usdcAddr) { setUsdcBalance(null); return; }
+        const { ethers } = await import("ethers");
+        const provider = new ethers.JsonRpcProvider(CHAINS[chain].rpcUrl);
+        const erc20 = new ethers.Contract(usdcAddr,
+          ["function balanceOf(address) view returns (uint256)"],
+          provider);
+        const raw = await erc20.balanceOf(address);
+        // USDC decimals differ per chain: 6 on most, 18 on BNB (BEP20).
+        // We pick the right one by reading decimals() when available;
+        // default to 6 for safety (the common case).
+        let decimals = 6;
+        try { decimals = Number(await erc20.decimals()); } catch {}
+        const formatted = ethers.formatUnits(raw, decimals);
+        setUsdcBalance({ formatted: parseFloat(formatted).toFixed(2), symbol: "USDC", address: usdcAddr, chain });
+      } else if (vm === VM.SOLANA) {
+        // USDC on Solana is an SPL token. We do a lightweight getTokenAccountsByOwner.
+        const usdcMint = CHAINS.solana?.contracts?.usdc;
+        if (!usdcMint) { setUsdcBalance(null); return; }
+        const { Connection, PublicKey } = await import("@solana/web3.js");
+        const conn = solConn || new Connection(CHAINS.solana.rpcUrl, "confirmed");
+        try {
+          const resp = await conn.getTokenAccountsByOwner(new PublicKey(address), { mint: new PublicKey(usdcMint) });
+          // Sum the lamport amounts across all USDC token accounts.
+          let total = 0;
+          for (const ta of resp.value) {
+            //.data.parsed.info.tokenAmount.amount is a string of u64; convert to Number defensively.
+            const amt = ta.account.data?.parsed?.info?.tokenAmount?.amount;
+            if (amt) total += Math.floor(Number(amt) / 1e6); // USDC SPL has 6 decimals
+          }
+          setUsdcBalance({ formatted: total.toFixed(2), symbol: "USDC", address: usdcMint, chain: "solana" });
+        } catch {
+          // If the wallet has no USDC ATA on this RPC, just show 0.
+          setUsdcBalance({ formatted: "0.00", symbol: "USDC", address: usdcMint, chain: "solana" });
+        }
+      } else {
+        setUsdcBalance(null);
+      }
+    } catch {
+      // Errors are silent — native balance is still shown as fallback.
+      setUsdcBalance(null);
+    }
+  }, [address, chain, vm, solConn]);
+
   const fetchHiddenBalance = useCallback(async () => {
     if (!address) return;
     try {
@@ -210,7 +265,7 @@ export function WalletProvider({ children }) {
     } catch {}
   }, [address]);
 
-  useEffect(() => { if (address) { fetchBalance(); fetchHiddenBalance(); } }, [address, chain, fetchBalance, fetchHiddenBalance]);
+  useEffect(() => { if (address) { fetchBalance(); fetchUsdcBalance(); fetchHiddenBalance(); } }, [address, chain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance]);
 
   useEffect(() => {
     if (window.ethereum) {
@@ -219,7 +274,7 @@ export function WalletProvider({ children }) {
   }, [disconnect]);
 
   return (
-    <WalletContext.Provider value={{ chain, address, balance, hiddenBalance, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, connectWallet, disconnect, switchChain, fetchBalance, fetchHiddenBalance }}>
+    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, connectWallet, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance }}>
       {children}
     </WalletContext.Provider>
   );

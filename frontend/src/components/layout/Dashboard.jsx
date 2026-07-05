@@ -86,7 +86,7 @@ function LoadingFallback() {
 }
 
 export function Dashboard() {
-  const { address, balance, chain, fetchBalance, hiddenBalance } = useWallet();
+  const { address, balance, usdcBalance, chain, fetchBalance, fetchHiddenBalance, hiddenBalance } = useWallet();
   const [page, _setPage] = useState("home");
   const [showBal, setShowBal] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -190,7 +190,11 @@ export function Dashboard() {
 
   const refresh = async () => {
     setRefreshing(true);
-    await fetchBalance();
+    await Promise.all([
+      fetchBalance(),
+      fetchUsdcBalance(),
+      fetchHiddenBalance(),
+    ]);
     setRefreshing(false);
   };
 
@@ -222,7 +226,7 @@ export function Dashboard() {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <span className="text-xs text-gray-500 uppercase tracking-wider">
-                  Balance on <span style={{ color: CHAINS[safeChain].color }}>{CHAINS[safeChain].name}</span>
+                  USDC Balance on <span style={{ color: CHAINS[safeChain].color }}>{CHAINS[safeChain].name}</span>
                 </span>
               </div>
               <div className="flex gap-1">
@@ -236,10 +240,28 @@ export function Dashboard() {
             </div>
             <div className="flex items-end gap-2">
               <span className="text-3xl md:text-5xl font-bold">
-                {showBal && balance ? balance.formatted : "••••••"}
+                {showBal
+                  ? (usdcBalance ? usdcBalance.formatted : balance ? balance.formatted : "••••••")
+                  : "••••••"}
               </span>
-              <span className="text-gray-500 mb-1">{CHAINS[safeChain].symbol}</span>
+              <span className="text-gray-500 mb-1">{usdcBalance ? "USDC" : (CHAINS[safeChain]?.symbol || "")}</span>
             </div>
+            {(usdcBalance || balance) && (
+              <div className="flex items-center gap-2 text-xs text-white/40 mt-1">
+                {usdcBalance && (
+                  <span className="bg-blue-500/15 border border-blue-400/30 px-2 py-0.5 text-[10px] uppercase tracking-wider text-blue-300">
+                    ★ Primary
+                  </span>
+                )}
+                {balance && (
+                  <span>
+                    <span className="text-white/30">+ </span>
+                    {balance.formatted} {CHAINS[safeChain]?.symbol}
+                    <span className="text-white/30"> · native</span>
+                  </span>
+                )}
+              </div>
+            )}
             {hiddenBalance && (
               <div className="mt-4 pt-4 border-t border-white/10">
                 <div className="flex items-center justify-between">
