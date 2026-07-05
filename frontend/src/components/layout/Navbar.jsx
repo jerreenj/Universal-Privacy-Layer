@@ -21,11 +21,11 @@ export function Navbar() {
           <img
             src="/logo.svg"
             alt="Privacy Cloak"
-            className="w-7 h-7 md:w-8 md:h-8 rounded-full"
+            className="w-8 h-8 md:w-10 md:h-10 rounded-full"
             data-testid="brand-logo"
           />
           <div className="flex flex-col leading-none">
-            <span className="font-heading text-base md:text-lg font-bold tracking-tight">PRIVACY <span className="text-green-400">CLOAK</span></span>
+            <span className="font-heading text-base md:text-lg font-bold tracking-tight text-white">Privacy Cloak</span>
             <span className="text-[9px] md:text-[10px] text-white/40 uppercase tracking-[0.2em] mt-0.5">Universal Privacy Layer</span>
           </div>
         </div>

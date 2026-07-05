@@ -1,5 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <!-- Outer dark circle with subtle green ring -->
   <defs>
     <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
       <stop offset="0%" stop-color="#0a1410"/>
@@ -7,94 +6,126 @@
       <stop offset="100%" stop-color="#000"/>
     </radialGradient>
     <linearGradient id="cloakGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#a7ff3a"/>
-      <stop offset="50%" stop-color="#4cd137"/>
-      <stop offset="100%" stop-color="#0a8a2a"/>
+      <stop offset="0%" stop-color="#b6ff42"/>
+      <stop offset="45%" stop-color="#5edb35"/>
+      <stop offset="100%" stop-color="#0a7a26"/>
     </linearGradient>
-    <radialGradient id="glow" cx="50%" cy="50%" r="60%">
-      <stop offset="0%" stop-color="#4cd137" stop-opacity="0.15"/>
-      <stop offset="100%" stop-color="#4cd137" stop-opacity="0"/>
-    </radialGradient>
+    <linearGradient id="cloakBackGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#3edb35" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#0a4a18" stop-opacity="0.95"/>
+    </linearGradient>
   </defs>
 
   <!-- Background circle -->
-  <circle cx="256" cy="256" r="248" fill="url(#bgGrad)"/>
-  <circle cx="256" cy="256" r="248" stroke="#1a3a1f" stroke-width="2"/>
+  <circle cx="256" cy="256" r="244" fill="url(#bgGrad)"/>
+  <circle cx="256" cy="256" r="244" stroke="#0f2614" stroke-width="1"/>
 
-  <!-- Floral-dot ring (the dotted green halo around the cloak) -->
-  <g fill="#4cd137">
-    <!-- Generate ~36 dots around radius 230 -->
-    <circle cx="256" cy="26" r="3"/>
-    <circle cx="296" cy="30" r="2.5"/>
-    <circle cx="336" cy="42" r="2"/>
-    <circle cx="372" cy="62" r="2.5"/>
-    <circle cx="404" cy="90" r="3"/>
-    <circle cx="430" cy="124" r="2"/>
-    <circle cx="448" cy="162" r="2.5"/>
-    <circle cx="458" cy="202" r="3"/>
-    <circle cx="462" cy="244" r="2.5"/>
-    <circle cx="458" cy="286" r="3"/>
-    <circle cx="448" cy="326" r="2"/>
-    <circle cx="430" cy="364" r="2.5"/>
-    <circle cx="404" cy="398" r="3"/>
-    <circle cx="372" cy="426" r="2"/>
-    <circle cx="336" cy="446" r="2.5"/>
-    <circle cx="296" cy="458" r="3"/>
-    <circle cx="256" cy="462" r="2"/>
-    <circle cx="216" cy="458" r="3"/>
-    <circle cx="176" cy="446" r="2.5"/>
-    <circle cx="140" cy="426" r="2"/>
-    <circle cx="108" cy="398" r="3"/>
-    <circle cx="82" cy="364" r="2.5"/>
-    <circle cx="64" cy="326" r="2"/>
-    <circle cx="54" cy="286" r="3"/>
-    <circle cx="50" cy="244" r="2.5"/>
-    <circle cx="54" cy="202" r="3"/>
-    <circle cx="64" cy="162" r="2"/>
-    <circle cx="82" cy="124" r="2.5"/>
-    <circle cx="108" cy="90" r="3"/>
-    <circle cx="140" cy="62" r="2"/>
-    <circle cx="176" cy="42" r="2.5"/>
+  <!-- Halo (dotted ring around the knight) — outer -->
+  <g fill="#7af03a">
+    <circle cx="256" cy="22" r="2.5"/>
+    <circle cx="304" cy="30" r="2"/>
+    <circle cx="350" cy="50" r="2.5"/>
+    <circle cx="390" cy="80" r="2"/>
+    <circle cx="422" cy="118" r="2.5"/>
+    <circle cx="446" cy="162" r="2"/>
+    <circle cx="462" cy="208" r="2.5"/>
+    <circle cx="468" cy="256" r="2"/>
+    <circle cx="462" cy="304" r="2.5"/>
+    <circle cx="446" cy="350" r="2"/>
+    <circle cx="422" cy="394" r="2.5"/>
+    <circle cx="390" cy="432" r="2"/>
+    <circle cx="350" cy="462" r="2.5"/>
+    <circle cx="304" cy="482" r="2"/>
+    <circle cx="256" cy="490" r="2.5"/>
+    <circle cx="208" cy="482" r="2"/>
+    <circle cx="162" cy="462" r="2.5"/>
+    <circle cx="122" cy="432" r="2"/>
+    <circle cx="90" cy="394" r="2.5"/>
+    <circle cx="66" cy="350" r="2"/>
+    <circle cx="50" cy="304" r="2.5"/>
+    <circle cx="44" cy="256" r="2"/>
+    <circle cx="50" cy="208" r="2.5"/>
+    <circle cx="66" cy="162" r="2"/>
+    <circle cx="90" cy="118" r="2.5"/>
+    <circle cx="122" cy="80" r="2"/>
+    <circle cx="162" cy="50" r="2.5"/>
+    <circle cx="208" cy="30" r="2"/>
   </g>
 
-  <!-- Soft green glow behind cloak -->
-  <circle cx="256" cy="256" r="190" fill="url(#glow)"/>
+  <!-- Halo (dotted ring) — inner slightly larger dots mixed in -->
+  <g fill="#4cd137" opacity="0.55">
+    <circle cx="276" cy="25" r="3"/>
+    <circle cx="376" cy="65" r="3"/>
+    <circle cx="438" cy="148" r="3"/>
+    <circle cx="455" cy="220" r="3"/>
+    <circle cx="438" cy="360" r="3"/>
+    <circle cx="376" cy="442" r="3"/>
+    <circle cx="282" cy="482" r="3"/>
+    <circle cx="220" cy="486" r="3"/>
+    <circle cx="138" cy="442" r="3"/>
+    <circle cx="76" cy="360" r="3"/>
+    <circle cx="58" cy="220" r="3"/>
+    <circle cx="138" cy="65" r="3"/>
+  </g>
 
-  <!-- The cloaked figure: hood (triangle) + cloak body (rounded trapezoid) -->
-  <!-- Cloak body -->
-  <path d="M 160 380
-           C 160 320, 180 290, 210 270
-           L 235 215
-           C 240 205, 248 200, 256 200
-           C 264 200, 272 205, 277 215
-           L 302 270
-           C 332 290, 352 320, 352 380
-           C 352 400, 340 410, 320 410
-           L 192 410
-           C 172 410, 160 400, 160 380 Z"
+  <!-- The cloaked knight: hooded triangle + flared cloak body -->
+  <!-- Cloak body (outer silhouette) -->
+  <path d="M 138 410
+           C 138 332, 158 296, 196 274
+           L 232 200
+           C 240 184, 248 178, 256 178
+           C 264 178, 272 184, 280 200
+           L 316 274
+           C 354 296, 374 332, 374 410
+           C 374 426, 362 436, 346 436
+           L 166 436
+           C 150 436, 138 426, 138 410 Z"
         fill="url(#cloakGrad)"/>
 
-  <!-- Hood rim highlight (inner hood outline) -->
-  <path d="M 235 215
-           C 240 205, 248 200, 256 200
-           C 264 200, 272 205, 277 215
-           L 285 245
-           C 275 235, 265 232, 256 232
-           C 247 232, 237 235, 227 245 Z"
-        fill="#0a3d1a"/>
+  <!-- Cloak inner-back shadow (the inner curve where light falls off) -->
+  <path d="M 162 410
+           C 162 340, 178 308, 210 290
+           L 240 232
+           L 272 232
+           L 302 290
+           C 334 308, 348 340, 348 410
+           L 162 410 Z"
+        fill="url(#cloakBackGrad)" opacity="0.7"/>
 
-  <!-- Inner face shadow (where eyes would be) -->
-  <path d="M 244 232
-           C 248 226, 264 226, 268 232
-           L 268 252
-           C 264 256, 248 256, 244 252 Z"
-        fill="#020"/>
+  <!-- Hood (sharp triangular hood that sits on shoulders) -->
+  <path d="M 226 200
+           C 230 188, 240 182, 252 180
+           C 254 156, 258 156, 260 180
+           C 272 182, 282 188, 286 200
+           L 308 268
+           C 292 256, 274 250, 256 250
+           C 238 250, 220 256, 204 268 Z"
+        fill="url(#cloakGrad)"/>
 
-  <!-- Subtle cloak fold lines -->
-  <path d="M 200 350 Q 210 380 220 410" stroke="#0a8a2a" stroke-width="1.5" fill="none" opacity="0.65"/>
-  <path d="M 312 350 Q 302 380 292 410" stroke="#0a8a2a" stroke-width="1.5" fill="none" opacity="0.65"/>
-  <path d="M 256 200 L 256 410" stroke="#0a8a2a" stroke-width="1" fill="none" opacity="0.45"/>
+  <!-- Hood inner shadow (V-shape that frames the 'face' void) -->
+  <path d="M 240 210
+           C 244 200, 250 196, 256 196
+           C 262 196, 268 200, 272 210
+           L 284 244
+           C 274 236, 264 233, 256 233
+           C 248 233, 238 236, 228 244 Z"
+        fill="#04190a"/>
+
+  <!-- Eye/face void (the small dark interior of the hood) -->
+  <ellipse cx="256" cy="225" rx="11" ry="9" fill="#020"/>
+  <!-- Eye highlights -->
+  <circle cx="252" cy="222.5" r="1.3" fill="#b6ff42" opacity="0.85"/>
+  <circle cx="260" cy="222.5" r="1.3" fill="#b6ff42" opacity="0.85"/>
+
+  <!-- Cloak fold lines (depth shading) -->
+  <path d="M 196 320 Q 200 380 210 432"
+        stroke="#0a7a26" stroke-width="1.5" fill="none" opacity="0.65"/>
+  <path d="M 316 320 Q 312 380 302 432"
+        stroke="#0a7a26" stroke-width="1.5" fill="none" opacity="0.65"/>
+  <path d="M 256 200 L 256 436"
+        stroke="#0a7a26" stroke-width="1" fill="none" opacity="0.4"/>
 
   <!-- Cloak edge highlight at shoulders -->
-  <path d="M 210 270 L 302 270" stroke="#c8ff5d" stroke-width="1.2" fill="none" opacity="0.5"/>
+  <path d="M 204 268 Q 256 280 308 268"
+        stroke="#d6ff5d" stroke-width="1.5" fill="none" opacity="0.45"/>
 </svg>
