@@ -1,11 +1,8 @@
 import { useState, lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 
-/**
- * Encrypted Receipts (SVM) — generic wrapper with a Sui↔Solana toggle.
- */
-const SuiReceipts = lazy(() => import("@/components/features/SuiReceipts"));
-const SolReceipts = lazy(() => import("@/components/features/SolReceipts"));
+const SuiReceipts = lazy(() => import("@/components/features/SuiReceipts").then(m => ({ default: m.SuiReceipts })));
+const SolReceipts = lazy(() => import("@/components/features/SolReceipts").then(m => ({ default: m.SolReceipts })));
 
 const CHAINS = [
   { id: "sui", label: "Sui", color: "text-cyan-400" },

@@ -1,11 +1,8 @@
 import { useState, lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 
-/**
- * Announcement Scanner (SVM) — generic wrapper with a Sui↔Solana toggle.
- */
-const SuiScanner = lazy(() => import("@/components/features/SuiScanner"));
-const SolScanner = lazy(() => import("@/components/features/SolScanner"));
+const SuiScanner = lazy(() => import("@/components/features/SuiScanner").then(m => ({ default: m.SuiScanner })));
+const SolScanner = lazy(() => import("@/components/features/SolScanner").then(m => ({ default: m.SolScanner })));
 
 const CHAINS = [
   { id: "sui", label: "Sui", color: "text-cyan-400" },

@@ -1,12 +1,8 @@
 import { useState, lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 
-/**
- * Stealth Send (SVM) — generic wrapper with a Sui↔Solana toggle inside.
- * No chain names on the Dashboard; chain is selected within this feature.
- */
-const SuiStealthSend = lazy(() => import("@/components/features/SuiStealthSend"));
-const SolStealthSend = lazy(() => import("@/components/features/SolStealthSend"));
+const SuiStealthSend = lazy(() => import("@/components/features/SuiStealthSend").then(m => ({ default: m.SuiStealthSend })));
+const SolStealthSend = lazy(() => import("@/components/features/SolStealthSend").then(m => ({ default: m.SolStealthSend })));
 
 const CHAINS = [
   { id: "sui", label: "Sui", color: "text-cyan-400" },
