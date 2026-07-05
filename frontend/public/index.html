@@ -2,10 +2,16 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <!-- Favicons — Privacy Cloak green cloaked-knight logo.
+         Chromium/Firefox/Safari 14+ support SVG favicons natively.
+         Older browsers fall back to /favicon.ico (we serve the SVG via
+         the file share-contract; ICO fallback at /icons/icon.svg). -->
+    <link rel="icon" type="image/svg+xml" href="%PUBLIC_URL%/logo.svg" />
+    <link rel="alternate icon" type="image/x-icon" href="%PUBLIC_URL%/icons/icon.svg" />
+    <link rel="shortcut icon" href="%PUBLIC_URL%/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <meta name="theme-color" content="#050505" />
-    <meta name="description" content="Universal Privacy Layer - The HTTPS of Web3" />
+    <meta name="description" content="Privacy Cloak — Universal Privacy Layer. The HTTPS of Web3." />
 
     <!--
       Aggressive cache-control for the HTML shell. The deployed JS chunks
@@ -25,7 +31,7 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="UPL" />
+    <meta name="apple-mobile-web-app-title" content="Privacy Cloak" />
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/icons/icon-192x192.png" />
     
     <!-- Splash screens for iOS -->
@@ -34,8 +40,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;600;800&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <title>UPL | Universal Privacy Layer</title>
-    <!-- Version: 2026-07-05 — error boundary made non-intrusive, StealthMeta fixed, SW killed -->
+    <title>Privacy Cloak | Universal Privacy Layer</title>
+    <!-- OpenGraph for social previews -->
+    <meta property="og:title" content="Privacy Cloak — Universal Privacy Layer" />
+    <meta property="og:description" content="Privacy-routed swaps, stealth addresses, ZK proofs, cross-chain splits. The HTTPS of Web3." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="%PUBLIC_URL%/logo.svg" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Privacy Cloak — Universal Privacy Layer" />
+    <meta name="twitter:description" content="The HTTPS of Web3." />
+    <meta name="twitter:image" content="%PUBLIC_URL%/logo.svg" />
+    <!-- Version: 2026-07-05 — logo + scroll + lazy fixes -->
     <style>
       html, body { background-color: #050505; }
     </style>

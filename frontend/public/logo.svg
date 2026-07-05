@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Outer dark circle with subtle green ring -->
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0a1410"/>
+      <stop offset="80%" stop-color="#050505"/>
+      <stop offset="100%" stop-color="#000"/>
+    </radialGradient>
+    <linearGradient id="cloakGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#a7ff3a"/>
+      <stop offset="50%" stop-color="#4cd137"/>
+      <stop offset="100%" stop-color="#0a8a2a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#4cd137" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#4cd137" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="248" fill="url(#bgGrad)"/>
+  <circle cx="256" cy="256" r="248" stroke="#1a3a1f" stroke-width="2"/>
+
+  <!-- Floral-dot ring (the dotted green halo around the cloak) -->
+  <g fill="#4cd137">
+    <!-- Generate ~36 dots around radius 230 -->
+    <circle cx="256" cy="26" r="3"/>
+    <circle cx="296" cy="30" r="2.5"/>
+    <circle cx="336" cy="42" r="2"/>
+    <circle cx="372" cy="62" r="2.5"/>
+    <circle cx="404" cy="90" r="3"/>
+    <circle cx="430" cy="124" r="2"/>
+    <circle cx="448" cy="162" r="2.5"/>
+    <circle cx="458" cy="202" r="3"/>
+    <circle cx="462" cy="244" r="2.5"/>
+    <circle cx="458" cy="286" r="3"/>
+    <circle cx="448" cy="326" r="2"/>
+    <circle cx="430" cy="364" r="2.5"/>
+    <circle cx="404" cy="398" r="3"/>
+    <circle cx="372" cy="426" r="2"/>
+    <circle cx="336" cy="446" r="2.5"/>
+    <circle cx="296" cy="458" r="3"/>
+    <circle cx="256" cy="462" r="2"/>
+    <circle cx="216" cy="458" r="3"/>
+    <circle cx="176" cy="446" r="2.5"/>
+    <circle cx="140" cy="426" r="2"/>
+    <circle cx="108" cy="398" r="3"/>
+    <circle cx="82" cy="364" r="2.5"/>
+    <circle cx="64" cy="326" r="2"/>
+    <circle cx="54" cy="286" r="3"/>
+    <circle cx="50" cy="244" r="2.5"/>
+    <circle cx="54" cy="202" r="3"/>
+    <circle cx="64" cy="162" r="2"/>
+    <circle cx="82" cy="124" r="2.5"/>
+    <circle cx="108" cy="90" r="3"/>
+    <circle cx="140" cy="62" r="2"/>
+    <circle cx="176" cy="42" r="2.5"/>
+  </g>
+
+  <!-- Soft green glow behind cloak -->
+  <circle cx="256" cy="256" r="190" fill="url(#glow)"/>
+
+  <!-- The cloaked figure: hood (triangle) + cloak body (rounded trapezoid) -->
+  <!-- Cloak body -->
+  <path d="M 160 380
+           C 160 320, 180 290, 210 270
+           L 235 215
+           C 240 205, 248 200, 256 200
+           C 264 200, 272 205, 277 215
+           L 302 270
+           C 332 290, 352 320, 352 380
+           C 352 400, 340 410, 320 410
+           L 192 410
+           C 172 410, 160 400, 160 380 Z"
+        fill="url(#cloakGrad)"/>
+
+  <!-- Hood rim highlight (inner hood outline) -->
+  <path d="M 235 215
+           C 240 205, 248 200, 256 200
+           C 264 200, 272 205, 277 215
+           L 285 245
+           C 275 235, 265 232, 256 232
+           C 247 232, 237 235, 227 245 Z"
+        fill="#0a3d1a"/>
+
+  <!-- Inner face shadow (where eyes would be) -->
+  <path d="M 244 232
+           C 248 226, 264 226, 268 232
+           L 268 252
+           C 264 256, 248 256, 244 252 Z"
+        fill="#020"/>
+
+  <!-- Subtle cloak fold lines -->
+  <path d="M 200 350 Q 210 380 220 410" stroke="#0a8a2a" stroke-width="1.5" fill="none" opacity="0.65"/>
+  <path d="M 312 350 Q 302 380 292 410" stroke="#0a8a2a" stroke-width="1.5" fill="none" opacity="0.65"/>
+  <path d="M 256 200 L 256 410" stroke="#0a8a2a" stroke-width="1" fill="none" opacity="0.45"/>
+
+  <!-- Cloak edge highlight at shoulders -->
+  <path d="M 210 270 L 302 270" stroke="#c8ff5d" stroke-width="1.2" fill="none" opacity="0.5"/>
+</svg>
