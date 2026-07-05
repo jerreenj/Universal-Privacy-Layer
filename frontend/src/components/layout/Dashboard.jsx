@@ -88,6 +88,12 @@ export function Dashboard() {
   const [showBal, setShowBal] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Defensive: if chain is somehow undefined or not in CHAINS, fall back
+  // to "base" so CHAINS[safeChain] never throws "Cannot read properties of
+  // undefined". This was causing the entire Dashboard to crash-render
+  // blank when WalletContext returned an unexpected chain value.
+  const safeChain = (chain && CHAINS[chain]) ? chain : "base";
+
   // Hash-based navigation so the BROWSER back button works.
   // Dashboard is mounted at /<path> for every route (see App.js), so we
   // track sub-page state in window.location.hash and listen on popstate.
@@ -145,7 +151,7 @@ export function Dashboard() {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <span className="text-xs text-gray-500 uppercase tracking-wider">
-                  Balance on <span style={{ color: CHAINS[chain].color }}>{CHAINS[chain].name}</span>
+                  Balance on <span style={{ color: CHAINS[safeChain].color }}>{CHAINS[safeChain].name}</span>
                 </span>
               </div>
               <div className="flex gap-1">
@@ -161,14 +167,14 @@ export function Dashboard() {
               <span className="text-3xl md:text-5xl font-bold">
                 {showBal && balance ? balance.formatted : "••••••"}
               </span>
-              <span className="text-gray-500 mb-1">{CHAINS[chain].symbol}</span>
+              <span className="text-gray-500 mb-1">{CHAINS[safeChain].symbol}</span>
             </div>
             {hiddenBalance && (
               <div className="mt-4 pt-4 border-t border-white/10">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-white/50">Hidden (Stealth) Balance</span>
                   <span className="text-sm font-mono text-green-400">
-                    {parseFloat(hiddenBalance.chains?.[chain]?.stealth_balance || 0).toFixed(6)} {CHAINS[chain].symbol}
+                    {parseFloat(hiddenBalance.chains?.[chain]?.stealth_balance || 0).toFixed(6)} {CHAINS[safeChain].symbol}
                   </span>
                 </div>
               </div>
