@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { CHAINS, VM, VM_GROUPS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
+import RotatingEarth from "@/components/ui/RotatingEarth";
 import { MagnetizeButton } from "@/components/ui/magnetize-button";
 
 export function Landing() {
@@ -15,18 +16,12 @@ export function Landing() {
 
   return (
     <div className="min-h-screen relative bg-black overflow-hidden">
-      {/* Top bar — brand logo on the left, connect on the right */}
       <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-3 sm:px-4 md:px-6 py-3 bg-black/80 backdrop-blur-sm">
-        <div className="flex items-center gap-2 sm:gap-3" data-testid="brand-logo-topbar">
-          <img
-            src="/logo.svg"
-            alt="Privacy Cloak"
-            className="w-7 h-7 sm:w-9 sm:h-9 rounded-full"
-          />
-          <div className="flex flex-col leading-none">
-            <span className="font-heading text-sm sm:text-base font-bold tracking-tight text-white">Privacy Cloak</span>
-            <span className="text-[8px] sm:text-[10px] text-white/40 uppercase tracking-[0.2em]">Universal Privacy Layer</span>
-          </div>
+        <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border border-white/20 text-[10px] sm:text-xs cursor-pointer hover:border-white/40 transition-all"
+          onClick={() => setShowChains(!showChains)} data-testid="live-chain-badge">
+          <div className="w-1.5 sm:w-2 h-1.5 sm:h-2 rounded-full bg-green-400 animate-pulse" />
+          <span className="text-white/70">{LIVE_COUNT} Live</span>
+          <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${showChains ? "rotate-180" : ""}`} />
         </div>
 
         <MagnetizeButton onClick={connectWallet} disabled={connecting} particleCount={14} className="px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm">
@@ -50,9 +45,9 @@ export function Landing() {
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
                   <span>{v.name}</span>
                   <span className="text-white/30 text-xs ml-auto">{v.symbol}</span>
-                  {v.deployed && <span className="text-[9px] text-white/40 font-semibold">● Deployed</span>}
-                  {!v.live && <span className="text-[10px] text-white/40">Soon</span>}
-                  {chain === k && v.live && !v.deployed && <div className="w-2 h-2 rounded-full bg-white/60" />}
+                  {v.deployed && <span className="text-[9px] text-green-400 font-semibold">● Deployed</span>}
+                  {!v.live && <span className="text-[10px] text-yellow-400">Soon</span>}
+                  {chain === k && v.live && !v.deployed && <div className="w-2 h-2 rounded-full bg-green-400" />}
                 </button>
               ))}
             </div>
@@ -60,17 +55,9 @@ export function Landing() {
         </div>
       )}
 
-      {/* Hero — large logo + brand text + tagline */}
-      <div className="pt-20 md:pt-24 flex justify-center">
-        <div className="relative w-[260px] h-[260px] md:w-[380px] md:h-[380px] flex items-center justify-center">
-          <div className="absolute inset-0 rounded-full opacity-30 blur-3xl"
-               style={{ background: "radial-gradient(circle, rgba(122,240,58,0.35) 0%, rgba(0,0,0,0) 70%)" }} />
-          <img
-            src="/logo.svg"
-            alt="Privacy Cloak logo"
-            className="w-full h-full relative z-10 drop-shadow-2xl"
-            data-testid="hero-logo"
-          />
+      <div className="pt-16 md:pt-20 flex justify-center">
+        <div className="w-[200px] h-[200px] md:w-[350px] md:h-[350px]">
+          <RotatingEarth width={350} height={350} />
         </div>
       </div>
 
@@ -91,10 +78,10 @@ export function Landing() {
           ))}
         </div>
 
-        <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 mb-4 md:mb-6 px-2">
+        <div className="flex flex-wrap items-center justify-center gap-2 mb-4 md:mb-6 px-2">
           {Object.entries(VM_GROUPS).map(([vmKey, info]) => (
             <div key={vmKey} className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 border border-white/10 text-[10px] sm:text-xs whitespace-nowrap">
-              <div className="w-1.5 h-1.5 rounded-full bg-white/60" />
+              <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
               <span className="text-white/60">{info.label}</span>
               <span className="text-white/20 hidden sm:inline">·</span>
               <span className="text-white/30 hidden sm:inline">{vmKey === VM.EVM ? "Solidity" : vmKey === VM.SOLANA ? "Rust" : "Move"}</span>
@@ -108,7 +95,7 @@ export function Landing() {
               onClick={() => { if (v.live) { switchChain(k); } }}>
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: v.color }} />
               <span className="text-white/60">{v.name}</span>
-              {!v.live && <span className="text-[8px] sm:text-[10px] text-white/40 ml-0.5">Soon</span>}
+              {!v.live && <span className="text-[8px] sm:text-[10px] text-yellow-400 ml-0.5">Soon</span>}
             </div>
           ))}
         </div>
