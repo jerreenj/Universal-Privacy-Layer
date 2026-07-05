@@ -86,8 +86,8 @@ contract PrivacyPoolBaseForkTest is Test {
         emit log_named_uint("[2/9] commitment", commitment);
 
         // --- STEP 3: pre-state snapshot -------------------------------------
-        uint256 root_pre = pool.currentRoot();
-        uint256 next_pre = pool.nextLeafIndex();
+        uint256 root_pre = uint256(pool.currentRootOf(DENOMINATION));
+        uint256 next_pre = pool.depositCount(DENOMINATION);
         assertEq(
             root_pre,
             15019797232609675441998260052101280400536945603062888308240081994073687793470,
@@ -101,11 +101,11 @@ contract PrivacyPoolBaseForkTest is Test {
         vm.deal(DEPLOYER, 100 ether);
         vm.prank(DEPLOYER);
         emit log_named_string("[4/9] deposit broadcasted in fork state", "");
-        pool.deposit{value: DENOMINATION}(bytes32(commitment));
+        pool.deposit{value: DENOMINATION}(bytes32(commitment), DENOMINATION);
 
         // --- STEP 5: post-state snapshot -----------------------------------
-        uint256 root_post = pool.currentRoot();
-        uint256 next_post = pool.nextLeafIndex();
+        uint256 root_post = uint256(pool.currentRootOf(DENOMINATION));
+        uint256 next_post = pool.depositCount(DENOMINATION);
         assertEq(next_post, 1, "leaf not inserted at index 0");
         emit log_named_uint("[5/9] post-state nextLeafIndex", next_post);
         assertTrue(root_post != root_pre, "root didn't change - deposit didn't land");
@@ -196,7 +196,7 @@ contract PrivacyPoolBaseForkTest is Test {
         );
         assertTrue(pool.nullifierHashes(nullifierHash), "nullifier hash not marked spent");
         // Root unchanged after withdraw (single deposit only).
-        assertEq(pool.currentRoot(), root_post, "currentRoot changed after withdraw");
+        assertEq(uint256(pool.currentRootOf(DENOMINATION)), root_post, "currentRoot changed after withdraw");
 
         emit log_named_string("[9/9] OK E2E PASS", "deposit + Groth16 proof + withdraw on LIVE PrivacyPool @ Base");
     }

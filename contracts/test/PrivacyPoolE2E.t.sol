@@ -55,7 +55,9 @@ contract PrivacyPoolE2ETest is Test {
 
     function setUp() public {
         verifier = new Groth16Verifier();
-        pool = new PrivacyPool(DENOM, address(verifier));
+        uint256[] memory _denoms = new uint256[](1);
+        _denoms[0] = DENOM;
+        pool = new PrivacyPool(address(verifier), _denoms);
         vm.deal(address(this), 100 ether);
     }
 
@@ -79,9 +81,9 @@ contract PrivacyPoolE2ETest is Test {
         // 1. Deposit the commitment as leaf 0. The on-chain root after this
         //    insert MUST equal the proof's ROOT — if it doesn't, the on-chain
         //    Poseidon diverges from the circuit's and the proof would fail.
-        pool.deposit{value: DENOM}(COMMITMENT);
-        assertEq(pool.currentRoot(), ROOT, "on-chain root != proof root (Poseidon divergence)");
-        assertEq(pool.nextLeafIndex(), 1, "leaf not inserted at index 0");
+        pool.deposit{value: DENOM}(COMMITMENT, DENOM);
+        assertEq(uint256(pool.currentRootOf(DENOM)), ROOT, "on-chain root != proof root (Poseidon divergence)");
+        assertEq(pool.depositCount(DENOM), 1, "leaf not inserted at index 0");
 
         // 2. Submit the real Groth16 proof.
         (uint256[2] memory a, uint256[2][2] memory b, uint256[2] memory c, uint256[3] memory pub) = _proof();
@@ -96,7 +98,7 @@ contract PrivacyPoolE2ETest is Test {
     /// @notice Re-submitting the SAME proof (same nullifier) reverts: the
     ///         nullifier is now spent, so even a valid proof cannot double-spend.
     function testRevert_RealProofDoubleSpend() public {
-        pool.deposit{value: DENOM}(COMMITMENT);
+        pool.deposit{value: DENOM}(COMMITMENT, DENOM);
         (uint256[2] memory a, uint256[2][2] memory b, uint256[2] memory c, uint256[3] memory pub) = _proof();
         pool.withdraw(a, b, c, pub); // first withdraw OK
         vm.expectRevert(PrivacyPool.NullifierAlreadySpent.selector);
@@ -107,7 +109,7 @@ contract PrivacyPoolE2ETest is Test {
     ///         Confirms the verifier actually checks the pairing, not just that
     ///         the inputs are well-formed.
     function testRevert_TamperedProofRejected() public {
-        pool.deposit{value: DENOM}(COMMITMENT);
+        pool.deposit{value: DENOM}(COMMITMENT, DENOM);
         (uint256[2] memory a, uint256[2][2] memory b, uint256[2] memory c, uint256[3] memory pub) = _proof();
         // Flip one byte of proofC[0] — breaks the pairing.
         c[0] = PC0 ^ 1;
