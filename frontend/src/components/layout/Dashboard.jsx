@@ -11,33 +11,39 @@ import { FeatureErrorBoundary } from "@/components/common/FeatureErrorBoundary";
 import { Navbar } from "@/components/layout/Navbar";
 import { Landing } from "@/components/layout/Landing";
 
-/* Lazy-loaded feature components – each becomes a separate JS chunk. */
-const StealthContent          = lazy(() => import("@/components/features/StealthContent"));
-const SendContent               = lazy(() => import("@/components/features/SendContent"));
-const SwapContent               = lazy(() => import("@/components/features/SwapContent"));
-const UniswapPrivateSwap        = lazy(() => import("@/components/features/UniswapPrivateSwap"));
-const HyperliquidPrivateTrading = lazy(() => import("@/components/features/HyperliquidPrivateTrading"));
-const PolymarketPrivateBetting  = lazy(() => import("@/components/features/PolymarketPrivateBetting"));
-const HiddenBalanceDashboard    = lazy(() => import("@/components/features/HiddenBalanceDashboard"));
-const TransactionHistory        = lazy(() => import("@/components/features/TransactionHistory"));
-const DualSeedSetup             = lazy(() => import("@/components/features/DualSeedSetup"));
-const NFTPrivacy                = lazy(() => import("@/components/features/NFTPrivacy"));
-const TokenApprovalPrivacy      = lazy(() => import("@/components/features/TokenApprovalPrivacy"));
-const ContractPrivacy           = lazy(() => import("@/components/features/ContractPrivacy"));
-const ChainsStatus              = lazy(() => import("@/components/features/ChainsStatus"));
-const ZKPProofs                 = lazy(() => import("@/components/features/ZKPProofs"));
-const OnChainRelayer            = lazy(() => import("@/components/features/OnChainRelayer"));
-const CrossChainSplit           = lazy(() => import("@/components/features/CrossChainSplit"));
-const EncryptedMessaging        = lazy(() => import("@/components/features/EncryptedMessaging"));
-const MultisigPrivacy           = lazy(() => import("@/components/features/MultisigPrivacy"));
-const DeveloperAPI              = lazy(() => import("@/pages/DeveloperAPI"));
-const WalletPrivacyAnalyzer     = lazy(() => import("@/components/features/WalletPrivacyAnalyzer"));
-const EncryptedReceipts         = lazy(() => import("@/components/features/EncryptedReceipts"));
-const PrivacyAddressBook        = lazy(() => import("@/components/features/PrivacyAddressBook"));
-const ZKCommitments             = lazy(() => import("@/components/features/ZKCommitments"));
-const StealthSendSVM            = lazy(() => import("@/components/features/StealthSendSVM"));
-const ScannerSVM                = lazy(() => import("@/components/features/ScannerSVM"));
-const ReceiptsSVM               = lazy(() => import("@/components/features/ReceiptsSVM"));
+/* Lazy-loaded feature components – each becomes a separate JS chunk.
+ * IMPORTANT: every feature file uses NAMED exports (export function Foo),
+ * NOT default exports. React.lazy() requires a default export, so every
+ * import MUST use `.then(m => ({ default: m.Foo }))` to convert the named
+ * export to a default. Without this, lazy() gets `undefined` and React
+ * throws error #306 — which was the cause of EVERY blank feature page.
+ */
+const StealthContent          = lazy(() => import("@/components/features/StealthContent").then(m => ({ default: m.StealthContent })));
+const SendContent               = lazy(() => import("@/components/features/SendContent").then(m => ({ default: m.SendContent })));
+const SwapContent               = lazy(() => import("@/components/features/SwapContent").then(m => ({ default: m.SwapContent })));
+const UniswapPrivateSwap        = lazy(() => import("@/components/features/UniswapPrivateSwap").then(m => ({ default: m.UniswapPrivateSwap })));
+const HyperliquidPrivateTrading = lazy(() => import("@/components/features/HyperliquidPrivateTrading").then(m => ({ default: m.HyperliquidPrivateTrading })));
+const PolymarketPrivateBetting  = lazy(() => import("@/components/features/PolymarketPrivateBetting").then(m => ({ default: m.PolymarketPrivateBetting })));
+const HiddenBalanceDashboard    = lazy(() => import("@/components/features/HiddenBalanceDashboard").then(m => ({ default: m.HiddenBalanceDashboard })));
+const TransactionHistory        = lazy(() => import("@/components/features/TransactionHistory").then(m => ({ default: m.TransactionHistory })));
+const DualSeedSetup             = lazy(() => import("@/components/features/DualSeedSetup").then(m => ({ default: m.DualSeedSetup })));
+const NFTPrivacy                = lazy(() => import("@/components/features/NFTPrivacy").then(m => ({ default: m.NFTPrivacy })));
+const TokenApprovalPrivacy      = lazy(() => import("@/components/features/TokenApprovalPrivacy").then(m => ({ default: m.TokenApprovalPrivacy })));
+const ContractPrivacy           = lazy(() => import("@/components/features/ContractPrivacy").then(m => ({ default: m.ContractPrivacy })));
+const ChainsStatus              = lazy(() => import("@/components/features/ChainsStatus").then(m => ({ default: m.ChainsStatus })));
+const ZKPProofs                 = lazy(() => import("@/components/features/ZKPProofs").then(m => ({ default: m.ZKPProofs })));
+const OnChainRelayer            = lazy(() => import("@/components/features/OnChainRelayer").then(m => ({ default: m.OnChainRelayer })));
+const CrossChainSplit           = lazy(() => import("@/components/features/CrossChainSplit").then(m => ({ default: m.CrossChainSplit })));
+const EncryptedMessaging        = lazy(() => import("@/components/features/EncryptedMessaging").then(m => ({ default: m.EncryptedMessaging })));
+const MultisigPrivacy           = lazy(() => import("@/components/features/MultisigPrivacy").then(m => ({ default: m.MultisigPrivacy })));
+const DeveloperAPI              = lazy(() => import("@/pages/DeveloperAPI").then(m => ({ default: m.DeveloperAPI })));
+const WalletPrivacyAnalyzer     = lazy(() => import("@/components/features/WalletPrivacyAnalyzer").then(m => ({ default: m.WalletPrivacyAnalyzer })));
+const EncryptedReceipts         = lazy(() => import("@/components/features/EncryptedReceipts").then(m => ({ default: m.EncryptedReceipts })));
+const PrivacyAddressBook        = lazy(() => import("@/components/features/PrivacyAddressBook").then(m => ({ default: m.PrivacyAddressBook })));
+const ZKCommitments             = lazy(() => import("@/components/features/ZKCommitments").then(m => ({ default: m.ZKCommitments })));
+const StealthSendSVM            = lazy(() => import("@/components/features/StealthSendSVM").then(m => ({ default: m.StealthSendSVM })));
+const ScannerSVM                = lazy(() => import("@/components/features/ScannerSVM").then(m => ({ default: m.ScannerSVM })));
+const ReceiptsSVM               = lazy(() => import("@/components/features/ReceiptsSVM").then(m => ({ default: m.ReceiptsSVM })));
 
 /* Page metadata – references the lazy Component *type*, not a rendered element. The `key` field is passed to ChunkErrorBoundary so it can show what failed.
  *

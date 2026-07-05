@@ -39,7 +39,11 @@ export class FeatureErrorBoundary extends React.Component {
   };
 
   handleReload = () => {
-    window.location.href = "/";
+    // Go back to dashboard, NOT landing. Clear any hash so Dashboard
+    // renders at home, and force a full reload of the SPA so React
+    // state resets (the crashed feature won't be in the tree anymore).
+    window.location.href = window.location.origin + "/#/";
+    window.location.reload();
   };
 
   render() {
