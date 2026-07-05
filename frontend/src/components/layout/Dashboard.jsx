@@ -30,7 +30,6 @@ const DualSeedSetup             = lazy(() => import("@/components/features/DualS
 const NFTPrivacy                = lazy(() => import("@/components/features/NFTPrivacy").then(m => ({ default: m.NFTPrivacy })));
 const TokenApprovalPrivacy      = lazy(() => import("@/components/features/TokenApprovalPrivacy").then(m => ({ default: m.TokenApprovalPrivacy })));
 const ContractPrivacy           = lazy(() => import("@/components/features/ContractPrivacy").then(m => ({ default: m.ContractPrivacy })));
-const ChainsStatus              = lazy(() => import("@/components/features/ChainsStatus").then(m => ({ default: m.ChainsStatus })));
 const ZKPProofs                 = lazy(() => import("@/components/features/ZKPProofs").then(m => ({ default: m.ZKPProofs })));
 const OnChainRelayer            = lazy(() => import("@/components/features/OnChainRelayer").then(m => ({ default: m.OnChainRelayer })));
 const CrossChainSplit           = lazy(() => import("@/components/features/CrossChainSplit").then(m => ({ default: m.CrossChainSplit })));
@@ -64,7 +63,6 @@ const pages = {
   nft:         { title: "NFT Privacy",                 Component: NFTPrivacy,              key: "nft" },
   approval:    { title: "Token Approval Privacy",      Component: TokenApprovalPrivacy,    key: "approval" },
   contract:    { title: "Contract Privacy",            Component: ContractPrivacy,         key: "contract" },
-  chains:      { title: "Chain Status",                Component: ChainsStatus,            key: "chains" },
   zkp:         { title: "ZKP Proofs",                  Component: ZKPProofs,               key: "zkp" },
   relayer:     { title: "On-Chain Relayer",            Component: OnChainRelayer,          key: "relayer" },
   split:       { title: "Cross-Chain Split",           Component: CrossChainSplit,         key: "split" },
@@ -305,7 +303,7 @@ export function Dashboard() {
               { id: "messaging", icon: <MessageSquare className="w-5 h-5" />, title: "Messaging", color: "text-pink-400" },
               { id: "multisig", icon: <Users className="w-5 h-5" />, title: "Multisig", color: "text-amber-400" },
               { id: "analyzer", icon: <Search className="w-5 h-5" />, title: "Privacy Analyzer", color: "text-cyan-400" },
-              { id: "zkcommit", icon: <Hash className="w-5 h-5" />, title: "ZK Commitments", color: "text-lime-400" },
+              { id: "addressbook", icon: <BookOpen className="w-5 h-5" />, title: "Address Book", color: "text-violet-400" },
               { id: "svmSend", icon: <Send className="w-5 h-5" />, title: "Stealth Send", color: "text-cyan-400" },
               { id: "svmScan", icon: <ScanLine className="w-5 h-5" />, title: "Scanner", color: "text-cyan-400" },
             ].map(({ id, icon, title, color }) => (
@@ -326,7 +324,6 @@ export function Dashboard() {
               { id: "nft",     icon: <Image className="w-5 h-5" />, title: "NFT Privacy", color: "text-rose-400" },
               { id: "approval",icon: <Lock className="w-5 h-5" />, title: "Approvals", color: "text-yellow-400" },
               { id: "contract",icon: <FileCode className="w-5 h-5" />, title: "Contracts", color: "text-cyan-400" },
-              { id: "chains",  icon: <Layers className="w-5 h-5" />, title: "Chains", color: "text-white/50" },
               { id: "developer", icon: <FileCode className="w-5 h-5" />, title: "Developer API", color: "text-emerald-400" },
               { id: "receipts", icon: <FileText className="w-5 h-5" />, title: "Receipts", color: "text-sky-400" },
               { id: "addressbook", icon: <BookOpen className="w-5 h-5" />, title: "Address Book", color: "text-violet-400" },
