@@ -1,31 +1,36 @@
 import { useState } from "react";
 import axios from "axios";
-import { FileText, Lock, Unlock, Copy, Check, Loader2, RefreshCw, Layers, Receipt as ReceiptIcon, AlertTriangle } from "lucide-react";
+import { FileText, Lock, Unlock, Copy, Check, Loader2, RefreshCw, Receipt as ReceiptIcon, AlertTriangle, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { copyToClip } from "@/components/common/CopyButton";
 
 /**
- * EncryptedReceipts — UNIFIED receipt panel for ALL chains.
+ * EncryptedReceipts — pan-chain receipts panel.
  *
- * Integrates the original EVM create/decrypt flow (sender side) with
- * the new SVM receipts lookup (receiver side). A chain selector at the
- * top lets the user pick which chain's receipts to work with; the form
- * below changes shape based on that selection.
+ * The chain is automatically inferred from the connected wallet
+ * (WalletContext). No internal chain selector — picking happens once
+ * at the navbar's chain dropdown, and this form reacts accordingly:
  *
- *  - EVM: sender-side create + recipient-side decrypt (existing form,
- *         unchanged behaviour).
- *  - Sui:  receiver-side lookup — paste an owner address, fetch every
- *         PrivacyReceipt object owned by it.
- *  - Solana: same as Sui, different endpoint + base58 owner.
- *
- * Putting a single button on the Dashboard replaces the need for the
- * 6 chain-specific Sui/Solana wrapper buttons — chains are picked here.
+ *  - EVM chain connected (base/arbitrum/polygon/etc.):
+ *      Sender-side create form + recipient-side decrypt form,
+ *      unchanged behaviour.
+ *  - Sui connected:
+ *      Receiver-side lookup — paste an owner address (defaults to
+ *      the connected wallet) and fetch every PrivacyReceipt owned.
+ *  - Solana connected:
+ *      Same as Sui, different endpoint + base58 owner.
  */
 export function EncryptedReceipts() {
   const { address, chain } = useWallet();
-  const [family, setFamily] = useState("evm"); // evm | sui | sol
+
+  // Derive chain family from the wallet. EVM chains live in CHAINS[]
+  // with vm === "evm"; Sui/Solana have identical keys ("sui"/"solana").
+  const chainInfo = chain ? CHAINS[chain] : null;
+  const vm = chainInfo?.vm || null;
+  // Map: evm|svm:sui|svm:solana
+  const family = vm === "evm" ? "evm" : (chain === "sui" ? "sui" : chain === "solana" ? "sol" : "evm");
 
   // ── EVM state ─────────────────────────────────────────────────────
   const [tab, setTab] = useState("create");
@@ -40,16 +45,10 @@ export function EncryptedReceipts() {
   const [decryptedData, setDecryptedData] = useState(null);
 
   // ── SVM state ─────────────────────────────────────────────────────
-  const [svmOwner, setSvmOwner] = useState("");
-  const [svmReceipts, setSvmReceipts] = useState(null); // { count, receipts: [...] }
+  const [svmOwner, setSvmOwner] = useState(address || "");
+  const [svmReceipts, setSvmReceipts] = useState(null);
   const [svmLoading, setSvmLoading] = useState(false);
   const [svmNotLive, setSvmNotLive] = useState(false);
-
-  const CHAINS = [
-    { id: "evm", label: "EVM", color: "text-blue-300" },
-    { id: "sui", label: "Sui", color: "text-cyan-300" },
-    { id: "sol", label: "Solana", color: "text-purple-300" },
-  ];
 
   // ── EVM handlers ──────────────────────────────────────────────────
   const createReceipt = async () => {
@@ -118,24 +117,15 @@ export function EncryptedReceipts() {
   return (
     <div className="space-y-4" data-testid="encrypted-receipts">
       <div className="flex items-center gap-2 text-sm text-white/50 bg-white/5 border border-white/10 p-3">
-        <Layers className="w-4 h-4 text-white/40" />
-        Unified receipts panel — pick the chain family below. EVM supports create + decrypt (sender side); Sui/Solana support receipts lookup (receiver side).
+        <Wallet className="w-4 h-4 text-white/40" />
+        Receipts panel — auto-detects from your connected wallet. Use the chain dropdown in the navbar to switch between EVM / Sui / Solana. EVM = create + decrypt (sender). Sui/Solana = lookup received receipts (receiver).
       </div>
 
-      {/* ── Chain selector ─────────────────────────────────────── */}
-      <div className="flex gap-0 border border-white/20" data-testid="receipt-family-tabs">
-        {CHAINS.map((c) => (
-          <button
-            key={c.id}
-            data-testid={`receipt-family-${c.id}`}
-            onClick={() => setFamily(c.id)}
-            className={`flex-1 p-2.5 text-sm font-medium transition-all ${
-              family === c.id ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"
-            }`}
-          >
-            {c.label}
-          </button>
-        ))}
+      <div className="bg-white/3 border border-white/10 px-3 py-1.5 inline-flex items-center gap-2 text-[10px] uppercase tracking-wider text-white/50">
+        <span className="text-white/30">Chain:</span>
+        <span className={family === "evm" ? "text-blue-300 font-semibold" : family === "sui" ? "text-cyan-300 font-semibold" : "text-purple-300 font-semibold"}>
+          {family === "evm" ? (chainInfo?.name || "EVM") : family === "sui" ? "Sui Mainnet" : "Solana"}
+        </span>
       </div>
 
       {/* ── Branch: EVM (sender side: create + decrypt) ────────── */}
