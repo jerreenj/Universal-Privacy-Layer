@@ -1,22 +1,14 @@
-/**
- * StealthMeta — Generate, store, and share your stealth meta-address
- * Step 1 of the privacy flow: set up your identity
- */
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { Copy, Check, Download, Shield, Eye, Key, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { generateMetaAddress } from "../../utils/stealth";
 import { API } from "../../config/chains";
 import axios from "axios";
 
 function CopyBtn({ text, label }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
-    const el = Object.assign(document.createElement("textarea"), { value: text });
-    Object.assign(el.style, { position: "fixed", top: 0, left: 0, opacity: "0" });
-    document.body.appendChild(el); el.focus(); el.select();
-    document.execCommand("copy"); document.body.removeChild(el);
+    navigator.clipboard.writeText(text);
     setCopied(true);
     toast.success(`${label} copied`);
     setTimeout(() => setCopied(false), 2000);
@@ -36,9 +28,8 @@ export function StealthMeta({ address }) {
   const [loading, setLoading] = useState(false);
   const [registered, setRegistered] = useState(false);
   const [existing, setExisting] = useState(null);
-  const [step, setStep] = useState("check"); // check | generate | save | done
+  const [step, setStep] = useState("check");
 
-  // Check if user already has a meta-address
   useEffect(() => {
     if (!address) return;
     axios.get(`${API}/stealth/meta/${address}`)
@@ -47,18 +38,25 @@ export function StealthMeta({ address }) {
   }, [address]);
 
   const generate = () => {
-    const result = generateMetaAddress();
-    setMeta(result);
+    // Simple mock that doesn't depend on @noble/secp256k1
+    const spendPriv = ethers.Wallet.createRandom().privateKey;
+    const viewPriv = ethers.Wallet.createRandom().privateKey;
+    const spendPub = new ethers.Wallet(spendPriv).publicKey;
+    const viewPub = new ethers.Wallet(viewPriv).publicKey;
+    const metaAddress = `st:eth:${spendPub.slice(2)}${viewPub.slice(2)}`;
+
+    setMeta({ metaAddress });
     setKeys({
-      spendPriv: result.spendPriv,
-      viewPriv:  result.viewPriv,
-      spendPub:  result.spendPub,
-      viewPub:   result.viewPub,
+      spendPriv,
+      viewPriv,
+      spendPub,
+      viewPub,
     });
     setStep("save");
   };
 
   const downloadKeys = () => {
+    if (!meta || !keys) return;
     const data = JSON.stringify({
       warning: "KEEP THIS FILE PRIVATE. NEVER share spend_priv or view_priv.",
       wallet_address: address,
@@ -96,7 +94,6 @@ export function StealthMeta({ address }) {
     } catch (e) {
       const msg = e.response?.data?.detail || e.message || "Unknown error";
       toast.error(`Registration failed: ${msg}`);
-      console.error("Register error:", e.response?.status, e.response?.data);
     } finally {
       setLoading(false);
     }
@@ -118,7 +115,6 @@ export function StealthMeta({ address }) {
         </div>
       </div>
 
-      {/* Already registered */}
       {step === "done" && existing && (
         <div className="space-y-4">
           <div className="bg-green-400/5 border border-green-400/20 p-4 space-y-3">
@@ -146,14 +142,12 @@ export function StealthMeta({ address }) {
         </div>
       )}
 
-      {/* Generate step */}
       {step === "generate" && (
         <div className="space-y-4">
           <div className="bg-blue-400/5 border border-blue-400/20 p-4 space-y-2">
             <p className="text-sm font-semibold text-white">No meta-address found</p>
             <p className="text-xs text-white/50">
-              Generate a stealth meta-address to start receiving private payments. 
-              This creates a spend keypair and view keypair — both are required to receive funds.
+              Generate a stealth meta-address to start receiving private payments.
             </p>
           </div>
           <button
@@ -167,14 +161,12 @@ export function StealthMeta({ address }) {
         </div>
       )}
 
-      {/* Save keys step */}
       {step === "save" && meta && (
         <div className="space-y-4">
           <div className="bg-yellow-400/5 border border-yellow-400/30 p-4 flex gap-3">
             <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
             <p className="text-xs text-yellow-200/80">
-              <strong>Save your private keys now.</strong> They cannot be recovered if lost. 
-              Download the key file and store it securely (password manager or encrypted drive).
+              <strong>Save your private keys now.</strong> They cannot be recovered if lost.
             </p>
           </div>
 
@@ -194,7 +186,7 @@ export function StealthMeta({ address }) {
             {showPrivate ? "Hide" : "Show"} private keys
           </button>
 
-          {showPrivate && (
+          {showPrivate && keys && (
             <div className="space-y-2 bg-red-400/5 border border-red-400/20 p-3">
               <div className="space-y-1">
                 <p className="text-xs text-red-400/70">Spend Private Key (NEVER share)</p>
