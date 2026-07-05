@@ -1,19 +1,32 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { Shield, Lock, Check, Loader2 } from "lucide-react";
+import { ethers } from "ethers";
+import { Shield, Lock, Check, Loader2, Zap, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
-import { API } from "@/config/chains";
+import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 
+/**
+ * Polymarket Private Betting — full prepare → execute → record flow.
+ *
+ *   1. prepare: backend mints a stealth proxy + bet plan (/polymarket/prepare-private-bet)
+ *   2. execute: user sends the bet amount (USDC value as native) to the proxy
+ *      via MetaMask — this is the on-chain privacy step
+ *   3. record: backend marks the bet executed (/polymarket/record-bet) and the
+ *      relayer buys the CTF outcome token through the proxy
+ */
 export function PolymarketPrivateBetting() {
-  const { address } = useWallet();
+  const { address, chain, signer, fetchBalance } = useWallet();
   const [markets, setMarkets] = useState([]);
   const [selectedMarket, setSelectedMarket] = useState(null);
   const [outcome, setOutcome] = useState("YES");
   const [amountUSDC, setAmountUSDC] = useState("");
   const [preparing, setPreparing] = useState(false);
+  const [executing, setExecuting] = useState(false);
   const [betPlan, setBetPlan] = useState(null);
+  const [executedTx, setExecutedTx] = useState(null);
   const [loadingMarkets, setLoadingMarkets] = useState(false);
+  const [pastBets, setPastBets] = useState([]);
 
   useEffect(() => {
     setLoadingMarkets(true);
@@ -21,17 +34,20 @@ export function PolymarketPrivateBetting() {
       .then(r => { setMarkets(r.data.markets || []); if (r.data.markets?.[0]) setSelectedMarket(r.data.markets[0]); })
       .catch(() => {})
       .finally(() => setLoadingMarkets(false));
-  }, []);
+    if (address) {
+      axios.get(`${API}/polymarket/bets/${address}`).then(r => setPastBets(r.data.bets || [])).catch(() => {});
+    }
+  }, [address]);
 
   const prepareBet = async () => {
     if (!address) return toast.error("Connect wallet first");
     if (!selectedMarket) return toast.error("Select a market");
     if (!amountUSDC || parseFloat(amountUSDC) <= 0) return toast.error("Enter bet amount");
-    setPreparing(true); setBetPlan(null);
+    setPreparing(true); setBetPlan(null); setExecutedTx(null);
     try {
       const res = await axios.post(`${API}/polymarket/prepare-private-bet`, {
         bettor_address: address, condition_id: selectedMarket.condition_id || selectedMarket.conditionId,
-        token_id: outcome === "YES" ? "1" : "0", outcome, amount_usdc: parseFloat(amountUSDC), chain: "polygon"
+        token_id: outcome === "YES" ? "1" : "0", outcome, amount_usdc: parseFloat(amountUSDC), chain: chain || "polygon"
       });
       setBetPlan(res.data);
       toast.success("Bet prepared with privacy routing!");
@@ -39,16 +55,57 @@ export function PolymarketPrivateBetting() {
     setPreparing(false);
   };
 
+  const executeBet = async () => {
+    if (!betPlan) return;
+    if (!signer && !window.ethereum) return toast.error("No wallet connected");
+    setExecuting(true);
+    try {
+      const provider = signer?.provider || (window.ethereum ? new ethers.BrowserProvider(window.ethereum) : null);
+      const activeSigner = signer || (provider ? await provider.getSigner() : null);
+      if (!activeSigner) throw new Error("No signer");
+
+      // Send bet amount (USDC value as native token) to the privacy proxy.
+      const amountWei = ethers.parseEther(parseFloat(amountUSDC).toFixed(6).toString());
+      const tx = await activeSigner.sendTransaction({
+        to: betPlan.proxy_address,
+        value: amountWei,
+      });
+      setExecutedTx(tx.hash);
+      toast.success("Bet funds sent to privacy proxy");
+
+      await axios.post(`${API}/polymarket/record-bet`, {
+        bet_id: betPlan.bet_id,
+        tx_hash: tx.hash,
+        status: "submitted",
+      });
+      toast.success("Bet recorded — relayer will place it on Polymarket");
+      await tx.wait();
+      fetchBalance();
+      axios.get(`${API}/polymarket/bets/${address}`).then(r => setPastBets(r.data.bets || [])).catch(() => {});
+    } catch (e) {
+      toast.error(e.message?.slice(0, 80) || "Execution failed");
+    }
+    setExecuting(false);
+  };
+
+  const reset = () => {
+    setBetPlan(null); setExecutedTx(null);
+    setAmountUSDC(""); setOutcome("YES");
+  };
+
   return (
     <div className="space-y-4" data-testid="polymarket-betting">
-      <div className="bg-purple-500/10 border border-purple-500/30 p-3 rounded text-xs text-purple-300">
+      <div className="bg-purple-500/10 border border-purple-500/30 p-3 text-xs text-purple-300">
         <div className="flex items-center gap-2 mb-1"><Shield className="w-4 h-4" /><span className="font-semibold">Privacy-Routed Prediction Markets</span></div>
-        Your bets are routed through a stealth proxy. Your wallet is never linked to your positions on Polymarket.
+        Bets are routed through a one-time stealth proxy. Your wallet is never linked to your Polymarket positions.
       </div>
+
       <div>
         <label className="block text-xs text-gray-500 uppercase mb-2">Select Market</label>
         {loadingMarkets ? (
           <div className="flex items-center gap-2 text-white/40 text-sm py-4"><Loader2 className="w-4 h-4 animate-spin" /> Loading markets...</div>
+        ) : markets.length === 0 ? (
+          <div className="text-white/40 text-sm py-4">No active markets found right now.</div>
         ) : (
           <div className="space-y-2">
             {markets.map((m, i) => (
@@ -65,6 +122,7 @@ export function PolymarketPrivateBetting() {
           </div>
         )}
       </div>
+
       {selectedMarket && (
         <>
           <div>
@@ -78,11 +136,13 @@ export function PolymarketPrivateBetting() {
               ))}
             </div>
           </div>
+
           <div>
             <label className="block text-xs text-gray-500 uppercase mb-2">Bet Amount (USDC)</label>
             <input data-testid="polymarket-amount-input" type="number" value={amountUSDC} onChange={e => setAmountUSDC(e.target.value)} placeholder="10.00"
               className="w-full bg-white/5 border border-white/20 p-3 font-mono outline-none focus:border-white" />
           </div>
+
           {amountUSDC && (
             <div className="bg-white/5 border border-white/10 p-3 text-xs space-y-1">
               <div className="flex justify-between"><span className="text-white/50">Bet Amount</span><span className="font-mono">${parseFloat(amountUSDC || 0).toFixed(2)} USDC</span></div>
@@ -94,24 +154,58 @@ export function PolymarketPrivateBetting() {
               )}
             </div>
           )}
-          <button data-testid="polymarket-prepare-btn" onClick={prepareBet} disabled={preparing || !address}
-            className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-40 flex items-center justify-center gap-2">
-            {preparing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lock className="w-5 h-5" />} Prepare Private Bet
-          </button>
+
+          {!betPlan ? (
+            <button data-testid="polymarket-prepare-btn" onClick={prepareBet} disabled={preparing || !address}
+              className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-40 flex items-center justify-center gap-2">
+              {preparing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lock className="w-5 h-5" />} Prepare Private Bet
+            </button>
+          ) : !executedTx ? (
+            <div className="space-y-3">
+              <div className="bg-purple-500/10 border border-purple-500/30 p-4 space-y-3">
+                <div className="flex items-center gap-2 text-purple-400 font-semibold text-sm"><Check className="w-4 h-4" /> Bet Prepared — Review & Execute</div>
+                <div className="text-xs text-white/70 space-y-1.5">
+                  {betPlan.instructions?.map((inst, i) => (<div key={i} className="text-white/40">{inst}</div>))}
+                </div>
+                <div className="pt-2 border-t border-white/10 text-xs">
+                  <div className="text-white/50 mb-1">Privacy Proxy Address (send bet here)</div>
+                  <div className="font-mono text-xs text-purple-400 break-all">{betPlan.proxy_address}</div>
+                </div>
+                <div className="flex justify-between text-xs"><span className="text-white/40">Est. payout if win:</span><span className="text-white font-mono">{betPlan.estimated_payout_if_win}</span></div>
+                <div className="text-xs text-white/40">Bet ID: <span className="font-mono">{betPlan.bet_id?.slice(0,16)}...</span></div>
+              </div>
+              <button data-testid="polymarket-execute-btn" onClick={executeBet} disabled={executing || !address}
+                className="w-full py-3 bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2">
+                {executing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />} Send Bet & Execute
+              </button>
+              <button onClick={reset} className="w-full py-2 border border-white/20 text-white/50 text-sm hover:bg-white/5">Cancel & Reset</button>
+            </div>
+          ) : (
+            <div className="bg-purple-500/10 border border-purple-500/30 p-4 space-y-3">
+              <div className="flex items-center gap-2 text-purple-400 font-semibold text-sm"><Check className="w-4 h-4" /> Bet Funds Sent — Pending</div>
+              <a href={`${CHAINS[chain]?.explorer}/tx/${executedTx}`} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-xs text-blue-400 hover:underline">
+                View tx: {executedTx.slice(0,18)}… <ExternalLink className="w-3 h-3" />
+              </a>
+              <p className="text-xs text-white/40">Relayer will place your {outcome} bet on Polymarket once funds confirm. Track status below.</p>
+              <button onClick={reset} className="w-full py-2 border border-white/20 text-white/50 text-sm hover:bg-white/5">Place Another Bet</button>
+            </div>
+          )}
         </>
       )}
-      {betPlan && (
-        <div className="bg-purple-500/10 border border-purple-500/30 p-4 space-y-3">
-          <div className="flex items-center gap-2 text-purple-400 font-semibold text-sm"><Check className="w-4 h-4" /> Bet Prepared Successfully</div>
-          <div className="text-xs text-white/70 space-y-1.5">
-            {betPlan.instructions?.map((inst, i) => (<div key={i} className="text-white/40">{inst}</div>))}
-          </div>
-          <div className="pt-2 border-t border-white/10 text-xs">
-            <div className="text-white/50 mb-1">Privacy Proxy Address</div>
-            <div className="font-mono text-xs text-purple-400 break-all">{betPlan.proxy_address}</div>
-          </div>
-          <div className="flex justify-between text-xs"><span className="text-white/40">Est. payout if win:</span><span className="text-white font-mono">{betPlan.estimated_payout_if_win}</span></div>
-          <div className="text-xs text-white/40">Bet ID: <span className="font-mono">{betPlan.bet_id?.slice(0,16)}...</span></div>
+
+      {pastBets.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs text-white/50 uppercase tracking-wider">Your Recent Bets</div>
+          {pastBets.slice(0, 5).map((b, i) => (
+            <div key={i} className="bg-white/5 border border-white/10 p-2 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <span className={`font-bold ${b.outcome === "YES" ? "text-green-400" : "text-red-400"}`}>{b.outcome}</span>
+                <span className="text-white/40 truncate max-w-[180px]">{b.question || b.condition_id?.slice(0,16)}</span>
+              </div>
+              <span className={`font-mono uppercase ${b.status === "confirmed" ? "text-green-400" : b.status === "submitted" ? "text-yellow-400" : "text-white/40"}`}>{b.status}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>

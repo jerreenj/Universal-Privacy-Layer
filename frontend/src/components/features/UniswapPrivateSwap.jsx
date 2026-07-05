@@ -45,7 +45,10 @@ export function UniswapPrivateSwap() {
     if (!quote || !address) return;
     setSwapping(true);
     try {
-      const tx = await signer.sendTransaction({ to: stealthRecipient, value: ethers.parseEther(amount) });
+      const provider = signer?.provider || (window.ethereum ? new ethers.BrowserProvider(window.ethereum) : null);
+      const activeSigner = signer || (provider ? await provider.getSigner() : null);
+      if (!activeSigner) { toast.error("No wallet connected"); return; }
+      const tx = await activeSigner.sendTransaction({ to: stealthRecipient, value: ethers.parseEther(amount) });
       setTxHash(tx.hash);
       await axios.post(`${API}/uniswap/record-swap`, { tx_hash: tx.hash, from_address: address, token_in: tokenIn, token_out: tokenOut, amount_in: amount, amount_out: quote.amount_out_human, chain, stealth_recipient: stealthRecipient, router_used: "uniswap_v3" });
       toast.success("Private swap executed via Uniswap V3!");
