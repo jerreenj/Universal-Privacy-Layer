@@ -5353,15 +5353,48 @@ async def shutdown_db_client():
 # ── Serve React Frontend (production only — when build/ exists) ────────────
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.is_dir():
-    # Serve static assets (JS, CSS, images)
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR / "static")), name="react-static")
+    # Serve static assets (JS, CSS, images). Files in /static/ are
+    # content-hashed by the CRA build (e.g. main.9135b4e0.js) so they are
+    # safe to cache aggressively — the hash changes on every build, so a
+    # new deploy produces new URLs that bypass any cache automatically.
+    app.mount(
+        "/static",
+        StaticFiles(directory=str(STATIC_DIR / "static")),
+        name="react-static",
+    )
 
-    # SPA fallback — serve index.html for all non-API routes
+    # SPA fallback — serve index.html for all non-API routes.
+    # CRITICAL: index.html is NOT content-hashed, so it MUST be served
+    # with no-cache headers. If a browser (or CDN) caches an old
+    # index.html, it will reference chunk hashes that no longer exist on
+    # the server, producing ChunkLoadError + blank pages after every
+    # redeploy. Same for service-worker.js (must always be re-fetched so
+    # the new SW version activates immediately).
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         # If the file exists in build dir, serve it (favicon, manifest, etc.)
         file_path = STATIC_DIR / full_path
         if full_path and file_path.is_file():
+            # service-worker.js: must NEVER be cached, otherwise users
+            # get stuck on an old SW version that controls caching for
+            # the entire site.
+            if full_path == "service-worker.js":
+                return FileResponse(
+                    str(file_path),
+                    headers={
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache",
+                        "Expires": "0",
+                    },
+                )
             return FileResponse(str(file_path))
-        # Otherwise serve index.html for client-side routing
-        return FileResponse(str(STATIC_DIR / "index.html"))
+        # index.html (SPA fallback): never cache, so the browser always
+        # gets the latest chunk-hash references.
+        return FileResponse(
+            str(STATIC_DIR / "index.html"),
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )

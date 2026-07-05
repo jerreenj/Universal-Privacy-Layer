@@ -6,6 +6,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <meta name="theme-color" content="#050505" />
     <meta name="description" content="Universal Privacy Layer - The HTTPS of Web3" />
+
+    <!--
+      Aggressive cache-control for the HTML shell. The deployed JS chunks
+      are content-hashed (so they cache forever safely), but index.html
+      itself must ALWAYS be re-fetched so the browser picks up the new
+      chunk hashes after every redeploy. Without these headers, browsers
+      (and CDNs) happily serve a stale index.html that references chunk
+      hashes which no longer exist on the server — that produces the
+      "ChunkLoadError" blank page after every deploy.
+    -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     
     <!-- PWA Meta Tags -->
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
