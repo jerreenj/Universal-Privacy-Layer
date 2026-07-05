@@ -43,7 +43,6 @@ const PrivacyAddressBook        = lazy(() => import("@/components/features/Priva
 const ZKCommitments             = lazy(() => import("@/components/features/ZKCommitments").then(m => ({ default: m.ZKCommitments })));
 const StealthSendSVM            = lazy(() => import("@/components/features/StealthSendSVM").then(m => ({ default: m.StealthSendSVM })));
 const ScannerSVM                = lazy(() => import("@/components/features/ScannerSVM").then(m => ({ default: m.ScannerSVM })));
-const ReceiptsSVM               = lazy(() => import("@/components/features/ReceiptsSVM").then(m => ({ default: m.ReceiptsSVM })));
 
 /* Page metadata – references the lazy Component *type*, not a rendered element. The `key` field is passed to ChunkErrorBoundary so it can show what failed.
  *
@@ -78,7 +77,6 @@ const pages = {
   zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments,           key: "zkcommit" },
   svmSend:     { title: "Stealth Send (SVM)",          Component: StealthSendSVM,          key: "svm-send" },
   svmScan:     { title: "Announcement Scanner (SVM)",  Component: ScannerSVM,              key: "svm-scanner" },
-  svmReceipts: { title: "Encrypted Receipts (SVM)",    Component: ReceiptsSVM,             key: "svm-receipts" },
 };
 
 function LoadingFallback() {
@@ -310,7 +308,6 @@ export function Dashboard() {
               { id: "zkcommit", icon: <Hash className="w-5 h-5" />, title: "ZK Commitments", color: "text-lime-400" },
               { id: "svmSend", icon: <Send className="w-5 h-5" />, title: "Stealth Send", color: "text-cyan-400" },
               { id: "svmScan", icon: <ScanLine className="w-5 h-5" />, title: "Scanner", color: "text-cyan-400" },
-              { id: "svmReceipts", icon: <Receipt className="w-5 h-5" />, title: "Receipts", color: "text-cyan-400" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
