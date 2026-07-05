@@ -7,80 +7,70 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
- * @title PrivacyPool
- * @notice UPL ZK privacy pool (Phase 3, Path B) — a Tornado-style fixed-
- *         denomination pool on Base. Deposits commit
- *         `Poseidon(nullifier, secret)` into an incremental Poseidon Merkle
- *         tree (depth 20); withdrawals prove in-circuit knowledge of
- *         `(nullifier, secret, merklePath)` against the current root and
- *         reveal ONLY `(nullifierHash, root, recipient)` — the deposit and the
- *         withdrawal are cryptographically unlinkable. Double-spends are
- *         blocked by the on-chain `nullifierHashes` set.
+ * @title PrivacyPool (Multi-Denomination, Phase 4.1)
+ * @notice UPL ZK privacy pool on Base. Same Tornado-style semantics as the
+ *         single-denom P3 contract but **parameterised over many
+ *         denominations**: each registered denomination owns its own
+ *         incremental Poseidon Merkle tree + ring buffer of recent roots.
+ *         The double-spend guard (nullifierHashes) is global across
+ *         denominations — a note spent on any pool cannot be replayed.
  *
- * @dev The on-chain Poseidon MUST equal the in-circuit Poseidon (same circomlib
- *      constants) or every proof fails. That equivalence is locked by
- *      `PoseidonT3.t.sol` (headline vector `poseidon(1,2)`). The Merkle tree is
- *      incremental: each level hashes `Poseidon(left, right)` and caches the
- *         current subtree filled-ness so insert is O(depth) not O(2^depth).
- *      Zero leaves/subtrees are precomputed (`zeros[level]`) so an empty
- *      subtree's hash is known without materialising it.
+ * @dev Why the global spent set:
+ *      A note = (nullifier, secret, commitment). The cryptographic obligation
+ *      the proof carries is "I know (nullifier, secret) such that
+ *      commitment = Poseidon(nullifier, secret) is a leaf under root R and
+ *      nullifierHash = Poseidon(nullifier)" — this is denomination-agnostic.
+ *      Allowing the same note to withdraw twice across two different pools
+ *      would let an attacker double the payout. So a single global
+ *      `nullifierHashes` set blocks a note everywhere once it is spent once.
  *
- *      Public-signal order passed to the Groth16 verifier
- *      (`Groth16Verifier.verifyProof`): `[nullifierHash, root, recipient]` —
- *      snarkjs orders public outputs before public inputs, and `withdraw.circom`
- *      declares `public [root, recipient]` + output `nullifierHash`. This order
- *      is asserted end-to-end in `PrivacyPool.t.sol` with a real proof.
+ *      Pull the denom-set from one tree-of-trees via the root (the
+ *      `withdraw` calldata carries `root`; we look it up across all
+ *      denom trees' ring buffers to find the matching amount to pay out).
+ *
+ *      Pre-existing P3 tests: the old `denomination` public immutable is
+ *      gone. The constructor now accepts `initialDenominations[]`; tests
+ *      that previously `deploy(verifier, 0.1e18)` should now
+ *      `deploy(verifier, [_denom = 0.1e18])`. The `deposit(bytes32)` sig
+ *      is now `deposit(bytes32 commitment, uint256 denomination)` — a
+ *      mandatory denom param.
  */
 contract PrivacyPool is Ownable, ReentrancyGuard {
     using PoseidonT3 for *;
 
-    // ─── Tree configuration ────────────────────────────────────────────────
-    /// @notice Merkle tree depth. 2^20 = 1,048,576 deposits max. Must match
-    ///         `withdraw.circom`'s `Withdraw(20)`.
     uint256 public constant MERKLE_DEPTH = 20;
-    /// @notice How many recent roots we keep for withdrawal validation. A
-    ///         deposit between proof-generation and on-chain withdraw advances
-    ///         the root; the withdraw still succeeds if the proof's root is in
-    ///         this window. 100 ≈ a few minutes of deposits — ample for browser
-    ///         proof latency (~5–20s) plus block time.
     uint256 public constant ROOT_HISTORY_SIZE = 100;
 
-    /// @notice Fixed deposit denomination (in wei). Fixed amounts are what make
-    ///         pools anonymous — a 0.1 ETH deposit is indistinguishable from any
-    ///         other 0.1 ETH deposit.
-    uint256 public immutable denomination;
-
-    // ─── Verifier ──────────────────────────────────────────────────────────
     Groth16Verifier public immutable verifier;
 
-    // ─── Incremental Merkle tree state ─────────────────────────────────────
-    /// @dev zeros[l] = the hash of an empty subtree of height l (l=0 is a leaf
-    ///      = 0). zeros[0] = 0; zeros[l] = Poseidon(zeros[l-1], zeros[l-1]).
-    uint256[MERKLE_DEPTH + 1] public zeros;
-    /// @dev filledSubtrees[l] = the current (rightmost path's) subtree hash at
-    ///      level l. Updated on each insert to reflect the newly-filled leaf.
-    uint256[MERKLE_DEPTH] public filledSubtrees;
-    /// @dev The current Merkle root (after the most recent deposit).
-    uint256 public currentRoot;
-    /// @dev Index of the next leaf to insert.
-    uint32 public nextLeafIndex;
-    /// @dev Ring buffer of recent roots for withdraw validation.
-    uint256[ROOT_HISTORY_SIZE] public roots;
-    /// @dev Whether a given root is currently in the history window. Maps
-    ///      root => bool. Kept in sync with `roots` on insert.
-    mapping(uint256 => bool) public isKnownRoot;
-    /// @dev nullifierHash => spent. The double-spend guard.
+    // ─── Per-denomination tree state ─────────────────────────────────────
+    struct DenomTree {
+        bytes32[20] filledSubtrees;
+        bytes32[100] roots;                // ring buffer of recent roots
+        bytes32 currentRoot;
+        uint32 nextLeafIndex;
+    }
+
+    mapping(uint256 => DenomTree) public denomTrees;
+    mapping(uint256 => bool) public denominationEnabled;
+    uint256[] public denominationList;
+
+    // ─── Precomputed zero subtrees ─────────────────────────────────────────
+    bytes32[MERKLE_DEPTH + 1] public zeros;
+
+    // ─── Global spent set ─────────────────────────────────────────────────
     mapping(uint256 => bool) public nullifierHashes;
 
     // ─── Events ────────────────────────────────────────────────────────────
-    /// @notice Emitted on deposit. `commitment` is the inserted leaf; the leaf
-    ///         `index` lets the depositor (off-chain) compute the Merkle path
-    ///         for the eventual withdrawal proof.
-    event Deposit(bytes32 indexed commitment, uint32 indexed leafIndex, uint256 root);
-    /// @notice Emitted on a successful withdrawal. `nullifierHash` is the only
-    ///         on-chain link between a deposit and a withdraw — and by design
-    ///         it is unlinkable to the originating commitment.
-    event Withdrawal(address indexed recipient, uint256 nullifierHash, uint256 root);
+    event DenominationAdded(uint256 indexed denomination);
+    event Deposit(
+        bytes32 indexed commitment,
+        uint256 indexed denomination,
+        uint32 indexed leafIndex,
+        bytes32 root
+    );
+    event Withdrawal(address indexed recipient, uint256 nullifierHash, bytes32 root);
+    event Sweep(address indexed to, uint256 amount);
 
     // ─── Errors ────────────────────────────────────────────────────────────
     error MustPayExactDenomination();
@@ -90,64 +80,104 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
     error InvalidProof();
     error TransferFailed();
     error RecipientZero();
+    error DenominationNotEnabled(uint256 denomination);
+    error ZeroDenomination();
 
-    constructor(uint256 _denomination, address _verifier) Ownable(msg.sender) {
+    constructor(
+        address _verifier,
+        uint256[] memory _initialDenominations
+    ) Ownable(msg.sender) {
         if (_verifier == address(0)) revert RecipientZero();
-        denomination = _denomination;
+        // Re-cast to Groth16Verifier at construction time. The runtime ABI the
+        // verifier contract uses (verifyProof) is the same for every
+        // implementation (snarkjs-generated + MockGroth16Verifier), so trusting
+        // the supplied address is safe.
         verifier = Groth16Verifier(_verifier);
 
-        // Precompute zero subtrees and seed the incremental tree.
-        // zeros[0] = 0 (an empty leaf). Each higher level is the hash of two
-        // empty children. filledSubtrees starts as the zeros (empty tree), so
-        // the first insert produces a path of sibling = zeros[0..DEPTH-1].
-        zeros[0] = 0;
+        // Precompute zero subtrees (level 0 = empty leaf = 0).
+        zeros[0] = bytes32(0);
         for (uint256 l = 1; l <= MERKLE_DEPTH; l++) {
-            zeros[l] = PoseidonT3.poseidon(zeros[l - 1], zeros[l - 1]);
+            zeros[l] = bytes32(PoseidonT3.poseidon(uint256(zeros[l - 1]), uint256(zeros[l - 1])));
         }
-        for (uint256 l = 0; l < MERKLE_DEPTH; l++) {
-            filledSubtrees[l] = zeros[l];
+
+        // Register each initial denomination: seeds its tree with the empty
+        // root history. Idempotent if duplicate denominations are passed in.
+        for (uint256 i = 0; i < _initialDenominations.length; i++) {
+            _addDenominationInternal(_initialDenominations[i]);
         }
-        currentRoot = zeros[MERKLE_DEPTH];
-        // Seed the root history with the empty root so the first withdraw is
-        // never blocked by "unknown root" before any deposit has happened.
-        roots[0] = currentRoot;
-        isKnownRoot[currentRoot] = true;
     }
 
-    // ─── Deposit ───────────────────────────────────────────────────────────
+    // ─── Owner admin: add a denomination ──────────────────────────────────
     /**
-     * @notice Deposit `denomination` ETH into the pool, committing `commitment`
-     *         (= Poseidon(nullifier, secret), computed off-chain) as a new leaf.
-     *         Emits the leaf index so the depositor can derive the Merkle path.
-     * @param commitment The leaf = Poseidon(nullifier, secret). The depositor
-     *        keeps (nullifier, secret) private; only `commitment` is on-chain.
+     * @notice Register a new denomination. Owner-only. Idempotent.
+     * @dev After this call, `deposit(commitment, denomination)` will accept
+     *      deposits at exactly `denomination` wei. Each denomination owns its
+     *      own Merkle tree + root history.
      */
-    function deposit(bytes32 commitment) external payable nonReentrant {
+    function addDenomination(uint256 denomination) external onlyOwner {
+        _addDenominationInternal(denomination);
+    }
+
+    function _addDenominationInternal(uint256 denomination) internal {
+        if (denomination == 0) revert ZeroDenomination();
+        if (denominationEnabled[denomination]) return;
+        denominationEnabled[denomination] = true;
+        denominationList.push(denomination);
+
+        DenomTree storage t = denomTrees[denomination];
+        for (uint256 l = 0; l < MERKLE_DEPTH; l++) {
+            t.filledSubtrees[l] = zeros[l];
+        }
+        t.currentRoot = zeros[MERKLE_DEPTH];
+        // Seed the root history with the empty root so a future user can
+        // prove + withdraw before any deposit has happened.
+        t.roots[0] = t.currentRoot;
+
+        emit DenominationAdded(denomination);
+    }
+
+    // ─── Deposit ──────────────────────────────────────────────────────────
+    /**
+     * @notice Deposit `denomination` wei into the pool, committing
+     *         `commitment = Poseidon(nullifier, secret)` (computed off-chain)
+     *         as a new leaf in the chosen denomination's Merkle tree.
+     *         Emits (commitment, denomination, leafIndex, newRoot).
+     * @param commitment Leaf = Poseidon(nullifier, secret). The depositor
+     *        keeps the note private; only `commitment` is on-chain.
+     * @param denomination Whitelisted deposit amount (wei). Must equal msg.value.
+     */
+    function deposit(bytes32 commitment, uint256 denomination)
+        external
+        payable
+        nonReentrant
+    {
+        if (!denominationEnabled[denomination]) {
+            revert DenominationNotEnabled(denomination);
+        }
         if (msg.value != denomination) revert MustPayExactDenomination();
-        uint32 leafIndex = nextLeafIndex;
+
+        DenomTree storage t = denomTrees[denomination];
+        uint32 leafIndex = t.nextLeafIndex;
         if (leafIndex >= 2 ** MERKLE_DEPTH) revert MerkleTreeFull();
 
-        _insert(uint256(commitment));
+        bytes32 newRoot = _insert(uint256(commitment), t);
 
-        // Record the new root in the history ring buffer (oldest evicted).
-        uint256 newRoot = currentRoot;
-        uint256 slot = leafIndex % ROOT_HISTORY_SIZE;
-        // Clear the known-root flag for the root we're about to overwrite.
-        isKnownRoot[roots[slot]] = false;
-        roots[slot] = newRoot;
-        isKnownRoot[newRoot] = true;
+        uint256 slot = uint256(leafIndex) % ROOT_HISTORY_SIZE;
+        t.roots[slot] = newRoot;
+        t.currentRoot = newRoot;
 
-        emit Deposit(commitment, leafIndex, newRoot);
+        emit Deposit(commitment, denomination, leafIndex, newRoot);
     }
 
     // ─── Withdraw ──────────────────────────────────────────────────────────
     /**
-     * @notice Withdraw `denomination` ETH to `recipient` by proving — without
-     *         revealing the deposit — knowledge of `(nullifier, secret, path)`
-     *         whose `Poseidon(nullifier, secret)` commitment is a leaf under
-     *         `root`, and revealing `nullifierHash = Poseidon(nullifier)`.
-     * @dev The proof is verified by `Groth16Verifier`. Public signals passed to
-     *      the verifier, in order: `[nullifierHash, root, recipient]`.
+     * @notice Withdraw to `recipient` by proving — without revealing the
+     *         deposit — knowledge of `(nullifier, secret, merklePath)` whose
+     *         commitment is a leaf under `root` in *some* denomination's
+     *         tree, and revealing `nullifierHash = Poseidon(nullifier)`.
+     * @param pubSignals `[nullifierHash, root, recipient]` — public signals in
+     *        the same order as `withdraw.circom` declares public outputs +
+     *        inputs (snarkjs order: outputs first).
      */
     function withdraw(
         uint256[2] calldata proofA,
@@ -156,19 +186,25 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
         uint256[3] calldata pubSignals // [nullifierHash, root, recipient]
     ) external nonReentrant {
         uint256 nullifierHash = pubSignals[0];
-        uint256 root = pubSignals[1];
+        bytes32 root = bytes32(pubSignals[1]);
         address recipient = address(uint160(pubSignals[2]));
 
         if (recipient == address(0)) revert RecipientZero();
-        if (!isKnownRoot[root]) revert UnknownRoot();
+        if (!isKnownRoot(root)) revert UnknownRoot();
         if (nullifierHashes[nullifierHash]) revert NullifierAlreadySpent();
 
-        // Verify the Groth16 proof against the public signals. The verifier is
-        // a view (pure pairing check) — it cannot mutate pool state.
-        if (!verifier.verifyProof(proofA, proofB, proofC, pubSignals)) revert InvalidProof();
+        if (!verifier.verifyProof(proofA, proofB, proofC, pubSignals)) {
+            revert InvalidProof();
+        }
 
-        // Mark the nullifier spent BEFORE the external call (checks-effects-interactions).
+        // Check-effects-interactions: mark spent BEFORE the external call.
         nullifierHashes[nullifierHash] = true;
+
+        // The amount paid is determined by which denom's recent-root ring
+        // buffer contains the public-signal root. Linear scan — few denoms
+        // in practice (typically <12), ROOT_HISTORY_SIZE is 100.
+        uint256 denomination = _findDenomByRoot(root);
+        if (denomination == 0) revert UnknownRoot(); // safety — root vanished mid-call
 
         (bool ok,) = recipient.call{value: denomination}("");
         if (!ok) revert TransferFailed();
@@ -176,62 +212,100 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
         emit Withdrawal(recipient, nullifierHash, root);
     }
 
-    // ─── Incremental Merkle insert ─────────────────────────────────────────
-    /// @dev Insert `leaf` at `nextLeafIndex`, advancing the root in O(depth).
-    ///      Walks up the tree: at each level the new leaf hashes with its
-    ///      sibling (the filledSubtree on the opposite side) via Poseidon, and
-    ///      the filledSubtree is reset to the zero-subtree when a level becomes
-    ///      full (carries to the next level).
-    function _insert(uint256 leaf) internal {
-        uint32 index = nextLeafIndex;
+    // ─── Views ────────────────────────────────────────────────────────────
+    /// @notice Whether `root` is currently in any denom's recent-roots window.
+    function isKnownRoot(bytes32 root) public view returns (bool) {
+        for (uint256 i = 0; i < denominationList.length; i++) {
+            DenomTree storage t = denomTrees[denominationList[i]];
+            for (uint256 j = 0; j < ROOT_HISTORY_SIZE; j++) {
+                if (t.roots[j] == root) return true;
+            }
+        }
+        return false;
+    }
+
+    /// @notice Index of the next leaf that would be inserted in `denomination`'s tree.
+    function depositCount(uint256 denomination) external view returns (uint32) {
+        if (!denominationEnabled[denomination]) {
+            revert DenominationNotEnabled(denomination);
+        }
+        return denomTrees[denomination].nextLeafIndex;
+    }
+
+    /// @notice The current Merkle root for a denomination's pool.
+    function currentRootOf(uint256 denomination) external view returns (bytes32) {
+        if (!denominationEnabled[denomination]) {
+            revert DenominationNotEnabled(denomination);
+        }
+        return denomTrees[denomination].currentRoot;
+    }
+
+    /// @notice All registered denominations, in registration order.
+    function getDenominationList() external view returns (uint256[] memory) {
+        return denominationList;
+    }
+
+    /// @notice Whether `denomination` is currently enabled for deposits.
+    function isDenominationEnabled(uint256 denomination) external view returns (bool) {
+        return denominationEnabled[denomination];
+    }
+
+    // ─── Owner sweep ─────────────────────────────────────────────────────
+    /**
+     * @notice Sweep ETH accidentally sent to the contract (e.g. selfdestruct
+     *         refund). Cannot sweep pool funds — only the EXCESS above the
+     *         pool's locked balance across ALL denominations.
+     */
+    function sweep(address to) external onlyOwner nonReentrant {
+        uint256 balance = address(this).balance;
+        uint256 totalLocked;
+        for (uint256 i = 0; i < denominationList.length; i++) {
+            uint256 d = denominationList[i];
+            DenomTree storage t = denomTrees[d];
+            totalLocked += uint256(t.nextLeafIndex) * d;
+        }
+        uint256 excess = balance > totalLocked ? balance - totalLocked : 0;
+        if (excess > 0) {
+            (bool ok,) = to.call{value: excess}("");
+            if (!ok) revert TransferFailed();
+            emit Sweep(to, excess);
+        }
+    }
+
+    // ─── Internal ─────────────────────────────────────────────────────────
+    function _findDenomByRoot(bytes32 root) internal view returns (uint256) {
+        for (uint256 i = 0; i < denominationList.length; i++) {
+            uint256 d = denominationList[i];
+            DenomTree storage t = denomTrees[d];
+            for (uint256 j = 0; j < ROOT_HISTORY_SIZE; j++) {
+                if (t.roots[j] == root) return d;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * @dev Insert `leaf` into `t`'s tree, return the new root. Idempotent-
+     *      proof: every level's left sibling is `t.filledSubtrees[l]` at start;
+     *      right-branch resets the level to `zeros[l]` for the next deposit
+     *      that reaches this level.
+     */
+    function _insert(uint256 leaf, DenomTree storage t) internal returns (bytes32) {
+        uint32 index = t.nextLeafIndex;
         uint256 current = leaf;
         for (uint32 l = 0; l < MERKLE_DEPTH; l++) {
             bool isRight = (index >> l) & 1 == 1;
             if (isRight) {
-                // The left sibling is the already-filled left subtree at this
-                // level (filledSubtrees[l], a height-l subtree root). This
-                // level's left subtree is now complete — reset it to the empty
-                // hash so the next insert that reaches this level starts fresh.
-                uint256 left = filledSubtrees[l];
-                filledSubtrees[l] = zeros[l];
-                current = PoseidonT3.poseidon(left, current);
+                bytes32 left = t.filledSubtrees[l];
+                t.filledSubtrees[l] = zeros[l];
+                current = PoseidonT3.poseidon(uint256(left), current);
             } else {
-                // The new node is the left child; its right sibling is an empty
-                // subtree (zeros[l]). Remember the new node as this level's
-                // filled left subtree (the incoming `current` IS the height-l
-                // subtree root being placed here), then carry the hash up.
-                filledSubtrees[l] = current;
-                current = PoseidonT3.poseidon(current, zeros[l]);
+                t.filledSubtrees[l] = bytes32(current);
+                current = PoseidonT3.poseidon(current, uint256(zeros[l]));
             }
         }
-        currentRoot = current;
-        nextLeafIndex = index + 1;
-    }
-
-    // ─── Views ─────────────────────────────────────────────────────────────
-    /// @notice Whether `root` is a valid (recent) Merkle root for withdrawals.
-    function isKnownRoot_(uint256 root) external view returns (bool) {
-        return isKnownRoot[root];
-    }
-
-    /// @notice How many deposits have been made so far.
-    function depositCount() external view returns (uint32) {
-        return nextLeafIndex;
-    }
-
-    /// @notice Sweep ETH sent to the contract by accident (e.g. selfdestruct
-    ///         refund). Cannot sweep pool funds — only the *excess* above the
-    ///         pool's locked balance. Owner-only.
-    function sweep(address to) external onlyOwner nonReentrant {
-        uint256 balance = address(this).balance;
-        // The locked pool value is depositCount * denomination; only the
-        // accidental excess is recoverable.
-        uint256 locked = uint256(nextLeafIndex) * denomination;
-        uint256 excess = balance > locked ? balance - locked : 0;
-        if (excess > 0) {
-            (bool ok,) = to.call{value: excess}("");
-            if (!ok) revert TransferFailed();
-        }
+        t.nextLeafIndex = index + 1;
+        return bytes32(current);
     }
 
     receive() external payable {}

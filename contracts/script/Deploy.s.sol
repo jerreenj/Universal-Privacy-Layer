@@ -12,13 +12,16 @@ import {PrivacyPool} from "../src/PrivacyPool.sol";
 /// @notice Deploy script for the UPL EVM contracts on Base mainnet.
 ///
 /// @dev P1.6 deployed the first three contracts (registry, relayer, wrapper).
-///      P3.4 extends this to also deploy the ZK privacy pool stack:
+///      P3.4 extended this to also deploy the ZK privacy pool stack (verifier +
+///      single-denom pool). P4.1 multi-denominates the pool: the constructor
+///      now takes `(verifier, initialDenominations[])` and the owner can call
+///      `addDenomination()` post-deploy to register more fixed denominations.
 ///        4. Groth16Verifier  — the snarkjs-generated verifier (zero args).
-///        5. PrivacyPool      — incremental Poseidon Merkle pool; takes the
-///                              fixed deposit denomination (wei) + the verifier
-///                              address. PoseidonT3 is a linked library that
-///                              Foundry deploys + links automatically under
-///                              `forge script --broadcast`.
+///        5. PrivacyPool      — incremental Poseidon Merkle pool, MULTI-DENOM
+///                              (P4.1). Takes the verifier + the initial
+///                              denominations array. PoseidonT3 is a linked
+///                              library that Foundry deploys + links
+///                              automatically under `forge script --broadcast`.
 ///
 /// Run via scripts/deploy_base.sh, which wraps:
 ///
@@ -42,11 +45,16 @@ import {PrivacyPool} from "../src/PrivacyPool.sol";
 ///   Groth16Verifier         — zero args; the snarkjs-generated verifier for
 ///                             withdraw.circom (public signals
 ///                             [nullifierHash, root, recipient]).
-///   PrivacyPool             — 2 args: denomination (wei, immutable — fixed
-///                             denominations are what make pools anonymous),
-///                             verifier (the Groth16Verifier address, immutable).
-///                             Defaults to 0.1 ETH; override via
-///                             POOL_DENOMINATION_WEI for a different face value.
+///   PrivacyPool (P4.1)      — 2 args: verifier (Groth16Verifier, immutable),
+///                             initialDenominations (uint256[] — wei amounts
+///                             for each fixed-face-value pool, e.g.
+///                             [0.01 ether, 0.1 ether, 1 ether]). The owner
+///                             can `addDenomination(d)` post-deploy to add
+///                             more; the global nullifierHashes spent set
+///                             then protects ALL of them. Backwards
+///                             compatible with P3: pass `[POOL_DENOMINATION_WEI]`
+///                             as a 1-element array to recover the exact
+///                             pre-P4.1 pool state.
 contract DeployScript is Script {
     // ── Base mainnet defaults (overridable via env) ─────────────────────────
     /// @dev Canonical Uniswap V3 SwapRouter — NOT SwapRouter02. The contract's
@@ -58,13 +66,21 @@ contract DeployScript is Script {
     /// @dev Base WETH9 — 0x420…0006, the canonical WETH on all OP-stack L2s.
     address constant DEFAULT_WETH = 0x4200000000000000000000000000000000000006;
 
-    /// @dev Default privacy-pool denomination: 0.1 ETH (1e17 wei). Fixed
+    /// @dev Default privacy-pool denomination seed: 0.1 ETH (1e17 wei). Fixed
     ///      denominations are what make deposits unlinkable — every 0.1 ETH
-    ///      deposit is indistinguishable from any other. Override at deploy
-    ///      time via POOL_DENOMINATION_WEI for a different face value. This is
-    ///      IMMUTABLE on the deployed PrivacyPool (no setter) — like
-    ///      feeRecipient, a wrong value means a costly redeploy.
+    ///      deposit is indistinguishable from any other. With P4.1 multi-denom
+    ///      this is just the SEED amount; the owner can call
+    ///      `pool.addDenomination(...)` post-deploy to register more
+    ///      (e.g. 0.01 ETH, 1 ETH, 10 ETH). Override at deploy time via
+    ///      POOL_DENOMINATION_WEI for a different initial face value.
     uint256 constant DEFAULT_POOL_DENOMINATION = 0.1 ether;
+
+    /// @dev P4.1 also lifts a multi-denom seed list. Comma-separated denoms in
+    ///      POOL_DENOMINATIONS_WEI override the single POOL_DENOMINATION_WEI.
+    ///      e.g.  `POOL_DENOMINATIONS_WEI=10000000000000000,100000000000000000,1000000000000000000`
+    ///      seeds the pool with 0.01 / 0.1 / 1 ETH face values at deploy time.
+    string constant DEFAULT_DENOMS_ENV_KEY = "POOL_DENOMINATIONS_WEI";
+    string constant SINGLE_DENOM_ENV_KEY = "POOL_DENOMINATION_WEI";
 
     uint256 constant BASE_CHAIN_ID = 8453;
 
@@ -75,10 +91,11 @@ contract DeployScript is Script {
         // FEE_RECIPIENT is required — it is immutable after deploy (no setter).
         address feeRecipient = vm.envAddress("FEE_RECIPIENT");
         require(feeRecipient != address(0), "FEE_RECIPIENT must not be the zero address");
-        // Pool denomination defaults to 0.1 ETH; override for a different
-        // face value. Immutable post-deploy (no setter on PrivacyPool).
-        uint256 poolDenomination = vm.envOr("POOL_DENOMINATION_WEI", DEFAULT_POOL_DENOMINATION);
-        require(poolDenomination > 0, "POOL_DENOMINATION_WEI must be > 0");
+
+        // Build the initial denominations array. Precedence: POOL_DENOMINATIONS_WEI
+        // (comma-separated multi-denom, P4.1) over POOL_DENOMINATION_WEI (single,
+        // back-compat). If neither is set we fall back to [DEFAULT_POOL_DENOMINATION].
+        uint256[] memory initialDenominations = _readInitialDenominations();
 
         address deployer = msg.sender;
         console2.log("=== UPL Deploy - Base Mainnet (chainId 8453) ===");
@@ -86,7 +103,10 @@ contract DeployScript is Script {
         console2.log("SwapRouter:", swapRouter);
         console2.log("WETH:", weth);
         console2.log("FeeRecipient (IMMUTABLE):", feeRecipient);
-        console2.log("Pool denomination (IMMUTABLE):", poolDenomination, "wei");
+        console2.log("Initial denominations seeded:", initialDenominations.length);
+        for (uint256 i = 0; i < initialDenominations.length; i++) {
+            console2.log("    denom[i] (wei):", initialDenominations[i]);
+        }
         console2.log("");
 
         vm.startBroadcast();
@@ -114,14 +134,19 @@ contract DeployScript is Script {
         Groth16Verifier verifier = new Groth16Verifier();
         console2.log("Groth16Verifier deployed:", address(verifier));
 
-        // 5. PrivacyPool (P3.4) — incremental Poseidon Merkle pool. Takes the
-        //    fixed denomination (wei) + the verifier address; both immutable.
+        // 5. PrivacyPool (P4.1) — multi-denom incremental Poseidon Merkle pool.
+        //    Constructor signs in the verifier + the seed denomination list;
+        //    the owner can call `addDenomination(...)` post-deploy to add more.
         //    PoseidonT3 is a linked library — Foundry deploys + links it
         //    automatically under `forge script --broadcast` (no manual link).
-        PrivacyPool pool = new PrivacyPool(poolDenomination, address(verifier));
+        PrivacyPool pool = new PrivacyPool(address(verifier), initialDenominations);
         console2.log("PrivacyPool deployed:", address(pool));
-        console2.log("  denomination:", pool.denomination(), "wei");
         console2.log("  verifier:", address(pool.verifier()));
+        uint256[] memory seeded = pool.getDenominationList();
+        console2.log("  seeded denominations:");
+        for (uint256 i = 0; i < seeded.length; i++) {
+            console2.log("    seeded[i] (wei):", seeded[i]);
+        }
 
         vm.stopBroadcast();
 
@@ -144,5 +169,72 @@ contract DeployScript is Script {
         console2.log("");
         console2.log("deployed_base.json written to contracts/deployed_base.json");
         console2.log("=== Deploy complete. Run deploy_base.sh for provenance + verify. ===");
+    }
+
+    /// @dev Resolve the seed denomination list for the pool constructor. Reads
+    ///      POOL_DENOMINATIONS_WEI (comma-separated uint256 wei amounts) if
+    ///      present, else falls back to [POOL_DENOMINATION_WEI] (single back-
+    ///      compat), else to [DEFAULT_POOL_DENOMINATION].
+    function _readInitialDenominations() internal view returns (uint256[] memory denoms) {
+        // Try multi-denom first (presence check via envOr + empty-string
+        // pattern). vm.envOr returns the default when the env var is unset.
+        // We deliberately test a zero-string sentinel so unset == "" default.
+        string memory multi = vm.envOr(DEFAULT_DENOMS_ENV_KEY, string(""));
+        bytes memory b = bytes(multi);
+        if (b.length > 0) {
+            denoms = _parseDenominationsCsv(multi);
+            require(denoms.length > 0, "POOL_DENOMINATIONS_WEI parsed empty");
+            return denoms;
+        }
+        // Back-compat: single denom env.
+        denoms = new uint256[](1);
+        denoms[0] = vm.envOr(SINGLE_DENOM_ENV_KEY, DEFAULT_POOL_DENOMINATION);
+        require(denoms[0] > 0, "POOL_DENOMINATION_WEI must be > 0");
+        return denoms;
+    }
+
+    /// @dev Parse a comma-separated decimal uint256 string into an array.
+    ///      Tolerates whitespace around commas. Caps at 16 initial denoms
+    ///      so we never blow the constructor memory limit; more denominations
+    ///      can always be added post-deploy via addDenomination().
+    function _parseDenominationsCsv(string memory csv) internal pure returns (uint256[] memory out) {
+        bytes memory b = bytes(csv);
+        // Count commas for allocation.
+        uint256 count = 1;
+        for (uint256 i = 0; i < b.length; i++) {
+            if (b[i] == ",") count++;
+        }
+        if (count > 16) count = 16;
+        out = new uint256[](count);
+
+        uint256 idx = 0;
+        uint256 start = 0;
+        uint256 accum;
+        uint256 written = 0;
+        bool inNum = false;
+        for (uint256 i = 0; i <= b.length; i++) {
+            bytes1 c = i < b.length ? b[i] : bytes1(","); // sentinel
+            if (c == "," || i == b.length) {
+                if (inNum && written < out.length) {
+                    out[written++] = accum;
+                }
+                idx = 0;
+                accum = 0;
+                inNum = false;
+                continue;
+            }
+            if (c == " " || c == "\t" || c == "\n") continue;
+            // ASCII decimal digit.
+            uint8 d = uint8(c) - uint8(bytes1("0"));
+            require(d < 10, "invalid digit in denomination csv");
+            accum = accum * 10 + d;
+            inNum = true;
+        }
+        // Trim trailing zeros if parse halted early.
+        if (written < count) {
+            assembly {
+                mstore(out, written)
+            }
+        }
     }
 }
