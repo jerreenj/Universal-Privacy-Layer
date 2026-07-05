@@ -73,7 +73,7 @@ const pages = {
   receipts:    { title: "Encrypted Receipts",          Component: EncryptedReceipts,       key: "receipts" },
   addressbook: { title: "Privacy Address Book",        Component: PrivacyAddressBook,      key: "addressbook" },
   zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments,           key: "zkcommit" },
-  svmSend:     { title: "Stealth Send (SVM)",          Component: StealthSendSVM,          key: "svm-send" },
+  svmSend:     { title: "Stealth Send",                Component: StealthSendSVM,          key: "svm-send" },
   svmScan:     { title: "Announcement Scanner (SVM)",  Component: ScannerSVM,              key: "svm-scanner" },
 };
 
