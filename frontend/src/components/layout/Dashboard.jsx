@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense } from "react";
+import { useEffect, useRef, useState, lazy, Suspense } from "react";
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
@@ -123,6 +123,35 @@ export function Dashboard() {
     window.addEventListener("popstate", fromHash);
     return () => window.removeEventListener("popstate", fromHash);
   }, []);
+
+  // ── Scroll-preservation across feature navigation ─────────────────
+  // We save the dashboard's scroll position when the user leaves home
+  // (clicks a tile), and restore it when they come back (clicks Back
+  // to Dashboard OR hits the browser back button). Without this the
+  // browser scrolls to 0 on every return — painful for anyone who
+  // scrolled down before clicking.
+  const prevPageRef = useRef("home");
+  useEffect(() => {
+    const prev = prevPageRef.current;
+    const curr = page;
+    if (prev === "home" && curr !== "home") {
+      // Just left home — save current scroll.
+      try { sessionStorage.setItem("upl-dashboard-scroll", String(window.scrollY)); } catch {}
+    } else if (curr === "home" && prev !== "home") {
+      // Just returned to home — restore saved scroll.
+      try {
+        const y = sessionStorage.getItem("upl-dashboard-scroll");
+        if (y != null) {
+          // requestAnimationFrame fires after the DOM has been
+          // laid out, so the scroll height is correct.
+          requestAnimationFrame(() => {
+            try { window.scrollTo({ top: parseInt(y, 10), behavior: "auto" }); } catch {}
+          });
+        }
+      } catch {}
+    }
+    prevPageRef.current = curr;
+  }, [page]);
 
   if (!address) return <Landing />;
 
