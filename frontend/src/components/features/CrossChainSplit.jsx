@@ -48,21 +48,28 @@ export function CrossChainSplit() {
   };
 
   const generateStealthForSplit = async (idx) => {
-    if (!privacyWallet) return toast.error("Generate privacy wallet first");
+    if (!privacyWallet) return toast.error("Generate privacy wallet first (Dual Seed Setup)");
+    if (!address) return toast.error("Connect wallet first");
     try {
-      const res = await axios.post(`${API}/stealth/generate`, { spending_public_key: privacyWallet.spending_public_key, viewing_public_key: privacyWallet.viewing_public_key });
+      // Backend `/stealth/generate` expects { public_address } and derives
+      // a fresh stealth address from the recipient's registered meta-address.
+      // (Previously this posted spending_public_key/viewing_public_key which
+      // the handler never read — request would silently produce a wrong
+      // address derived from a missing/None public_address.)
+      const res = await axios.post(`${API}/stealth/generate`, { public_address: address });
       updateSplit(idx, 'stealth', res.data.stealth_address);
       toast.success(`Stealth address generated for ${CHAINS[splits[idx].chain]?.name}`);
     } catch { toast.error("Failed to generate stealth address"); }
   };
 
   const generateAllStealth = async () => {
-    if (!privacyWallet) return toast.error("Generate privacy wallet first");
+    if (!privacyWallet) return toast.error("Generate privacy wallet first (Dual Seed Setup)");
+    if (!address) return toast.error("Connect wallet first");
     setLoading(true);
     try {
       for (let i = 0; i < splits.length; i++) {
         if (!splits[i].stealth) {
-          const res = await axios.post(`${API}/stealth/generate`, { spending_public_key: privacyWallet.spending_public_key, viewing_public_key: privacyWallet.viewing_public_key });
+          const res = await axios.post(`${API}/stealth/generate`, { public_address: address });
           updateSplit(i, 'stealth', res.data.stealth_address);
         }
       }

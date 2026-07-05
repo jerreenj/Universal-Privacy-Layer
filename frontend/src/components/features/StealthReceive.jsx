@@ -102,7 +102,7 @@ function MatchCard({ match, onSweep }) {
   );
 }
 
-export function StealthReceive({ address, provider }) {
+export function StealthReceive({ address }) {
   const [viewPriv, setViewPriv] = useState("");
   const [spendPub, setSpendPub] = useState("");
   const [spendPriv, setSpendPriv] = useState(""); // only for sweep
@@ -152,7 +152,7 @@ export function StealthReceive({ address, provider }) {
   }, [viewPriv, spendPub, selectedChain]);
 
   const sweep = async (match) => {
-    if (!spendPriv || !provider) { toast.error("Spend private key required to sweep"); return; }
+    if (!spendPriv) { toast.error("Spend private key required to sweep"); return; }
     try {
       const stealthPrivKey = computeStealthPrivKey(spendPriv, viewPriv, match.ephemeral_pub);
       const rpc = RPC[match.chain];

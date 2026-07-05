@@ -20,13 +20,26 @@ const EXPLORERS = {
   hyperliquid: "https://purrsec.com/tx/",
 };
 
-export function StealthSend({ address, chain, provider }) {
+export function StealthSend({ address, chain, provider: providerProp }) {
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [step, setStep] = useState("input"); // input | preview | sending | done
   const [derived, setDerived] = useState(null);
   const [txHash, setTxHash] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Resolve an ethers BrowserProvider from whichever source is available.
+  // StealthContent passes `signer` (not `provider`), so the historical prop
+  // was always undefined and the send path silently no-op'd. We now derive
+  // the provider from window.ethereum as the reliable fallback — this is
+  // the same path MetaMask's own docs recommend.
+  const getProvider = async () => {
+    if (providerProp) return providerProp;
+    if (typeof window !== "undefined" && window.ethereum) {
+      return new ethers.BrowserProvider(window.ethereum);
+    }
+    return null;
+  };
 
   const derive = async () => {
     if (!recipient.trim() || !amount) return;
@@ -54,7 +67,12 @@ export function StealthSend({ address, chain, provider }) {
   };
 
   const send = async () => {
-    if (!derived || !provider) return;
+    if (!derived) return;
+    const provider = await getProvider();
+    if (!provider) {
+      toast.error("No wallet connected");
+      return;
+    }
     setLoading(true);
     setStep("sending");
     try {

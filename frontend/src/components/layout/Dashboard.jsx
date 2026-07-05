@@ -2,7 +2,7 @@ import { useEffect, useState, lazy } from "react";
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
-  Search, FileText, BookOpen, Hash, Send, ScanLine, Receipt
+  Search, FileText, BookOpen, Hash
 } from "lucide-react";
 import { CHAINS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -35,14 +35,16 @@ const WalletPrivacyAnalyzer     = lazy(() => import("@/components/features/Walle
 const EncryptedReceipts         = lazy(() => import("@/components/features/EncryptedReceipts"));
 const PrivacyAddressBook        = lazy(() => import("@/components/features/PrivacyAddressBook"));
 const ZKCommitments             = lazy(() => import("@/components/features/ZKCommitments"));
-const SuiStealthSend            = lazy(() => import("@/components/features/SuiStealthSend"));
-const SuiScanner                = lazy(() => import("@/components/features/SuiScanner"));
-const SuiReceipts               = lazy(() => import("@/components/features/SuiReceipts"));
-const SolStealthSend            = lazy(() => import("@/components/features/SolStealthSend"));
-const SolScanner                = lazy(() => import("@/components/features/SolScanner"));
-const SolReceipts               = lazy(() => import("@/components/features/SolReceipts"));
 
-/* Page metadata – references the lazy Component *type*, not a rendered element. The `key` field is passed to ChunkErrorBoundary so it can show what failed. */
+/* Page metadata – references the lazy Component *type*, not a rendered element. The `key` field is passed to ChunkErrorBoundary so it can show what failed.
+ *
+ * The six Sui/Solana chain-specific buttons (SuiStealthSend/SuiScanner/
+ * SuiReceipts + SolStealthSend/SolScanner/SolReceipts) were removed from
+ * this map AND from the button grid below. Rationale: chains are selected
+ * INSIDE a feature when needed (e.g. cross-chain split, hidden balance),
+ * not as separate top-level buttons. The lazy-imported files still exist
+ * on disk so any future feature expansion can re-wire them.
+ */
 const pages = {
   receive:     { title: "Private Receive",             Component: StealthContent,          key: "receive" },
   send:        { title: "Private Send",                Component: SendContent,             key: "send" },
@@ -67,12 +69,6 @@ const pages = {
   receipts:    { title: "Encrypted Receipts",          Component: EncryptedReceipts,       key: "receipts" },
   addressbook: { title: "Privacy Address Book",        Component: PrivacyAddressBook,      key: "addressbook" },
   zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments,           key: "zkcommit" },
-  suiSend:     { title: "Sui Stealth Send",            Component: SuiStealthSend,          key: "sui-stealth-send" },
-  suiScan:     { title: "Sui Announcement Scanner",    Component: SuiScanner,              key: "sui-scanner" },
-  suiReceipts: { title: "Sui Encrypted Receipts",      Component: SuiReceipts,             key: "sui-encrypted-receipts" },
-  solSend:     { title: "Solana Stealth Send",         Component: SolStealthSend,          key: "sol-stealth-send" },
-  solScan:     { title: "Solana Announcement Scanner", Component: SolScanner,              key: "sol-scanner" },
-  solReceipts: { title: "Solana Encrypted Receipts",   Component: SolReceipts,             key: "sol-encrypted-receipts" },
 };
 
 function LoadingFallback() {
@@ -228,12 +224,6 @@ export function Dashboard() {
               { id: "multisig", icon: <Users className="w-5 h-5" />, title: "Multisig", color: "text-amber-400" },
               { id: "analyzer", icon: <Search className="w-5 h-5" />, title: "Privacy Analyzer", color: "text-cyan-400" },
               { id: "zkcommit", icon: <Hash className="w-5 h-5" />, title: "ZK Commitments", color: "text-lime-400" },
-              { id: "suiSend", icon: <Send className="w-5 h-5" />, title: "Sui Stealth Send", color: "text-cyan-400" },
-              { id: "suiScan", icon: <ScanLine className="w-5 h-5" />, title: "Sui Scanner", color: "text-cyan-400" },
-              { id: "suiReceipts", icon: <Receipt className="w-5 h-5" />, title: "Sui Receipts", color: "text-cyan-400" },
-              { id: "solSend", icon: <Send className="w-5 h-5" />, title: "Solana Stealth Send", color: "text-purple-400" },
-              { id: "solScan", icon: <ScanLine className="w-5 h-5" />, title: "Solana Scanner", color: "text-purple-400" },
-              { id: "solReceipts", icon: <Receipt className="w-5 h-5" />, title: "Solana Receipts", color: "text-purple-400" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
