@@ -298,7 +298,7 @@ export function Dashboard() {
               { id: "history", icon: <History className="w-5 h-5" />, title: "History", color: "text-blue-400" },
               { id: "wallet",  icon: <Key className="w-5 h-5" />, title: "Dual Seed", color: "text-purple-400" },
               { id: "relayer", icon: <Lock className="w-5 h-5" />, title: "On-Chain Relayer", color: "text-orange-400" },
-              { id: "zkp",     icon: <Fingerprint className="w-5 h-5" />, title: "ZKP Proofs", color: "text-indigo-400" },
+              { id: "receipts", icon: <FileText className="w-5 h-5" />, title: "Receipts", color: "text-sky-400" },
               { id: "split",   icon: <Globe className="w-5 h-5" />, title: "Cross-Chain Split", color: "text-teal-400" },
               { id: "messaging", icon: <MessageSquare className="w-5 h-5" />, title: "Messaging", color: "text-pink-400" },
               { id: "multisig", icon: <Users className="w-5 h-5" />, title: "Multisig", color: "text-amber-400" },
@@ -325,8 +325,7 @@ export function Dashboard() {
               { id: "approval",icon: <Lock className="w-5 h-5" />, title: "Approvals", color: "text-yellow-400" },
               { id: "contract",icon: <FileCode className="w-5 h-5" />, title: "Contracts", color: "text-cyan-400" },
               { id: "developer", icon: <FileCode className="w-5 h-5" />, title: "Developer API", color: "text-emerald-400" },
-              { id: "receipts", icon: <FileText className="w-5 h-5" />, title: "Receipts", color: "text-sky-400" },
-              { id: "addressbook", icon: <BookOpen className="w-5 h-5" />, title: "Address Book", color: "text-violet-400" },
+              { id: "zkp",       icon: <Fingerprint className="w-5 h-5" />, title: "ZKP Proofs", color: "text-indigo-400" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
