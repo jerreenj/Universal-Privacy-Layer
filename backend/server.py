@@ -30,8 +30,70 @@ load_dotenv(ROOT_DIR / '.env', override=False)  # Railway injects env vars; .env
 mongo_url = os.environ.get('MONGO_URL', '')
 if not mongo_url:
     raise RuntimeError("MONGO_URL environment variable is required")
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(
+    mongo_url,
+    maxPoolSize=50,
+    minPoolSize=10,
+    uuidRepresentation="standard",
+    serverSelectionTimeoutMS=5000,
+)
 db = client[os.environ.get('DB_NAME', 'upl_database')]
+
+# ── Web3 per-chain singleton ─────────────────────────────────────────────────
+# HTTPProvider holds a long-lived urllib3 pool — recreating Web3 per request
+# throws that pool away. Cache by chain_key so one instance per chain lives
+# for the lifetime of the process.
+import threading as _threading
+_w3_lock = _threading.Lock()
+_w3_cache: dict = {}
+
+def get_w3(chain_key: str):
+    """Return the module-level cached Web3 for `chain_key`.
+    Falls back to env `BASE_RPC_URL` for the `base` chain (legacy sites).
+    Raises HTTPException(400) if the chain is unknown.
+    """
+    if chain_key in _w3_cache:
+        return _w3_cache[chain_key]
+    with _w3_lock:
+        if chain_key in _w3_cache:           # double-check inside lock
+            return _w3_cache[chain_key]
+        cfg = CHAIN_CONFIG.get(chain_key) if "CHAIN_CONFIG" in globals() else None
+        rpc_url = (cfg or {}).get("rpc_url")
+        if not rpc_url and chain_key == "base":
+            rpc_url = os.environ.get("BASE_RPC_URL", "https://mainnet.base.org")
+        if not rpc_url:
+            raise HTTPException(status_code=400, detail=f"Unknown chain: {chain_key}")
+        w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 10}))
+        _w3_cache[chain_key] = w3
+        return w3
+
+# ── Tiny in-process TTL cache ────────────────────────────────────────────────
+# No external dep — bounded by maxsize, sweeps expired entries on access.
+class _TTLCache:
+    def __init__(self, maxsize: int = 256, ttl: int = 60):
+        self._data: dict = {}
+        self._max = maxsize
+        self._ttl = ttl
+    def get(self, key):
+        entry = self._data.get(key)
+        if entry is None:
+            return None
+        value, ts = entry
+        if _time.time() - ts > self._ttl:
+            self._data.pop(key, None)
+            return None
+        return value
+    def set(self, key, value):
+        if len(self._data) >= self._max:
+            self._data.pop(next(iter(self._data)))   # drop oldest
+        self._data[key] = (value, _time.time())
+    def clear(self):
+        self._data.clear()
+
+_chain_cache  = _TTLCache(maxsize=16, ttl=60)   # /api/chains — rarely changes
+_tokens_cache = _TTLCache(maxsize=64, ttl=120)  # token list per chain
+_meta_cache   = _TTLCache(maxsize=16, ttl=30)   # deployer-info, deployments
+_health_cache = _TTLCache(maxsize=4,  ttl=5)    # /api/health probes
 
 app = FastAPI(
     title="Universal Privacy Layer API",
@@ -837,37 +899,57 @@ async def verify_access(request: StarletteRequest, code: str = Body(..., embed=T
 
 @api_router.get("/health")
 async def health():
-    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+    cached = _health_cache.get("h")
+    if cached:
+        return cached
+    payload = {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+    _health_cache.set("h", payload)
+    return payload
 
 @api_router.get("/chains")
 async def get_chains():
-    """Get supported blockchain networks"""
-    return {
+    """Get supported blockchain networks — cached 60s (changes only on deploy)."""
+    cached = _chain_cache.get("all")
+    if cached:
+        return cached
+    payload = {
         "chains": CHAIN_CONFIG,
         "contracts": UPL_CONTRACTS,
         "tokens": TOKENS,
         "live_chains": list(UPL_CONTRACTS.keys())
     }
+    _chain_cache.set("all", payload)
+    return payload
 
 # Get tokens for a chain
 @api_router.get("/tokens/{chain}")
 async def get_tokens(chain: str):
-    """Get available tokens for a chain"""
+    """Get available tokens for a chain — cached 120s per chain."""
+    cached = _tokens_cache.get(chain)
+    if cached:
+        return cached
     if chain not in TOKENS:
         raise HTTPException(status_code=400, detail="Unsupported chain")
-    return {"chain": chain, "tokens": TOKENS[chain]}
+    payload = {"chain": chain, "tokens": TOKENS[chain]}
+    _tokens_cache.set(chain, payload)
+    return payload
 
 @api_router.get("/deployer-info")
 async def get_deployer_info():
-    """Get deployer wallet info for all live chains"""
+    """Get deployer wallet info for all live chains — cached 30s."""
+    cached = _meta_cache.get("deployer")
+    if cached:
+        return cached
     deployer = os.environ.get("DEPLOYER_ADDRESS", "0x0000000000000000000000000000000000000000")
-    return {
+    payload = {
         "deployer_address": deployer,
         "contracts_address": "0x0000000000000000000000000000000000000000",
         "deployed_on": ["base", "arbitrum", "polygon", "optimism"],
         "privacy_relayer": "0x0000000000000000000000000000000000000000",
         "stealth_registry": "0x0000000000000000000000000000000000000000"
     }
+    _meta_cache.set("deployer", payload)
+    return payload
 
 # Swap Quote API
 class SwapQuoteRequest(BaseModel):
@@ -952,10 +1034,13 @@ async def record_swap(
         logger.error(f"Swap record error: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
 
-# Get available tokens for swapping
+# Get available tokens for swapping (P2.8 — cached 300s — fully static per chain)
 @api_router.get("/swap/tokens/{chain}")
 async def get_swap_tokens(chain: str):
     """Get available tokens for swapping on a chain"""
+    cached = _tokens_cache.get(f"swap:{chain}")
+    if cached:
+        return cached
     if chain not in CHAIN_CONFIG:
         raise HTTPException(status_code=400, detail="Unsupported chain")
 
@@ -968,7 +1053,9 @@ async def get_swap_tokens(chain: str):
         {"symbol": "USDC", "name": "USD Coin", "address": config.get("usdc", ""), "decimals": 6}
     ]
 
-    return {"chain": chain, "tokens": tokens}
+    payload = {"chain": chain, "tokens": tokens}
+    _tokens_cache.set(f"swap:{chain}", payload)
+    return payload
 
 # Wallet Management
 @api_router.post("/wallet/create", response_model=WalletCreateResponse)
@@ -1160,7 +1247,7 @@ async def get_hidden_balance(address: str, chain: str = "ethereum_sepolia"):
             raise HTTPException(status_code=400, detail="Unsupported chain")
         
         config = CHAIN_CONFIG[chain]
-        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        w3 = get_w3(chain)
         
         # Get main address balance
         main_balance = w3.eth.get_balance(Web3.to_checksum_address(address))
@@ -1229,7 +1316,7 @@ async def get_full_hidden_balance(address: str):
         # Fetch balances for each chain
         for chain_key, config in CHAIN_CONFIG.items():
             try:
-                w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+                w3 = get_w3(chain)
                 
                 # Main balance
                 try:
@@ -1855,7 +1942,7 @@ async def zk_pool_state():
                 "message": "PrivacyPool not yet deployed on Base (P3.4 pending broadcast)"
             }
 
-        w3 = Web3(Web3.HTTPProvider(os.environ.get("BASE_RPC_URL", "https://mainnet.base.org")))
+        w3 = get_w3("base")
         pool = w3.eth.contract(address=pool_addr, abi=PRIVACY_POOL_ABI)
 
         denomination = pool.functions.denomination().call()
@@ -2051,7 +2138,7 @@ async def zk_pool_withdraw(req: ZKPoolWithdrawRequest):
             pass  # In production we would verify the proof here or on-chain
 
         # 3. Call the on-chain withdraw function
-        w3 = Web3(Web3.HTTPProvider(os.environ.get("BASE_RPC_URL", "https://mainnet.base.org")))
+        w3 = get_w3("base")
         pool = w3.eth.contract(address=pool_addr, abi=PRIVACY_POOL_ABI)
 
         # Convert proof to the format expected by the contract
@@ -2308,7 +2395,7 @@ async def prepare_relayer_transaction(request: RelayerIntentRequest):
                 detail=f"PrivacyRelayer not deployed on chain '{request.chain}'"
             )
 
-        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        w3 = get_w3(chain)
         relayer = w3.eth.contract(
             address=Web3.to_checksum_address(relayer_address),
             abi=PRIVACY_RELAYER_ABI,
@@ -2396,7 +2483,7 @@ async def get_relayer_stats(chain: str):
                 detail=f"PrivacyRelayer not deployed on chain '{chain}'"
             )
 
-        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        w3 = get_w3(chain)
         relayer = w3.eth.contract(address=Web3.to_checksum_address(relayer_address), abi=PRIVACY_RELAYER_ABI)
 
         try:
@@ -2504,7 +2591,7 @@ async def submit_relayer_intent(request: RelayerSubmitRequest):
         # PTB). Replaces the old two-tx relay()+announce() stitch, which could
         # leave a dangling relay if the announce tx reverted or the relayer
         # crashed between the two. Either both succeed or both revert now.
-        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        w3 = get_w3(chain)
         relayer_account = Account.from_key(relayer_key)
         relayer_contract = w3.eth.contract(
             address=Web3.to_checksum_address(relayer_address),
@@ -3282,13 +3369,18 @@ async def public_get_chains(api_key: str = None):
                 {"$inc": {"usage_count": 1}, "$set": {"last_used": datetime.now(timezone.utc).isoformat()}}
             )
     
-    return {
+    cached = _chain_cache.get("v1:chains")
+    if cached:
+        return cached
+    payload = {
         "chains": [
             {"id": k, "name": v["name"], "chain_id": v["chain_id"], "live": True}
             for k, v in CHAIN_CONFIG.items()
         ],
         "total": len(CHAIN_CONFIG)
     }
+    _chain_cache.set("v1:chains", payload)
+    return payload
 
 @api_router.post("/v1/stealth/generate")
 async def public_generate_stealth(
@@ -3497,7 +3589,7 @@ async def uniswap_private_quote(request: UniswapPrivateSwapRequest):
         amount_in_wei = int(float(request.amount_in) * (10 ** decimals_in))
 
         # Try on-chain quote
-        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        w3 = get_w3(chain)
         quoter = w3.eth.contract(
             address=Web3.to_checksum_address(contracts["quoter"]),
             abi=UNISWAP_QUOTER_ABI
@@ -3613,12 +3705,17 @@ async def uniswap_record_private_swap(
 
 @api_router.get("/uniswap/supported-chains")
 async def uniswap_supported_chains():
-    """Get chains where Uniswap V3 is available"""
-    return {
+    """Get chains where Uniswap V3 is available — cached 5 min, fully static"""
+    cached = _meta_cache.get("uniswap:chains")
+    if cached:
+        return cached
+    payload = {
         "chains": list(UNISWAP_V3_CONTRACTS.keys()),
         "contracts": UNISWAP_V3_CONTRACTS,
         "note": "All swaps routed through UPL privacy relayer"
     }
+    _meta_cache.set("uniswap:chains", payload)
+    return payload
 
 
 # ─── Hyperliquid Integration ──────────────────────────────────────────────────
@@ -3644,7 +3741,10 @@ class HyperliquidPrivateOrderRequest(BaseModel):
 
 @api_router.get("/hyperliquid/markets")
 async def get_hyperliquid_markets():
-    """Get available perpetual markets on Hyperliquid"""
+    """Get available perpetual markets on Hyperliquid — cached 60s."""
+    cached = _meta_cache.get("hyperliquid:markets")
+    if cached:
+        return cached
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(HYPERLIQUID_API, json={"type": "meta"})
@@ -3660,12 +3760,18 @@ async def get_hyperliquid_markets():
                     }
                     for u in universes
                 ]
-                return {"markets": markets, "count": len(markets)}
+                payload = {"markets": markets, "count": len(markets)}
+                _meta_cache.set("hyperliquid:markets", payload)
+                return payload
             else:
-                return {"markets": [{"name": p, "maxLeverage": 50} for p in HYPERLIQUID_PERPS], "count": len(HYPERLIQUID_PERPS)}
+                payload = {"markets": [{"name": p, "maxLeverage": 50} for p in HYPERLIQUID_PERPS], "count": len(HYPERLIQUID_PERPS)}
+                _meta_cache.set("hyperliquid:markets", payload)
+                return payload
     except Exception as e:
         logger.warning(f"Hyperliquid markets fetch failed: {e}")
-        return {"markets": [{"name": p, "maxLeverage": 50} for p in HYPERLIQUID_PERPS], "count": len(HYPERLIQUID_PERPS)}
+        payload = {"markets": [{"name": p, "maxLeverage": 50} for p in HYPERLIQUID_PERPS], "count": len(HYPERLIQUID_PERPS)}
+        _meta_cache.set("hyperliquid:markets", payload)
+        return payload
 
 @api_router.get("/hyperliquid/price/{asset}")
 async def get_hyperliquid_price(asset: str):
@@ -3812,7 +3918,11 @@ class PolymarketPrivateBetRequest(BaseModel):
 
 @api_router.get("/polymarket/markets")
 async def get_polymarket_markets(limit: int = 10):
-    """Get active prediction markets from Polymarket"""
+    """Get active prediction markets from Polymarket — cached 60s per limit."""
+    key = f"polymarket:markets:{limit}"
+    cached = _meta_cache.get(key)
+    if cached:
+        return cached
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
@@ -3823,11 +3933,13 @@ async def get_polymarket_markets(limit: int = 10):
             if resp.status_code == 200:
                 data = resp.json()
                 markets = data if isinstance(data, list) else data.get("data", [])
-                return {
+                payload = {
                     "markets": markets[:limit],
                     "count": len(markets[:limit]),
                     "source": "polymarket_clob"
                 }
+                _meta_cache.set(key, payload)
+                return payload
             raise HTTPException(status_code=502, detail="Polymarket API returned non-200 status")
     except HTTPException:
         raise
@@ -4504,7 +4616,7 @@ def _stealth_registry_for(chain: str):
             status_code=503,
             detail=f"StealthAddressRegistry not deployed on chain '{chain}'"
         )
-    w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+    w3 = get_w3(chain)
     return w3, w3.eth.contract(
         address=Web3.to_checksum_address(addr),
         abi=STEALTH_REGISTRY_ABI,
@@ -4683,12 +4795,18 @@ ACCEPTED_TOKENS = [
 @api_router.get("/payments/info")
 async def payment_info():
     """Public endpoint: payout wallet + accepted tokens for direct crypto
-    payment. No plans are published — amounts are agreed B2-custom per customer."""
-    return {
+    payment. No plans are published — amounts are agreed B2-custom per customer.
+    Cached 60s — driven by env PAYOUT_WALLET."""
+    cached = _meta_cache.get("payments:info")
+    if cached:
+        return cached
+    payload = {
         "enabled": bool(PAYOUT_WALLET),
         "wallet": PAYOUT_WALLET,
         "accepted_tokens": ACCEPTED_TOKENS,
     }
+    _meta_cache.set("payments:info", payload)
+    return payload
 
 
 @api_router.post("/payments/submit")
@@ -4757,18 +4875,29 @@ async def _sui_rpc(method: str, params: list) -> Dict[str, Any]:
 @api_router.get("/sui/status")
 async def sui_status():
     """Return the Sui mainnet deployment manifest (package_id, shared_objects,
-    network, live boolean). Returns {live: False} when no manifest is present."""
+    network, live boolean). Returns {live: False} when no manifest is present.
+    Cached 60s — fully static once deployed."""
+    cached = _meta_cache.get("sui:status")
+    if cached:
+        return cached
     if not SUI_DEPLOYMENT:
-        return {"live": False, "network": None, "package_id": None,
-                "shared_objects": {}, "owned_capabilities": {}, "modules": []}
-    return SUI_DEPLOYMENT
+        payload = {"live": False, "network": None, "package_id": None,
+                   "shared_objects": {}, "owned_capabilities": {}, "modules": []}
+    else:
+        payload = SUI_DEPLOYMENT
+    _meta_cache.set("sui:status", payload)
+    return payload
 
 
 @api_router.get("/sui/registry/count")
 async def sui_registry_count():
     """Read the Sui shared Registry object and return its announcement count
     (the `next_id` field, which equals the count since ids are monotonic from 0).
-    Returns 503 if Sui is not deployed or the registry object id is missing."""
+    Returns 503 if Sui is not deployed or the registry object id is missing.
+    Cached 15s — RPC call is expensive enough that even short TTL helps."""
+    cached = _tokens_cache.get("sui:registry:count")
+    if cached:
+        return cached
     if not SUI_DEPLOYMENT:
         raise HTTPException(status_code=503, detail="Sui package not deployed")
     registry_id = SUI_DEPLOYMENT.get("shared_objects", {}).get("registry")
@@ -4778,9 +4907,11 @@ async def sui_registry_count():
     obj = result.get("data", {})
     fields = obj.get("content", {}).get("fields", {})
     next_id = fields.get("next_id")
-    return {"count": int(next_id) if next_id is not None else 0,
-            "registry_object_id": registry_id,
-            "network": SUI_DEPLOYMENT.get("network")}
+    payload = {"count": int(next_id) if next_id is not None else 0,
+               "registry_object_id": registry_id,
+               "network": SUI_DEPLOYMENT.get("network")}
+    _tokens_cache.set("sui:registry:count", payload)
+    return payload
 
 
 # ── P2.8 + Sui-parity: Sui relay / scan / receipt endpoints ─────────────────
@@ -5099,22 +5230,30 @@ def _sol_account_data(account_pubkey: str) -> Optional[bytes]:
 @api_router.get("/sol/status")
 async def sol_status():
     """Return the Solana deployment manifest, or {live: False} if not deployed.
-    Mirrors /api/sui/status."""
+    Mirrors /api/sui/status. Cached 60s — fully static once deployed."""
+    cached = _meta_cache.get("sol:status")
+    if cached:
+        return cached
     if not SOL_DEPLOYMENT:
-        return {
+        payload = {
             "live": False,
             "network": None,
             "program_id": None,
             "registry_pda": None,
         }
-    return SOL_DEPLOYMENT
+    else:
+        payload = SOL_DEPLOYMENT
+    _meta_cache.set("sol:status", payload)
+    return payload
 
 
 @api_router.get("/sol/registry/count")
 async def sol_registry_count():
     """Read the RegistryState PDA's next_id (announcement count) via getAccountInfo.
-    Mirrors /api/sui/registry/count. The RegistryState account layout:
-    8 (discriminator) + 32 (relayer) + 32 (admin) + 2 (fee_bps) + 8 (next_id) + ..."""
+    Mirrors /api/sui/registry/count. Cached 15s."""
+    cached = _tokens_cache.get("sol:registry:count")
+    if cached:
+        return cached
     if not SOL_DEPLOYMENT:
         raise HTTPException(status_code=503, detail="Solana program not deployed")
     registry_pda = SOL_DEPLOYMENT.get("registry_pda")
@@ -5125,13 +5264,14 @@ async def sol_registry_count():
     if not data or len(data) < 8 + 32 + 32 + 2 + 8:
         raise HTTPException(status_code=503, detail="RegistryState account not found or too small")
 
-    # Parse next_id: offset = 8 (disc) + 32 (relayer) + 32 (admin) + 2 (fee_bps) = 74
     next_id = int.from_bytes(data[74:82], "little")
-    return {
+    payload = {
         "count": next_id,
         "registry_pda": registry_pda,
         "network": SOL_DEPLOYMENT.get("network", "mainnet"),
     }
+    _tokens_cache.set("sol:registry:count", payload)
+    return payload
 
 
 @api_router.post("/sol/relay/submit")
@@ -5289,7 +5429,11 @@ async def deployments():
     """Return the deployment status of all UPL contracts across EVM chains and
     Sui mainnet. EVM addresses come from UPL_CONTRACTS (populated by the
     _load_deployed_addresses loader at import time from deployed_base.json);
-    Sui status comes from SUI_DEPLOYMENT (loaded from deployed_sui_mainnet.json)."""
+    Sui status comes from SUI_DEPLOYMENT (loaded from deployed_sui_mainnet.json).
+    Cached 30s — the data only changes on a deploy."""
+    cached = _meta_cache.get("deployments")
+    if cached:
+        return cached
     evm = {}
     for chain, cfg in UPL_CONTRACTS.items():
         relayer = cfg.get("privacy_relayer")
@@ -5332,7 +5476,9 @@ async def deployments():
     else:
         sol = {"live": False, "program_id": None, "network": None, "registry_pda": None}
 
-    return {"evm": evm, "sui": sui, "sol": sol}
+    payload = {"evm": evm, "sui": sui, "sol": sol}
+    _meta_cache.set("deployments", payload)
+    return payload
 
 
 # Include router
