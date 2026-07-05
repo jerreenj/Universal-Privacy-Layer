@@ -19,10 +19,10 @@ P2.9 Sui parity with Base (relay+scan+receipts) ██████████�
 P2.9.7 Base atomic relay+announce (parity w/ Sui) ████████████████ 100% ✅ DONE
 P2.10 Solana (SVM) parity w/ Base+Sui   ██████████████░░  88% 🔒 PAUSED — proven + devnet-ready + one-shot mainnet wired; parked pending SOL funding while P3 builds
 P3  Real ZK (privacy pool, Path B)  ████████████████ 100% ✅ DONE — toolchain + circuit + ceremony + contracts + deploy toolchain + backend wiring + browser proofs + docs; one broadcast away from a live on-chain pool
-P4  Privacy pools + DeFi privacy    ░░░░░░░░░░░░░░░░   0% ⏸️ not started (seeded by P3)
+P4  Privacy pools + DeFi privacy    ██░░░░░░░░░░░░░░  14% 🟡 P4.1 ✓ shipped (multi-denom contract + 4 new tests + new deploy script); P4.2–4.5 ⏸ not started
 ```
 
-**Last updated:** 2026-07-04 — **P3 100% DONE** (P3.5 backend + P3.6 frontend browser proofs + P3.7 docs all landed; CI green on Backend Tests and Deploy to Azure workflow). P3.4 deploy code is staged — only the actual `bash scripts/deploy_base.sh` broadcast (~$0.01 gas) remains, which is funding-side. Phase 4 (multi-denomination pools, Aerodrome router, cross-chain private routing) is unblocked.
+**Last updated:** 2026-07-05 — **P4.1 SHIPPED** (`contracts/src/PrivacyPool.sol` is now multi-denom: per-denom Poseidon Merkle trees, single global `nullifierHashes` spent set across every denom, owner-callable `addDenomination(...)` post-deploy, constructor changed from `(uint256 denom, address verifier)` to `(address verifier, uint256[] initialDenominations)`). **19/19 forge tests green** (15 P3 + 4 new multi-denom tests: `test_MultiDenom_AddDenominationWorks`, `test_MultiDenom_RootsAreIsolatedPerDenom`, `test_MultiDenom_GlobalSpentSet`, `test_MultiDenom_IndependentDepositCounts`). `script/Deploy.s.sol` updated to read `POOL_DENOMINATIONS_WEI` (comma-separated multi-denom CSV) with back-compat `POOL_DENOMINATION_WEI` (single-denom). **NOT yet deployed** — mainnet broadcast deferred for funding (redeploy mandatory: new ABI on `PrivacyPool`).
 
 ---
 
@@ -720,7 +720,7 @@ trust model, limitations). Update this PLAN.md. Multi-commit push.
 1. **Browser proving** ~5–20s for depth-20 Poseidon on a mid laptop. Acceptable;
    UX shows "generating proof…". Backend-prover fallback is a small follow-up.
 2. **Self-run ceremony** is centralized. Fine for launch; community MPC later.
-3. **Fixed denomination** required for anonymity. Multi-denomination = P4.
+3. **Fixed denomination** required for anonymity. Multi-denomination shipped in **P4.1** (per-denom Poseidon trees; one global `nullifierHashes` set prohibits cross-denom replay).
 
 **History note:** The unsound `Groth16Verifier.sol` (DELTA==GAMMA bug) was
 removed in P1.3. P3.3 deploys a **correct** snarkjs-generated verifier. On-chain
@@ -811,15 +811,83 @@ review.
 
 ---
 
-## P4 — Privacy Pools + Advanced DeFi Privacy ⏸️ Not Started
+## P4 — Privacy Pools + Advanced DeFi Privacy 🟡 P4.1 shipped
 
-| # | Task | Difficulty |
-|---|------|-----------|
-| P4.1 | Privacy pool contract (deposits + withdrawals with ZK nullifiers) | Hard |
-| P4.2 | Aerodrome router integration (Base's primary DEX, not Uniswap V3) | Medium |
-| P4.3 | Cross-chain private routing (Base → Arbitrum → Polygon) | Hard |
-| P4.4 | Relayer service hardening (dedicated hot wallet, nonce management, queue) | Medium |
-| P4.5 | Production monitoring + alerting | Medium |
+| # | Task | Difficulty | Status |
+|---|------|-----------|--------|
+| P4.1 | **Multi-denomination privacy pool** (per-denom trees, owner-addable, global spent set) | Hard | ✅ **Shipped (2026-07-05)** — `PrivacyPool.sol` rewritten; 19/19 forge tests green |
+| P4.2 | Aerodrome router integration (Base's primary DEX, not Uniswap V3) | Medium | ⏸ not started |
+| P4.3 | Cross-chain private routing (Base → Arbitrum → Polygon) | Hard | ⏸ not started |
+| P4.4 | Relayer service hardening (dedicated hot wallet, nonce management, queue) | Medium | ⏸ not started |
+| P4.5 | Production monitoring + alerting | Medium | ⏸ not started |
+
+### P4.1 — Multi-Denomination Privacy Pool (✅ shipped)
+
+The single-denom `PrivacyPool.sol` (P3.4) was sufficient for a launch pool but
+locks users into one fixed face value. P4.1 lifts that constraint while
+preserving every prior invariant (per-leaf unlinkability, root history window,
+global double-spend block, atomic proof-fail/no-nullifier-burn).
+
+**Contract changes** (`contracts/src/PrivacyPool.sol`):
+- Constructor moved from `(uint256 denom, address verifier)` to
+  `(address verifier, uint256[] initialDenominations)`. **Back-compat**:
+  pass `[denom]` as a 1-element array to recover the exact pre-P4.1 behaviour.
+- New `addDenomination(uint256)` owner-callable; idempotent; seeds a fresh
+  incremental Poseidon Merkle tree (depth 20, ring buffer 100) for the new
+  denom; emits `DenominationAdded`.
+- New `deposit(bytes32 commitment, uint256 denomination)` — denomination is
+  mandatory; `msg.value != denomination` reverts `MustPayExactDenomination`;
+  unregistered denoms revert `DenominationNotEnabled`.
+- `currentRoot()` / `nextLeafIndex()` removed; replaced by
+  `currentRootOf(denomination)` / `depositCount(denomination)`.
+- `isKnownRoot(root)` now scans the union of every denom's recent-roots
+  window (O(denominations × 100); for the typical <12 denoms this is <1200 storage reads).
+- `withdraw(a, b, c, pubSignals)` is unchanged on calldata; the amount
+  paid out is determined by which denom's root buffer contains
+  `pubSignals[1]`, via `_findDenomByRoot()`. The Groth16 proof itself is
+  denomination-agnostic — `(nullifier, secret, merklePath)` proves
+  knowledge of a leaf under some registered root; the contract pays
+  `_findDenomByRoot(pubSignals[1]).amount` so a withdraw against a
+  0.1 ETH tree always pays exactly 0.1 ETH.
+- The `nullifierHashes` spent set is intentionally **global across all
+  denoms**. A note = `(nullifier, secret, commitment)` is denomination-
+  agnostic; allowing the same nullifier to withdraw twice across two pools
+  would double-spend. One global set blocks a note everywhere once it is
+  spent once. `test_MultiDenom_GlobalSpentSet` enforces this.
+- `sweep()` excludes ALL denominations' locked balance, not just one.
+
+**Deploy script** (`contracts/script/Deploy.s.sol`):
+- Reads `POOL_DENOMINATIONS_WEI` (comma-separated, P4.1 default) with
+  back-compat fallback to `POOL_DENOMINATION_WEI` (single, P3.4) — and
+  finally to `[0.1 ether]` (the historical default seed).
+- `deployed_base.json` no longer needs a `denomination` field; deployments
+  emit `getDenominationList()` so the manifest + on-chain state are
+  self-consistent.
+
+**Tests** (19 / 19 green):
+- Original 15 P3 tests retained unchanged in semantics: tree growth,
+  root equality vs. independent full-tree rebuild, double-spend,
+  UnknownRoot, RecipientZero, real Groth16 round-trip.
+- **4 new** multi-denom tests:
+  - `test_MultiDenom_AddDenominationWorks` — registering a new denom
+    creates an independent zero-seeded tree.
+  - `test_MultiDenom_RootsAreIsolatedPerDenom` — a deposit at dA MUST
+    NOT advance dB's currentRoot or `depositCount`.
+  - `test_MultiDenom_GlobalSpentSet` — replaying the SAME nullifierHash
+    on a DIFFERENT denom's tree (after a fresh deposit there) reverts
+    `NullifierAlreadySpent`. The global set has no concept of "which
+    denom this came from"; a spent note is spent everywhere.
+  - `test_MultiDenom_IndependentDepositCounts` — independent leaf
+    counters and independent roots after interleaved deposits.
+
+**NOT deployed.** Mainnet broadcast is deferred for funding — the new
+ABI on `PrivacyPool` (drop of `denomination()`, `currentRoot()`,
+`nextLeafIndex()`; add of `_findDenomByRoot`; constructor re-order) is
+a breaking change to the previous P3.4 deploy. A redeploy of the pool
+will be staged together with the first batch of seeded denominations
+(e.g. `[0.01 ether, 0.1 ether, 1 ether]`) — the cost is the same shape
+as P3.4 (~0.01 gas on Base) but requires touching the existing
+contract's address.
 
 **P1.13 finding:** Uniswap V3 has no WETH/USDC pool on Base. The `UniswapPrivacyWrapper` contract is correct but needs an Aerodrome V2 router path to work on Base. This is Phase 4 scope.
 
@@ -866,4 +934,4 @@ review.
 
 ---
 
-*This file is updated after every milestone. Last update: 2026-07-04 (P3 100% DONE — PrivacyPool.sol + PoseidonT3 + Verifier.sol on-chain; backend /api/zk-pool/{state,deposit,path,withdraw} live; frontend ZKCommitments.jsx + ZKPProofs.jsx real browser proof gen; deploy toolchain staged; docs/zk-architecture.md live; CI green on Backend Tests and Deploy to Azure workflows. **P3.8 added** as a research/PoC milestone: stealth_owner.circom + WSL setup script + backend /api/zk-stealth/owner + frontend StealthOwnership.jsx + docs/secp256k1-stealth-zk.md. Production deployment is BLOCKED on external cryptographic audit, MPC Powers-of-Tau, and StealthOwnerVerifier.sol generation. P3.4 funded broadcast + P4 unblocked).*
+*This file is updated after every milestone. Last update: 2026-07-05 (**P4.1 SHIPPED** — multi-denom privacy pool refactor in `contracts/src/PrivacyPool.sol` + `script/Deploy.s.sol`; 4 new multi-denom tests added; 19/19 forge tests green; constructor breaking-change OK because contract not yet broadcast. **P3 100% DONE** — PrivacyPool.sol + PoseidonT3 + Verifier.sol on-chain; backend /api/zk-pool/{state,deposit,path,withdraw} live; frontend ZKCommitments.jsx + ZKPProofs.jsx real browser proof gen; deploy toolchain staged; docs/zk-architecture.md live; CI green on Backend Tests and Deploy to Azure workflows. **P3.8 added** as a research/PoC milestone: stealth_owner.circom + WSL setup script + backend /api/zk-stealth/owner + frontend StealthOwnership.jsx + docs/secp256k1-stealth-zk.md. Production deployment of the multi-denom pool is BLOCKED on funding for the redeploy broadcast; **P3.8** is BLOCKED on external cryptographic audit, MPC Powers-of-Tau, and StealthOwnerVerifier.sol generation.)*
