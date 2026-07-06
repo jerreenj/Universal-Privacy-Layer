@@ -134,6 +134,7 @@ export function Dashboard() {
     } catch {}
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     // Take over scroll management from the browser.
     if ("scrollRestoration" in history) {
@@ -154,6 +155,7 @@ export function Dashboard() {
     fromHash(); // sync on mount
     window.addEventListener("popstate", fromHash);
     return () => window.removeEventListener("popstate", fromHash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Scroll-preservation across feature navigation ─────────────────

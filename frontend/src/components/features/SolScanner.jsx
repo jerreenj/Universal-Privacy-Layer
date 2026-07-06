@@ -37,7 +37,8 @@ export function SolScanner() {
     setLoading(false);
   }, [limit, afterId]);
 
-  useEffect(() => { scan(); /* eslint-disable-next-line */ }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { scan(); }, []);
 
   return (
     <div className="space-y-4" data-testid="sol-scanner">

@@ -39,7 +39,8 @@ export function SuiScanner() {
     setLoading(false);
   }, [limit, afterId]);
 
-  useEffect(() => { scan(); /* eslint-disable-next-line */ }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { scan(); }, []);
 
   return (
     <div className="space-y-4" data-testid="sui-scanner">
