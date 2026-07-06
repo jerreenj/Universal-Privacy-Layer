@@ -6,6 +6,7 @@ import { Lock, Loader2, Shield, Hash, Download, Eye, EyeOff, RefreshCw } from "l
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
+import { seal } from "@/lib/crypto-seal";
 import {
   computeCommitment,
   computeNullifierHash,
@@ -171,12 +172,24 @@ export function ZKCommitments() {
       //    paths scoped per denom. Non-fatal if it fails — the chain is
       //    the source of truth and the backend can re-rebuild from the
       //    Deposit event later.
+      //    Sealed envelope (K5): server stores ciphertext only; the
+      //    employee's wallet-derived seal key keeps the row unreadable
+      //    without the user's signature. The plaintext back-compat
+      //    path stays intact for any pre-K5 tool that posts the legacy
+      //    shape.
       try {
-        await axios.post(`${API}/zk-pool/deposit`, {
-          commitment: toBytes32(commitmentHex),
-          tx_hash: receipt?.hash ?? tx.hash,
-          leaf_index: leafIndex,
+        const envelope = await seal({
+          commitment:       toBytes32(commitmentHex),
+          tx_hash:          receipt?.hash ?? tx.hash,
+          leaf_index:        leafIndex,
           denomination_wei: Number(denom),
+          chain:            "base",
+          tx_type:          "zk_deposit",
+          client:           "metadata",
+        }, signer, address);
+        await axios.post(`${API}/zk-pool/deposit`, {
+          ...envelope,
+          chain: "base",
         });
       } catch (e) {
         console.warn("Backend deposit record failed (non-fatal):", e);
