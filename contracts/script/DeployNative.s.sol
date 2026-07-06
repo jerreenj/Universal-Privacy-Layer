@@ -13,18 +13,18 @@ import {NativePrivateSwap} from "../src/NativePrivateSwap.sol";
 ///         funding round-trip. The reserve size is `NATIVE_SEED_USDC`
 ///         (6-decimal USDC units, default 0.5 USDC = 500_000).
 contract DeployNativeScript is Script {
-    address constant DEFAULT_USDC        = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-    uint256 constant DEFAULT_RATE_PER_ETH = 3_000_000_000;   // 3000 USDC / ETH
-    uint256 constant DEFAULT_SEED_USDC    = 500_000;         // 0.5 USDC
+    address constant DEFAULT_USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    uint256 constant DEFAULT_RATE_PER_ETH = 3_000_000_000; // 3000 USDC / ETH
+    uint256 constant DEFAULT_SEED_USDC = 500_000; // 0.5 USDC
 
     function run() external {
-        address usdc        = vm.envOr("NATIVE_USDC_ADDRESS",          DEFAULT_USDC);
+        address usdc = vm.envOr("NATIVE_USDC_ADDRESS", DEFAULT_USDC);
         address feeRecipient = vm.envAddress("FEE_RECIPIENT");
-        uint256 rate        = vm.envOr("NATIVE_SWAP_RATE_PER_ETH",    DEFAULT_RATE_PER_ETH);
-        uint256 seed        = vm.envOr("NATIVE_SEED_USDC",            DEFAULT_SEED_USDC);
+        uint256 rate = vm.envOr("NATIVE_SWAP_RATE_PER_ETH", DEFAULT_RATE_PER_ETH);
+        uint256 seed = vm.envOr("NATIVE_SEED_USDC", DEFAULT_SEED_USDC);
         require(feeRecipient != address(0), "FEE_RECIPIENT required");
-        require(rate > 0,                   "rate must be > 0");
-        require(seed > 0,                   "seed must be > 0");
+        require(rate > 0, "rate must be > 0");
+        require(seed > 0, "seed must be > 0");
 
         address deployer = msg.sender;
         console2.log("=== UPL - Deploy NativePrivateSwap on Base ===");
@@ -49,11 +49,11 @@ contract DeployNativeScript is Script {
         vault.fundUSDC(seed);
 
         // Read back on-chain state before stopping the broadcast.
-        address v         = address(vault);
-        address u         = address(vault.USDC());
-        address fr        = vault.feeRecipient();
-        uint256 r         = vault.usdcPerEth();
-        uint256 reserve   = vault.reserveBalance();
+        address v = address(vault);
+        address u = address(vault.USDC());
+        address fr = vault.feeRecipient();
+        uint256 r = vault.usdcPerEth();
+        uint256 reserve = vault.reserveBalance();
         uint256 previewUsdc = vault.quote(0.001 ether);
         vm.stopBroadcast();
 

@@ -63,13 +63,13 @@ contract NativePrivateSwapTest is Test {
     uint256 internal constant RATE = 3000_000000; // 3000 USDC / ETH
 
     function setUp() public {
-        usdc  = new MockUSDC();
+        usdc = new MockUSDC();
         vault = new NativePrivateSwap(address(usdc), feeSink, RATE, owner);
         // Pre-fund 10,000 mUSDC into the vault (more than enough for
         // every test in this suite at the 3000 USDC/ETH test rate).
         usdc.mint(address(vault), 10_000_000_000);
         // Default all test counterparties with ETH for any swap direction.
-        vm.deal(alice,   100 ether);
+        vm.deal(alice, 100 ether);
         vm.deal(stealth, 1 ether);
         vm.deal(stranger, 1 ether);
     }
@@ -116,15 +116,15 @@ contract NativePrivateSwapTest is Test {
 
     function test_SwapETHForUSDCPaysRecipient() public {
         uint256 ethIn = 0.1 ether;
-        uint256 pre  = usdc.balanceOf(stealth);
-        uint256 fee  = (ethIn * 5) / 10000;
+        uint256 pre = usdc.balanceOf(stealth);
+        uint256 fee = (ethIn * 5) / 10000;
         uint256 expectedUsdc = ((ethIn - fee) * RATE) / 1e18;
 
         vm.prank(alice);
         uint256 out = vault.swapETHForUSDC{value: ethIn}(stealth, 0);
         assertEq(out, expectedUsdc);
         assertEq(usdc.balanceOf(stealth) - pre, expectedUsdc);
-        assertEq(feeSink.balance,                  fee);
+        assertEq(feeSink.balance, fee);
     }
 
     function test_SwapEmitsSwapExecutedEvent() public {
@@ -132,7 +132,7 @@ contract NativePrivateSwapTest is Test {
         // receipt path is exercised by every other swap test; we keep
         // this as a coverage marker for the future vm.expectEmit rewrite.
         uint256 ethIn = 0.01 ether;
-        uint256 pre    = usdc.balanceOf(address(vault));
+        uint256 pre = usdc.balanceOf(address(vault));
         vm.prank(alice);
         vault.swapETHForUSDC{value: ethIn}(stealth, 0);
         // Sanity check: USDC departed vault (so a state-changing tx

@@ -145,17 +145,22 @@ class TestDeploymentsNoManifests:
         # of the pool so verifying the surface area independently catches
         # any drift between the two addresses).
         assert base.get("privacy_verifier") == "0x838b7c20b1a97cAA6379542d03983b4571275679"
-        # P4.2 AerodromePrivacyWrapper (post-hotfix v2 — the swap tile
-        # routes here; v1 wraps a 3-field Route struct that reverts at
-        # Aerodrome Router with empty error data, so this exact address
-        # matters more than any other).
+        # P4.2 AerodromePrivacyWrapper (post-hotfix v2 — used by the
+        # multi-DEX picker tile as the Aerodrome V2 row; the Core
+        # "Private Swap" tile now routes through native_swap_wrapper
+        # below so the Aerodrome path is no longer the default).
         assert base.get("aerodrome_wrapper") == "0xe896e6f51af137c32db7eb4e3b2de795d392a646"
+        # NativePrivateSwap — in-house vault the customer pilot's Core
+        # "Private Swap" tile calls directly. NO Aerodrome Router
+        # involvement; the only on-chain artefacts are an ETH.transfer
+        # in and a USDC.transfer out to the stealth recipient.
+        assert base.get("native_swap_wrapper") == "0x582c57a7ba6e7758e75dc5334a5e8ff096515d09"
         # UniswapPrivacyWrapper is also live on Base; the multi-DEX picker
         # surfaces it for non-USDC pairs (no WETH/USDC pool on Uniswap V3
         # per the P1.13 finding; do NOT promote it to default).
         assert base.get("uniswap_wrapper") == "0x9C30cdCd73347BF18A5bD424C37E5714e2606362"
         # Each address must be a valid 0x-prefixed 20-byte hex string.
-        for k in ["privacy_pool", "privacy_verifier", "aerodrome_wrapper", "uniswap_wrapper"]:
+        for k in ["privacy_pool", "privacy_verifier", "aerodrome_wrapper", "native_swap_wrapper", "uniswap_wrapper"]:
             v = base.get(k)
             assert v is not None
             assert v.startswith("0x") and len(v) == 42, f"{k}={v!r} not a 0x-prefixed 20-byte address"

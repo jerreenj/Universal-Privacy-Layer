@@ -507,12 +507,19 @@ def _load_deployed_addresses(static_contracts: Dict[str, Dict[str, Any]]) -> Dic
         # wrapper were recognised.)
         "privacy_pool", "privacy_verifier",
         # Phase 4.2 (P4.2 hotfix): AerodromePrivacyWrapper added so the
-        # swap tile (Aerodrome V2 — Base's only DEX with a deep WETH/USDC
-        # pool) surfaces the real broadcast address from /api/deployments
-        # instead of falling back to a hardcoded one. Without this the
-        # hotfix wrapper would be invisible to the dashboard and the swap
-        # path would only work in a stale-cache window.
+        # third-party picker tile (PrivateDeFi "All in One Swap") surfaces
+        # the real broadcast address from /api/deployments for the
+        # Aerodrome V2 row. The Core Actions "Private Swap" tile no
+        # longer uses Aerodrome (see native_swap_wrapper below).
         "aerodrome_wrapper",
+        # Phase 4.3-reskin (Base-finishing): NativePrivateSwap added so
+        # the Core "Private Swap" tile routes through OUR vault instead
+        # of the Aerodrome router. The previous wrapper-mediated path
+        # logged a Swap event on a public AMM that linked sender<->stealth
+        # by the to= param; the in-house vault instead pays USDC
+        # straight from reserves to the stealth recipient — no public
+        # AMM observable.
+        "native_swap_wrapper",
         "deployer", "fee_recipient", "pool_owner",
     )
     provenance_keys = ("chainId", "deployedAt", "commit", "redeployedNote")
@@ -5861,16 +5868,19 @@ async def deployments():
         # address. Zero-address / None means not deployed.
         def _is_real(addr):
             return bool(addr) and addr not in ("0x0", "0x0000000000000000000000000000000000000000")
+
         evm[chain] = {
-            "privacy_relayer":  relayer  if _is_real(relayer)  else None,
-            "stealth_registry": registry if _is_real(registry) else None,
-            "uniswap_wrapper":  uwrapper if _is_real(uwrapper) else None,
-            "privacy_pool":     pool     if _is_real(pool)     else None,
-            "privacy_verifier": verifier if _is_real(verifier) else None,
-            "aerodrome_wrapper": aero    if _is_real(aero)      else None,
+            "privacy_relayer":    relayer  if _is_real(relayer)  else None,
+            "stealth_registry":   registry if _is_real(registry) else None,
+            "uniswap_wrapper":    uwrapper if _is_real(uwrapper) else None,
+            "privacy_pool":       pool     if _is_real(pool)     else None,
+            "privacy_verifier":   verifier if _is_real(verifier) else None,
+            "aerodrome_wrapper":  aero     if _is_real(aero)     else None,
+            "native_swap_wrapper": (cfg.get("native_swap_wrapper") if _is_real(cfg.get("native_swap_wrapper")) else None),
             "deployed": (
                 _is_real(relayer)  or _is_real(registry) or _is_real(uwrapper)
                 or _is_real(pool)  or _is_real(verifier) or _is_real(aero)
+                or _is_real(cfg.get("native_swap_wrapper"))
             ),
             "explorer": cfg.get("explorer"),
         }
