@@ -46,7 +46,7 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
     // ─── Per-denomination tree state ─────────────────────────────────────
     struct DenomTree {
         bytes32[20] filledSubtrees;
-        bytes32[100] roots;                // ring buffer of recent roots
+        bytes32[100] roots; // ring buffer of recent roots
         bytes32 currentRoot;
         uint32 nextLeafIndex;
     }
@@ -63,12 +63,7 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
 
     // ─── Events ────────────────────────────────────────────────────────────
     event DenominationAdded(uint256 indexed denomination);
-    event Deposit(
-        bytes32 indexed commitment,
-        uint256 indexed denomination,
-        uint32 indexed leafIndex,
-        bytes32 root
-    );
+    event Deposit(bytes32 indexed commitment, uint256 indexed denomination, uint32 indexed leafIndex, bytes32 root);
     event Withdrawal(address indexed recipient, uint256 nullifierHash, bytes32 root);
     event Sweep(address indexed to, uint256 amount);
 
@@ -83,10 +78,7 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
     error DenominationNotEnabled(uint256 denomination);
     error ZeroDenomination();
 
-    constructor(
-        address _verifier,
-        uint256[] memory _initialDenominations
-    ) Ownable(msg.sender) {
+    constructor(address _verifier, uint256[] memory _initialDenominations) Ownable(msg.sender) {
         if (_verifier == address(0)) revert RecipientZero();
         // Re-cast to Groth16Verifier at construction time. The runtime ABI the
         // verifier contract uses (verifyProof) is the same for every
@@ -146,11 +138,7 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
      *        keeps the note private; only `commitment` is on-chain.
      * @param denomination Whitelisted deposit amount (wei). Must equal msg.value.
      */
-    function deposit(bytes32 commitment, uint256 denomination)
-        external
-        payable
-        nonReentrant
-    {
+    function deposit(bytes32 commitment, uint256 denomination) external payable nonReentrant {
         if (!denominationEnabled[denomination]) {
             revert DenominationNotEnabled(denomination);
         }

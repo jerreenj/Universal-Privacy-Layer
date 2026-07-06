@@ -239,9 +239,9 @@ contract PrivacyPoolTest is Test {
     ///         denomination's tree — each denom has its own ring buffer of
     ///         recent roots. A deposit at dA MUST not advance dB's currentRoot.
     function test_MultiDenom_RootsAreIsolatedPerDenom() public {
-        uint256 dA = DENOM;                 // 0.1 ether (registered in setUp)
+        uint256 dA = DENOM; // 0.1 ether (registered in setUp)
         uint256 dB = 0.01 ether;
-        pool.addDenomination(dB);           // register dB; tree state created
+        pool.addDenomination(dB); // register dB; tree state created
 
         // Both denoms start with the empty root.
         assertEq(uint256(pool.currentRootOf(dB)), uint256(pool.zeros(DEPTH)), "dB not seeded at empty root");
@@ -293,7 +293,7 @@ contract PrivacyPoolTest is Test {
     function test_MultiDenom_IndependentDepositCounts() public {
         uint256 dA = DENOM;
         uint256 dB = 0.01 ether;
-        pool.addDenomination(dB);           // register dB before depositing into it
+        pool.addDenomination(dB); // register dB before depositing into it
 
         pool.deposit{value: dA}(bytes32(uint256(0xA)), dA);
         pool.deposit{value: dA}(bytes32(uint256(0xB)), dA);
