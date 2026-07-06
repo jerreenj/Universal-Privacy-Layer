@@ -42,7 +42,7 @@ contract SmokeNativeScript is Script {
     address constant DEFAULT_RECIPIENT = 0x3f44A6451439673D95082A1337045a25ec275394;
     uint256 constant AMOUNT_IN = 1e12; // 0.000001 ETH — tiny smoke size
 
-    bool constant BROADCAST = false; // flip to true ONLY after AskUserQuestion confirmed
+    bool constant BROADCAST = true; // user explicitly authorized live broadcast (2026-07-06)
 
     function run() external {
         address vaultAddr = vm.envOr("NATIVE_SWAP_ADDR", DEFAULT_VAULT);

@@ -22,7 +22,8 @@
       "privacy_pool": "0x1fcac57d5d3e43b4",
       "aerodrome_wrapper_v1": "0x79adb01b670ce838",
       "aerodrome_wrapper": "0x7d4c99536dffa1e6",
-      "native_swap_wrapper": "0x68bd7107439f108b1e846e9c996d8f2eb78692031425ae313ddc20bd4f4c1407"
+      "native_swap_wrapper": "0x68bd7107439f108b1e846e9c996d8f2eb78692031425ae313ddc20bd4f4c1407",
+      "native_swap_smoke": "0x73a67e9595f99ca77b9b82044c1a68649f81346f05a111814c626f4b976bfbb4"
     },
     "basescan": {
       "stealth_registry": "https://basescan.org/address/0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1",
@@ -32,7 +33,8 @@
       "privacy_pool": "https://basescan.org/address/0x3F0b23Aca0624981a503e8f042db2F3884D0C89C",
       "aerodrome_wrapper_v1": "https://basescan.org/address/0x009681CdF5441D23738EC6597e586eBB06215e3D",
       "aerodrome_wrapper": "https://basescan.org/address/0xe896e6f51af137c32db7eb4e3b2de795d392a646",
-      "native_swap_wrapper": "https://basescan.org/address/0x582c57a7ba6e7758e75dc5334a5e8ff096515d09"
+      "native_swap_wrapper": "https://basescan.org/address/0x582c57a7ba6e7758e75dc5334a5e8ff096515d09",
+      "native_swap_smoke": "https://basescan.org/tx/0x73a67e9595f99ca77b9b82044c1a68649f81346f05a111814c626f4b976bfbb4"
     },
     "redeployNote": "P4.1 + P4.2 BROADCAST (2026-07-06). P4.1: PrivacyPool rewritten to per-denom Poseidon trees + global spent set; constructor (address verifier, uint256[] initialDenominations). Single-denom back-compat achieved by seeding [100000000000000000] (0.1 ETH) - pool owner may call addDenomination(d) post-deploy to enable other face values. P4.2: NEW AerodromePrivacyWrapper deployed via one-off script/DeployAerodrome.s.sol (broadcast-only-no-redeploy-all) for Base's primary DEX; the first broadcast used a 3-field Route struct (missing factory) which mis-aligned ABI encoding against Aerodrome's actual 4-field Route struct, causing every real swap to revert inside Aerodrome Router with empty error data. P4.2 hotfix: redeployed with 5-arg constructor that takes Aerodrome PoolFactory (volatile + stable) as immutables and adds a public route(from, to, stable) helper. Previous wrapper at 0x009681CdF5441D23738EC6597e586eBB06215e3D remains on-chain but is no longer the canonical address (superseded). costs: P4.1 ~0.000033 ETH (5 contracts); P4.2 v1 ~0.000004 ETH; P4.2 v2 (hotfix) ~0.000012 ETH. Forge vm.writeJson quirk persists only chainId; this manifest was hand-enriched post-broadcast from contracts/broadcast/{Deploy,DeployAerodrome}.s.sol/8453/run-latest.json. NativePrivateSwap LIVE on Base (2026-07-06): in-house swap vault at 0x582c57a7ba6e7758e75dc5334a5e8ff096515d09; rate=3000 USDC/ETH (stored as 3000000000 in 6-dec units); 0.5 USDC reserve pre-funded by deployer; 5 bps protocol fee skim to feeRecipient; replaces the prior Aerodrome-wrapper routing on the Core Private Swap tile so the customer pilot no longer logs a Swap event on a public AMM. tx: 0x68bd7107439f108b1e846e9c996d8f2eb78692031425ae313ddc20bd4f4c1407.",
     "native_swap_wrapper": "0x582c57a7ba6e7758e75dc5334a5e8ff096515d09",
