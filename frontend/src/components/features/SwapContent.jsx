@@ -37,12 +37,18 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { ethers } from "ethers";
-import { RefreshCw, Loader2, ExternalLink, Check, Lock } from "lucide-react";
+import { RefreshCw, Loader2, ExternalLink, Check, Lock, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { seal } from "@/lib/crypto-seal";
 import { deriveMetaAddress, generateStealthAddress } from "@/lib/wallet-stealth";
+import {
+    buildConfidentialCommitment,
+    buildConfidentialSwapArgs,
+    deriveDefaultViewTag,
+    quoteConfidentialUsdcOut,
+} from "@/lib/confidential-amount";
 
 // NativePrivateSwap ABI — only the calls the customer surface makes.
 const NATIVE_SWAP_ABI = [
@@ -52,6 +58,21 @@ const NATIVE_SWAP_ABI = [
   "function reserveBalance() view returns (uint256)",
   "function USDC() view returns (address)",
   "function feeBps() view returns (uint256)",
+  "function feeRecipient() view returns (address)",
+  "function owner() view returns (address)",
+];
+
+// ConfidentialNativePrivateSwap ABI — same vault mechanics; the swap
+// entry point REQUIRES a 32-byte commitment + 1-byte view tag in
+// place of a plaintext usdcOut, so the swap event on BaseScan shows
+// only the commitment, not the amount.
+const CONFIDENTIAL_SWAP_ABI = [
+  "function swapUSDCViaCommitment(address recipient, bytes32 amountCommit, bytes1 viewTagByte, uint256 minUsdcOut) payable",
+  "function lookupCommitment(bytes32 commit) view returns (address recipient, address sender, uint256 amount, uint256 ethIn, uint256 fee, uint256 timestamp)",
+  "function quote(uint256 ethIn) view returns (uint256)",
+  "function usdcPerEth() view returns (uint256)",
+  "function reserveBalance() view returns (uint256)",
+  "function USDC() view returns (address)",
   "function feeRecipient() view returns (address)",
   "function owner() view returns (address)",
 ];
@@ -69,6 +90,9 @@ const USDC = {
 // Hard-coded fallback for the vault — confirms the broadcast address
 // from contracts/deployed_base.json if /api/deployments hasn't reloaded.
 const FALLBACK_VAULT = "0x582c57a7ba6e7758e75dc5334a5e8ff096515d09";
+// Hard-coded fallback for the new confidential vault (amount-hidden
+// variant — emits bytes32 commitment instead of plaintext usdcOut).
+const FALLBACK_CONFIDENTIAL_VAULT = "0x66f71263436da696ec3ffdff925b101585d04e0f";
 
 export function SwapContent() {
   const { address, chain, signer, fetchBalance } = useWallet();
@@ -80,13 +104,22 @@ export function SwapContent() {
   const [swapping, setSwapping] = useState(false);
   const [txHash, setTxHash] = useState(null);
   const [vaultAddr, setVaultAddr] = useState(FALLBACK_VAULT);
+  const [confidentialVaultAddr, setConfidentialVaultAddr] = useState(FALLBACK_CONFIDENTIAL_VAULT);
   const [vaultMeta, setVaultMeta] = useState({ network: "base", fallback: false });
+  const [confidentialMeta, setConfidentialMeta] = useState({ network: "base", fallback: true });
   const [reserve, setReserve] = useState(null);
   const [usdcPerEth, setUsdcPerEth] = useState(null);
+  const [confidentialReserve, setConfidentialReserve] = useState(null);
+  const [confidentialUsdcPerEth, setConfidentialUsdcPerEth] = useState(null);
+  // Privacy mode — 'native' (default) keeps the existing flow untouched.
+  // 'confidential' routes through ConfidentialNativePrivateSwap, which
+  // emits a 32-byte commitment instead of plaintext usdcOut.
+  const [mode, setMode] = useState("native");
+  const [viewTagHex, setViewTagHex] = useState(null);
 
-  // Resolve the live vault address from /api/deployments. NativePrivateSwap
-  // is surfaced under `native_swap_wrapper` (own contract — not the
-  // `aerodrome_wrapper` slot that the 3rd-party picker reads).
+  // Resolve the live vault address(es) from /api/deployments.
+  // NativePrivateSwap → 'native_swap_wrapper' (existing flow).
+  // ConfidentialNativePrivateSwap → 'confidential_swap_wrapper' (new flow).
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -96,12 +129,21 @@ export function SwapContent() {
         if (!cancelled && base.native_swap_wrapper) {
           setVaultAddr(base.native_swap_wrapper);
           setVaultMeta({ network: "base", fallback: false });
-          return;
         }
-      } catch { /* fall through */ }
-      if (!cancelled) {
-        setVaultAddr(FALLBACK_VAULT);
-        setVaultMeta({ network: "base", fallback: true });
+        if (!cancelled && base.confidential_swap_wrapper) {
+          setConfidentialVaultAddr(base.confidential_swap_wrapper);
+          setConfidentialMeta({ network: "base", fallback: false });
+        } else {
+          setConfidentialVaultAddr(FALLBACK_CONFIDENTIAL_VAULT);
+          setConfidentialMeta({ network: "base", fallback: true });
+        }
+      } catch {
+        if (!cancelled) {
+          setVaultAddr(FALLBACK_VAULT);
+          setVaultMeta({ network: "base", fallback: true });
+          setConfidentialVaultAddr(FALLBACK_CONFIDENTIAL_VAULT);
+          setConfidentialMeta({ network: "base", fallback: true });
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -131,6 +173,50 @@ export function SwapContent() {
     })();
     return () => { cancelled = true; };
   }, [vaultAddr, signer]);
+
+  // Pull live reserve + rate for the confidential vault too. Same
+  // CACHED-once-per-mount pattern; only re-polls when the address or
+  // signer changes.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const provider = signer?.provider || (typeof window !== "undefined" && window.ethereum
+          ? new ethers.BrowserProvider(window.ethereum) : null);
+        if (!provider) return;
+        const net = await provider.getNetwork();
+        if (Number(net.chainId) !== 8453) return;
+        const v = new ethers.Contract(confidentialVaultAddr, CONFIDENTIAL_SWAP_ABI, provider);
+        const [bal, rate] = await Promise.all([
+          v.reserveBalance(),
+          v.usdcPerEth(),
+        ]);
+        if (cancelled) return;
+        setConfidentialReserve(ethers.formatUnits(bal, USDC.decimals));
+        setConfidentialUsdcPerEth(ethers.formatUnits(rate, USDC.decimals));
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, [confidentialVaultAddr, signer]);
+
+  // Wallet-derived 1-byte view tag for the confidential commitment.
+  // Re-derived on signer reconnect or mode flip — same HKDF-style flow
+  // we already use for stealth meta so the customer doesn't carry a
+  // separate secret.
+  useEffect(() => {
+    let cancelled = false;
+    if (mode !== "confidential" || !signer) {
+      if (!cancelled) setViewTagHex(null);
+      return undefined;
+    }
+    (async () => {
+      try {
+        const vt = await deriveDefaultViewTag(signer, 8453n);
+        if (!cancelled) setViewTagHex(vt);
+      } catch { if (!cancelled) setViewTagHex(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [mode, signer]);
 
   const autoGenStealth = async () => {
     if (!address) return toast.error("Connect wallet first");
@@ -180,17 +266,23 @@ export function SwapContent() {
       }
       const amountInWei = ethers.parseEther(amount);
 
+      // Pick the right vault + ABI based on the privacy mode toggle.
+      // NativePrivateSwap exposes feeBps() on-chain; the Confidential
+      // vault hard-codes 5 bps internally so we read it as a constant.
+      const isConfidential = mode === "confidential";
+      const targetVault = isConfidential ? confidentialVaultAddr : vaultAddr;
+      const abi = isConfidential ? CONFIDENTIAL_SWAP_ABI : NATIVE_SWAP_ABI;
+      const feeBpsOnChain = isConfidential ? 5n : null;
+
       // Read straight from the vault: quote(ethIn) is what the contract
       // will pay the recipient post-fee. We then apply slippage to the
       // result so the customer's "Get Quote" preview is the exact
       // number they'll see in the wallet prompt for `minUsdcOut`.
-      const vault = new ethers.Contract(vaultAddr, NATIVE_SWAP_ABI, provider);
-      const [expectedOut, feeBps, rate, bal] = await Promise.all([
-        vault.quote(amountInWei),
-        vault.feeBps(),
-        vault.usdcPerEth(),
-        vault.reserveBalance(),
-      ]);
+      const vault = new ethers.Contract(targetVault, abi, provider);
+      const expectedOut = await vault.quote(amountInWei);
+      const rate = await vault.usdcPerEth();
+      const bal = await vault.reserveBalance();
+      const feeBps = isConfidential ? feeBpsOnChain : await vault.feeBps();
 
       if (bal < expectedOut) {
         toast.error("Vault reserves too low for this amount");
@@ -216,6 +308,8 @@ export function SwapContent() {
         amountOutMinimum: minOut.toString(),
         outputToken: USDC,
         rate: ethers.formatUnits(rate, USDC.decimals),
+        vault: targetVault,
+        mode,
       });
     } catch (e) {
       toast.error(e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Quote failed");
@@ -237,18 +331,57 @@ export function SwapContent() {
       const activeSigner = signer || await provider.getSigner();
       if (!activeSigner) { toast.error("No signer"); setSwapping(false); return; }
 
-      const vault = new ethers.Contract(vaultAddr, NATIVE_SWAP_ABI, activeSigner);
-      const tx = await vault.swapETHForUSDC(
-        stealthRecipient,
-        quote.amountOutMinimum,
-        { value: quote.amountInWithFee }
-      );
+      const isConfidential = mode === "confidential";
+      const targetVault = isConfidential ? confidentialVaultAddr : vaultAddr;
+      const abi = isConfidential ? CONFIDENTIAL_SWAP_ABI : NATIVE_SWAP_ABI;
+
+      const vault = new ethers.Contract(targetVault, abi, activeSigner);
+
+      let tx;
+      if (isConfidential) {
+        // To hide the USDC output amount on BaseScan the customer
+        // passes a 32-byte commitment (Pedersen-style) and a 1-byte
+        // view tag. The vault re-derives the commitment from its own
+        // computed usdcOut + viewTagByte and reverts on mismatch.
+        if (!viewTagHex) {
+          toast.error("View tag not ready — reconnect wallet and try again");
+          setSwapping(false); return;
+        }
+        const rate6dec = ethers.parseUnits(quote.rate || "0", USDC.decimals);
+        const args = buildConfidentialSwapArgs({
+          ethInWei: BigInt(quote.amountInWithFee),
+          usdcPerEth6dec: BigInt(rate6dec.toString()),
+          feeBps: quote.feeBps || 5,
+          viewTagHex,
+          recipientStealth: stealthRecipient,
+          minUsdcOut: BigInt(quote.amountOutMinimum),
+        });
+        setTxHash(null);
+        tx = await vault.swapUSDCViaCommitment(
+          args.recipient,
+          args.amountCommit,
+          args.viewTagByte,
+          args.minUsdcOut,
+          { value: quote.amountInWithFee }
+        );
+        toast.success("Confidential swap broadcast — USDC amount hidden on-chain");
+      } else {
+        tx = await vault.swapETHForUSDC(
+          stealthRecipient,
+          quote.amountOutMinimum,
+          { value: quote.amountInWithFee }
+        );
+        toast.success("Private swap broadcast");
+      }
       setTxHash(tx.hash);
-      toast.success("Private swap broadcast");
       // Stealth-use counter (used in the backend for stats).
       axios.post(`${API}/stealth/use/${address}`, { feature: "swap" }).catch(() => {});
       await tx.wait();
-      toast.success(`Confirmed — ${ethers.formatUnits(quote.expectedOut, quote.outputToken.decimals).slice(0, 8)} ${USDC.symbol} to stealth`);
+      const previewAmt = isConfidential
+        ? quoteConfidentialUsdcOut(BigInt(quote.amountInWithFee),
+            ethers.parseUnits(quote.rate || "0", USDC.decimals), quote.feeBps || 5)
+        : BigInt(quote.expectedOut);
+      toast.success(`Confirmed — ${ethers.formatUnits(previewAmt, USDC.decimals).slice(0, 8)} ${USDC.symbol} to stealth`);
       // Record the swap so it shows up in the Transaction History tile
       // (the /transactions/history/{address} endpoint is consumed ONLY
       // by TransactionHistory.jsx, so this never surfaces anywhere else).
@@ -286,7 +419,39 @@ export function SwapContent() {
         <Lock className="w-3 h-3" /> Native private swap on Base via our in-house vault — ETH in, USDC to a stealth recipient. No third-party router.
       </div>
 
-      {vaultMeta?.fallback && (
+      {/* Privacy-mode toggle. Default = native (existing flow untouched).
+          Confidential = the new ConfidentialityNativePrivateSwap vault
+          whose swap event hides the USDC out amount via a 32-byte
+          Pedersen-style commitment. */}
+      <div className="flex items-center gap-1 text-xs">
+        <button
+          data-testid="swap-mode-native"
+          onClick={() => setMode("native")}
+          className={`px-3 py-1 border ${mode === "native" ? "border-white bg-white text-black" : "border-white/20 hover:bg-white/10"} uppercase tracking-wider`}
+        >Standard Private</button>
+        <button
+          data-testid="swap-mode-confidential"
+          onClick={() => setMode("confidential")}
+          className={`px-3 py-1 border flex items-center gap-1 ${mode === "confidential" ? "border-emerald-400 bg-emerald-500/10 text-emerald-300" : "border-white/20 hover:bg-white/10"} uppercase tracking-wider`}
+        >
+          <EyeOff className="w-3 h-3" />Amount-Hidden
+        </button>
+      </div>
+
+      {mode === "confidential" && (
+        <div className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 p-2">
+          Confidential swap: BaseScan will show a 32-byte commitment instead of the USDC out amount.
+          {" "}msg.value (ETH input) is still visible — only the USDC leg is hidden.
+          {confidentialMeta?.fallback && (
+            <span className="block text-yellow-300 mt-1">Using hard-coded confidential vault fallback (waiting for /api/deployments to refresh).</span>
+          )}
+          {viewTagHex && (
+            <span className="block text-white/60 mt-1">View tag (session): <span className="font-mono">{viewTagHex}</span></span>
+          )}
+        </div>
+      )}
+
+      {vaultMeta?.fallback && mode === "native" && (
         <div className="text-xs text-yellow-300 bg-yellow-500/10 border border-yellow-500/30 p-2">
           Using hard-coded vault fallback (waiting for /api/deployments to refresh).
         </div>
@@ -304,7 +469,14 @@ export function SwapContent() {
             className="w-full bg-transparent text-2xl font-mono outline-none"
           />
           <div className="text-[10px] text-white/30 mt-1">
-            {usdcPerEth ? `vault rate: 1 ETH ≈ ${Number(usdcPerEth).toFixed(2)} USDC` : "via NativePrivateSwap vault"}
+            {mode === "confidential"
+              ? (confidentialUsdcPerEth
+                  ? `confidential vault rate: 1 ETH ≈ ${Number(confidentialUsdcPerEth).toFixed(2)} USDC`
+                  : "via ConfidentialNativePrivateSwap vault")
+              : (usdcPerEth
+                  ? `vault rate: 1 ETH ≈ ${Number(usdcPerEth).toFixed(2)} USDC`
+                  : "via NativePrivateSwap vault")
+            }
           </div>
         </div>
         <div className="bg-white/5 border border-white/20 p-4">
@@ -318,7 +490,9 @@ export function SwapContent() {
           <div className="text-[10px] text-white/30 mt-1">
             {quote
               ? `~${ethers.formatUnits(quote.expectedOut, USDC.decimals).slice(0, 8)} ${USDC.symbol}`
-              : `vault reserve${reserve ? `: ${Number(reserve).toFixed(2)} ${USDC.symbol}` : ""}`}
+              : (mode === "confidential"
+                  ? `confidential vault reserve${confidentialReserve ? `: ${Number(confidentialReserve).toFixed(2)} ${USDC.symbol}` : ""}`
+                  : `vault reserve${reserve ? `: ${Number(reserve).toFixed(2)} ${USDC.symbol}` : ""}`)}
           </div>
         </div>
       </div>
@@ -380,8 +554,22 @@ export function SwapContent() {
           </div>
           <div className="flex justify-between">
             <span className="text-white/40">Route</span>
-            <span className="font-mono text-[10px]">NativePrivateSwap vault (in-house)</span>
+            <span className="font-mono text-[10px]">
+              {mode === "confidential"
+                ? "ConfidentialNativePrivateSwap vault (in-house, amount-hidden)"
+                : "NativePrivateSwap vault (in-house)"}
+            </span>
           </div>
+          {mode === "confidential" && viewTagHex && (
+            <div className="flex justify-between">
+              <span className="text-white/40">Commitment preview</span>
+              <span className="font-mono text-[9px] truncate ml-2" title={buildConfidentialCommitment(
+                  BigInt(quote.expectedOut), viewTagHex)}>
+                {buildConfidentialCommitment(
+                  BigInt(quote.expectedOut), viewTagHex).slice(0, 18)}…
+              </span>
+            </div>
+          )}
         </div>
       )}
 
