@@ -61,14 +61,8 @@ const SwapSVM                    = lazy(() => import("@/components/features/Swap
 const pages = {
   receive:     { title: "Private Receive",             Component: StealthContent,          key: "receive" },
   send:        { title: "Private Send",                Component: SendContent,             key: "send" },
-  // P4.2: Private Swap mounts SwapSVM (the native multi-DEX picker;
-  // Uniswap V3 + Aerodrome V2 today; future DEXes plug in by
-  // appending to SwapSVM.jsx's DEXES array).
-  swap:        { title: "Native Swap",                  Component: SwapSVM,                 key: "swap" },
-  // P4.2: Uniswap V3 is also a standalone 3rd-party swapper tile in
-  // Private DeFi for users who prefer the original Uniswap UI over
-  // the picker.
-  uniswap:     { title: "Uniswap V3",                   Component: UniswapPrivateSwap,      key: "uniswap" },
+  swap:        { title: "Private Swap",                Component: SwapContent,             key: "swap" },
+  uniswap:     { title: "Uniswap V3 Private Swap",     Component: UniswapPrivateSwap,      key: "uniswap" },
   hyperliquid: { title: "Hyperliquid Private Trading", Component: HyperliquidPrivateTrading, key: "hyperliquid" },
   polymarket:  { title: "Polymarket Private Betting",  Component: PolymarketPrivateBetting,  key: "polymarket" },
   balance:     { title: "Hidden Balance",              Component: HiddenBalanceDashboard,  key: "balance" },
@@ -295,7 +289,7 @@ export function Dashboard() {
             {[
               { id: "receive", icon: <Fingerprint className="w-6 h-6 mb-3" />, title: "Private Receive", desc: "Generate stealth address" },
               { id: "send",    icon: <Zap className="w-6 h-6 mb-3" />, title: "Private Send", desc: "Send to any address" },
-              { id: "swap",    icon: <RefreshCw className="w-6 h-6 mb-3" />, title: "Native Swap",   desc: "Pick Uniswap V3 or Aerodrome V2" },
+              { id: "swap",    icon: <RefreshCw className="w-6 h-6 mb-3" />, title: "Private Swap", desc: "Swap with privacy" },
             ].map(({ id, icon, title, desc }) => (
               <button key={id} data-testid={`nav-${id}`} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 md:p-6 text-left hover:border-white/30 transition-all">
@@ -312,9 +306,9 @@ export function Dashboard() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
             {[
-              { id: "uniswap", icon: <RefreshCw className="w-6 h-6 mb-3 text-blue-400" />, title: "Uniswap V3", desc: "Private token swaps via V3", badge: "3RD PARTY", badgeColor: "text-blue-400 border-blue-400/40" },
-              { id: "hyperliquid", icon: <TrendingUp className="w-6 h-6 mb-3 text-green-400" />, title: "Hyperliquid", desc: "Anonymous perp trading", badge: "3RD PARTY", badgeColor: "text-green-400 border-green-400/40" },
-              { id: "polymarket", icon: <Globe className="w-6 h-6 mb-3 text-purple-400" />, title: "Polymarket", desc: "Private prediction bets", badge: "3RD PARTY", badgeColor: "text-purple-400 border-purple-400/40" },
+              { id: "uniswap", icon: <RefreshCw className="w-6 h-6 mb-3 text-blue-400" />, title: "Uniswap V3", desc: "Private token swaps via V3", badge: "LIVE", badgeColor: "text-blue-400 border-blue-400/40" },
+              { id: "hyperliquid", icon: <TrendingUp className="w-6 h-6 mb-3 text-green-400" />, title: "Hyperliquid", desc: "Anonymous perp trading", badge: "LIVE", badgeColor: "text-green-400 border-green-400/40" },
+              { id: "polymarket", icon: <Globe className="w-6 h-6 mb-3 text-purple-400" />, title: "Polymarket", desc: "Private prediction bets", badge: "LIVE", badgeColor: "text-purple-400 border-purple-400/40" },
             ].map(({ id, icon, title, desc, badge, badgeColor }) => (
               <button key={id} data-testid={`nav-${id}`} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 md:p-6 text-left hover:border-white/30 transition-all relative group">
