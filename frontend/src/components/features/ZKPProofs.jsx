@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { ethers } from "ethers";
-import { Fingerprint, Check, AlertTriangle, Loader2, Shield, FileUp } from "lucide-react";
+import { Fingerprint, Check, AlertTriangle, Loader2, Shield, FileUp, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -9,14 +9,22 @@ import {
   computeCommitment,
   computeNullifierHash,
   fetchPoolState,
+  normalisePoolState,
   generateWithdrawProof,
 } from "@/lib/zk-browser";
 
-// Match backend ABI kept in lock-step
+// Match the backend ABI kept in lock-step. P4.1 multi-denom: `withdraw`
+// is unchanged on calldata but the on-chain payout amount is resolved
+// via _findDenomByRoot(payload[1]) — so the proof is denomination-agnostic
+// but the AMOUNT paid out is the denomination whose recent-roots buffer
+// contains the supplied `root`. Customer must redeem against the SAME
+// sub-pool their deposit lives in.
 const PRIVACY_POOL_WITHDRAW_ABI = [
   "function withdraw(uint256 nullifierHash, uint256 root, address recipient, uint256[2] proof_a, uint256[2][2] proof_b, uint256[2] proof_c) external",
   "function isKnownRoot(uint256 root) view returns (bool)",
   "function isSpent(uint256 nullifierHash) view returns (bool)",
+  "function getDenominationList() view returns (uint256[])",
+  "function currentRootOf(uint256 denomination) view returns (bytes32)",
 ];
 
 function parseNote(text) {
@@ -36,6 +44,11 @@ function truncate(s, n = 18) {
   return s.slice(0, n) + "…";
 }
 
+function formatEth(wei) {
+  if (wei == null) return "?";
+  try { return (Number(BigInt(wei)) / 1e18).toString(); } catch { return "?"; }
+}
+
 export function ZKPProofs() {
   const { address } = useWallet();
   const [noteText, setNoteText] = useState("");
@@ -49,16 +62,32 @@ export function ZKPProofs() {
   const [txResult, setTxResult] = useState(null);
 
   const refreshPool = useCallback(async () => {
-    try { setPool(await fetchPoolState()); } catch {}
+    try {
+      const raw = await fetchPoolState();
+      setPool(normalisePoolState(raw));
+    } catch {}
   }, []);
 
   useEffect(() => { refreshPool(); }, [refreshPool]);
 
+  // Resolved denomination for the loaded note (P4.1 multi-denom: each
+  // note carries its own denomination_wei; we MUST use that exact value
+  // when fetching the Merkle path so siblings come from the right tree).
+  const noteDenomination = useMemo(() => {
+    if (!note) return null;
+    return note.denomination_wei ?? note.denomination ?? null;
+  }, [note]);
+
+  const noteDenominationEth = noteDenomination ? formatEth(noteDenomination) : "?";
+
   const loadNote = async () => {
     if (!noteText.trim()) return toast.error("Paste a deposit note first");
     try {
-      setNote(parseNote(noteText));
-      toast.success("Note loaded");
+      const parsed = parseNote(noteText);
+      setNote(parsed);
+      toast.success(parsed.denomination_wei
+        ? `Note loaded · ${formatEth(parsed.denomination_wei)} ETH denomination`
+        : "Note loaded (legacy single-denom)");
     } catch (e) {
       toast.error(e.message);
     }
@@ -77,6 +106,7 @@ export function ZKPProofs() {
     if (!recipient || !ethers.isAddress(recipient))
       return toast.error("Enter a valid recipient address");
     if (!pool?.live) return toast.error("PrivacyPool not live on Base yet");
+    if (!noteDenomination) return toast.error("Note missing denomination_wei — re-export from the deposit note");
 
     setLoading(true);
     setStage("Recomputing commitment…");
@@ -84,10 +114,15 @@ export function ZKPProofs() {
       const commitment = await computeCommitment(note.nullifier, note.secret);
       const nullifierHash = await computeNullifierHash(note.nullifier);
 
-      setStage("Fetching Merkle path from backend…");
+      setStage("Fetching Merkle path from backend (scoped to " + noteDenominationEth + " ETH)…");
+      // P4.1: we MUST pass denomination_wei so the path is rebuilt from
+      // siblings in the same sub-pool that the deposit lives in.
+      // Cross-tree paths would compute wrong path indices and the
+      // on-chain proof would revert.
       const res = await axios.post(`${API}/zk-pool/path`, {
         commitment: "0x" + BigInt(commitment).toString(16).padStart(64, "0"),
         nullifier_hash: "0x" + BigInt(nullifierHash).toString(16).padStart(64, "0"),
+        denomination_wei: Number(noteDenomination),
       });
       setPath(res.data);
 
@@ -152,9 +187,7 @@ export function ZKPProofs() {
         hash: receipt?.hash ?? tx.hash,
         url: `${explorer}/tx/${receipt?.hash ?? tx.hash}`,
         recipient,
-        amount: pool?.denomination
-          ? Number(BigInt(pool.denomination)) / 1e18
-          : null,
+        amount: noteDenominationEth,
       });
       toast.success("Withdrawal succeeded");
       setStage(null);
@@ -167,18 +200,31 @@ export function ZKPProofs() {
     }
   };
 
+  // Compute the per-denom subtree state for the active note, so the
+  // status bar reflects the sub-pool the customer is withdrawing from.
+  const noteDenomState = (pool?.perDenomination || {})[String(noteDenomination) ?? ""] || null;
+
   return (
     <div className="space-y-4" data-testid="zk-proofs">
       <div className="text-sm text-white/50">
         Generate a zero-knowledge proof from a saved deposit note and withdraw
-        privately. The deposit is unlinkable from this withdrawal.
+        privately. The deposit is unlinkable from this withdrawal. The note's
+        denomination pins you to the matching sub-pool — withdrawing against
+        the wrong tree reverts.
       </div>
 
-      <div className={`border p-3 text-xs ${pool?.live ? "border-green-500/30 bg-green-500/5 text-green-300" : "border-yellow-500/30 bg-yellow-500/5 text-yellow-300"}`}>
+      <div className={`border p-3 text-xs flex items-center gap-2 ${pool?.live ? "border-green-500/30 bg-green-500/5 text-green-300" : "border-yellow-500/30 bg-yellow-500/5 text-yellow-300"}`}>
         {pool?.live ? (
           <>
-            <Shield className="w-3 h-3 inline mr-1" />
-            Pool live on Base · notes served · prover ready
+            <Shield className="w-3 h-3" />
+            <span>
+              Pool live on Base · {pool.denominations?.length ?? 0} denominations:
+              {" "}
+              {(pool.denominations || []).map((d) => `${formatEth(d)}`).join(", ")}
+            </span>
+            <button onClick={refreshPool} className="ml-auto px-2 border border-white/20 hover:bg-white/10 text-[10px] flex items-center gap-1">
+              <RefreshCw className="w-3 h-3" /> refresh
+            </button>
           </>
         ) : (
           <>PrivacyPool not live on Base yet — {pool?.message ?? pool?.error ?? "deploy pending"}</>
@@ -188,7 +234,7 @@ export function ZKPProofs() {
       <div>
         <label className="block text-xs text-white/50 uppercase mb-1">Deposit Note (JSON paste)</label>
         <textarea value={noteText} onChange={(e) => setNoteText(e.target.value)}
-          placeholder='{"nullifier":"…","secret":"…","commitment":"…","pool":"0x…"}'
+          placeholder='{"nullifier":"…","secret":"…","commitment":"…","denomination_wei":"…","pool":"0x…"}'
           rows={4}
           className="w-full bg-white/5 border border-white/20 p-3 text-xs font-mono outline-none focus:border-white" />
         <div className="flex gap-2 mt-2">
@@ -201,6 +247,15 @@ export function ZKPProofs() {
               onChange={(e) => loadNoteFromFile(e.target.files?.[0])} />
           </label>
         </div>
+        {note && (
+          <div className="text-[10px] text-white/40 mt-1">
+            Note denomination: <span className="text-white/70 font-mono">{noteDenominationEth} ETH</span>
+            {note.denomination_wei && (
+              <> ({note.denomination_wei} wei)</>
+            )}
+            . Withdraw will target this sub-pool.
+          </div>
+        )}
       </div>
 
       <div>
@@ -218,14 +273,14 @@ export function ZKPProofs() {
         </button>
         <button onClick={submitWithdraw} disabled={!proof}
           data-testid="zk-submit-btn"
-          className="flex-1 py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-white/90 disabled:opacity-50">
+          className="flex-1 py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50">
           Withdraw
         </button>
       </div>
 
       {path && (
         <div className="bg-white/5 border border-white/10 p-3 text-xs space-y-1">
-          <div className="text-white/40 uppercase">Merkle path (depth 20)</div>
+          <div className="text-white/40 uppercase">Merkle path (depth 20, scoped to {noteDenominationEth} ETH)</div>
           <div>root: <span className="font-mono">{truncate(path.root, 20)}</span></div>
           <div>leaf index: {path.leafIndex}</div>
           <div>path elements: present</div>
@@ -248,7 +303,7 @@ export function ZKPProofs() {
             <span>Withdrawal confirmed</span>
           </div>
           <div>recipient: <span className="font-mono">{txResult.recipient}</span></div>
-          <div>amount: {txResult.amount ?? "?"} ETH</div>
+          <div>amount: {txResult.amount ?? "?"} ETH (paid from {noteDenominationEth} ETH sub-pool)</div>
           <a href={txResult.url} target="_blank" rel="noopener noreferrer"
             className="text-blue-300 underline break-all">View on Basescan ↗</a>
         </div>

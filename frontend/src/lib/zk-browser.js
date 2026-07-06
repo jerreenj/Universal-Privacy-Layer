@@ -106,10 +106,55 @@ export async function generateWithdrawProof({
   return { proof, publicSignals };
 }
 
-// Helper to fetch the pool state (root, denomination, recent roots) from the backend.
-export async function fetchPoolState() {
+// Helper to fetch the pool state (root, denomination, recent roots) from
+// the backend. Pass an optional `denomination` (wei string) to scope the
+// response to a specific sub-pool — same query semantics as the backend
+// route's ?denomination=… param.
+export async function fetchPoolState(denomination) {
   const { API } = await import("@/config/chains");
   const axios = (await import("axios")).default;
-  const res = await axios.get(`${API}/zk-pool/state`);
+  const url = denomination
+    ? `${API}/zk-pool/state?denomination=${encodeURIComponent(denomination)}`
+    : `${API}/zk-pool/state`;
+  const res = await axios.get(url);
   return res.data;
+}
+
+// Normalise the pool-state payload into a single multi-denom shape.
+// Backend already returns the canonical multi-denom shape since P4.1
+// (denominations[] + perDenomination{...} + defaultDenomination); the
+// legacy single-denom shape is still served for pre-P4.1 deploys as a
+// back-compat fallback. We always project to multi-denom so the
+// consumer (ZKCommitments.jsx, ZKPProofs.jsx) only has one code path.
+export function normalisePoolState(raw) {
+  if (!raw || typeof raw !== "object" || !raw.live) {
+    return raw || { live: false, kind: "unknown" };
+  }
+  if (raw.kind === "multi-denom") {
+    return raw; // canonical shape — pass through
+  }
+  // Legacy single-denom: project to multi-denom with one element.
+  const denom = raw.denomination;
+  return {
+    live: true,
+    chain: raw.chain,
+    chainId: raw.chainId,
+    privacy_pool: raw.privacy_pool,
+    verifier: raw.verifier,
+    kind: "multi-denom",
+    denominations: denom ? [String(denom)] : [],
+    defaultDenomination: denom ? String(denom) : null,
+    merkleDepth: raw.merkleDepth ?? 20,
+    rootHistorySize: raw.rootHistorySize ?? 100,
+    perDenomination: denom
+      ? {
+          [String(denom)]: {
+            currentRoot:    raw.currentRoot,
+            onchainRoot:    raw.onchainRoot,
+            nextLeafIndex:  raw.nextLeafIndex,
+            storedDeposits: raw.storedDeposits ?? 0,
+          },
+        }
+      : {},
+  };
 }

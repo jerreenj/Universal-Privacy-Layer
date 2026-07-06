@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { ethers } from "ethers";
 import { Link } from "react-router-dom";
-import { Lock, Loader2, Shield, Hash, Download, Eye, EyeOff } from "lucide-react";
+import { Lock, Loader2, Shield, Hash, Download, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -10,17 +10,23 @@ import {
   computeCommitment,
   computeNullifierHash,
   fetchPoolState,
+  normalisePoolState,
   ZK_ASSETS_BASE,
 } from "@/lib/zk-browser";
 
-// Minimal PrivacyPool ABI — only the deposit() call the user makes themselves.
-// Match `backend/server.py` PRIVACY_POOL_ABI kept in lock-step.
+// P4.1 multi-denom PrivacyPool ABI — the deposit() call now takes the
+// denomination as a second arg (was a `value:` only on P3.4). Reads are
+// multi-denom too: getDenominationList / currentRootOf(d) / depositCount(d).
+// `event Deposit(commitment, denomination, leafIndex, root)` is the new
+// shape on-chain; we parse leaf_index off it directly.
 const PRIVACY_POOL_DEPOSIT_ABI = [
-  "function deposit(uint256 commitment) external payable",
+  "function deposit(uint256 commitment, uint256 denomination) external payable",
+  "function getDenominationList() view returns (uint256[])",
+  "function currentRootOf(uint256 denomination) view returns (bytes32)",
+  "function depositCount(uint256 denomination) view returns (uint32)",
+  "function isDenominationEnabled(uint256 denomination) view returns (bool)",
   "function denomination() view returns (uint256)",
-  "function currentRoot() view returns (uint256)",
-  "function nextLeafIndex() view returns (uint256)",
-  "event Deposit(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
+  "event Deposit(bytes32 indexed commitment, uint256 indexed denomination, uint32 indexed leafIndex, bytes32 root)",
 ];
 
 // Format a BN254 field element to a 0x-prefixed 32-byte hex string.
@@ -34,11 +40,17 @@ function truncate(s, n = 18) {
   return s.slice(0, n) + "…";
 }
 
+function formatEth(wei) {
+  if (wei == null) return "?";
+  try { return (Number(BigInt(wei)) / 1e18).toString(); } catch { return "?"; }
+}
+
 export function ZKCommitments() {
   const { address, chain } = useWallet();
   const [tab, setTab] = useState("deposit");
   const [loading, setLoading] = useState(false);
   const [poolState, setPoolState] = useState(null);
+  const [denomination, setDenomination] = useState(null); // user's chosen denom (wei string)
 
   // Deposit form
   const [depositNote, setDepositNote] = useState(null);
@@ -50,14 +62,31 @@ export function ZKCommitments() {
   const baseChain = CHAINS.base;
   const poolAddr = baseChain?.contracts?.privacyPool;
 
+  // Helper — for end-state display only: read the deposit note's denom
+  // (the note carries the denomination we used at deposit time).
+  const denominationOptions = useMemo(() => {
+    if (!poolState?.denominations) return [];
+    return poolState.denominations.map((d) => ({ wei: d, eth: formatEth(d) }));
+  }, [poolState]);
+
   const refreshPool = useCallback(async () => {
     try {
-      const data = await fetchPoolState();
-      setPoolState(data);
+      const raw = await fetchPoolState();
+      const norm = normalisePoolState(raw);
+      setPoolState(norm);
+      // Default the denomination picker to whatever the backend says is
+      // the defaultDenomination (the first registered denom: 0.1 ETH on
+      // Base). Falls back to legacy single-denom `denomination` field
+      // if the backend still serves old shape.
+      if (!denomination && norm.defaultDenomination) {
+        setDenomination(norm.defaultDenomination);
+      } else if (!denomination && norm.denomination) {
+        setDenomination(norm.denomination);
+      }
     } catch (e) {
-      setPoolState({ live: false, error: e?.message ?? String(e) });
+      setPoolState({ live: false, kind: "unknown", error: e?.message ?? String(e) });
     }
-  }, []);
+  }, [denomination]);
 
   useEffect(() => { refreshPool(); }, [refreshPool]);
 
@@ -65,6 +94,7 @@ export function ZKCommitments() {
     if (!address) return toast.error("Connect wallet to Base first");
     if (!poolState?.live) return toast.error("PrivacyPool not live on Base yet");
     if (!poolAddr) return toast.error("PrivacyPool address missing — refresh or wait for /api/deployments");
+    if (!denomination) return toast.error("Pick a denomination first");
     setLoading(true);
     setTxStatus("Generating secrets…");
     try {
@@ -78,27 +108,31 @@ export function ZKCommitments() {
       const commitmentHex = await computeCommitment(nullifier, secret);
       const nullifierHash = await computeNullifierHash(nullifier);
 
-      setTxStatus("Sending tx to PrivacyPool.deposit(commitment)…");
+      setTxStatus("Sending tx to PrivacyPool.deposit(commitment, denomination)…");
 
-      // 3. Send the on-chain deposit. We pass denomination's worth of ETH.
+      // 3. Send the on-chain deposit. P4.1: the denomination is passed
+      //    as both the 2nd argument AND the msg.value; if the user picks
+      //    a denom that is not yet enabled, the contract reverts with
+      //    DenominationNotEnabled — caught below.
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const pool = new ethers.Contract(poolAddr, PRIVACY_POOL_DEPOSIT_ABI, signer);
 
-      const denom = BigInt(poolState.denomination);
-      const tx = await pool.deposit(toBytes32(commitmentHex), {
-        value: denom,
-        gasLimit: 200_000,
-      });
+      const denom = BigInt(denomination);
+      const tx = await pool.deposit(
+        toBytes32(commitmentHex),
+        denom,
+        { value: denom, gasLimit: 200_000 }
+      );
       setTxStatus("Waiting for confirmation…");
       const receipt = await tx.wait();
 
-      // Extract the leaf_index from the Deposit(uint256 commitment,
-      // uint32 leafIndex, uint256 timestamp) event so the backend can
-      // serve Merkle paths WITHOUT scanning the full DB. The event is
-      // emitted by PrivacyPool._insert, so leafIndex is authoritative.
-      // If parse fails (rare ABI mismatch / re-org) we fall back to null
-      // — the backend then walks the tree by commitment, which still works.
+      // 4. Extract leafIndex + denomination from the Deposit event emitted
+      //    by PrivacyPool._insert. The event signature is:
+      //      Deposit(bytes32 commitment, uint256 denomination, uint32 leafIndex, bytes32 root)
+      // so args[0]=commitment, args[1]=denomination, args[2]=leafIndex.
+      // leafIndex is authoritative — the backend uses it to skip tree
+      // scan on the post-deposit path lookup.
       let leafIndex = null;
       try {
         for (const log of receipt?.logs ?? []) {
@@ -111,10 +145,12 @@ export function ZKCommitments() {
           } catch { /* not our event — skip */ }
         }
       } catch (e) {
-        console.warn("ZKCommitments: leaf_index parse failed", e);
+        console.warn("ZKCommitments: leafIndex parse failed", e);
       }
 
-      // 4. Build the "note" the user MUST save to withdraw later.
+      // 5. Build the "note" the user MUST save to withdraw later. The
+      //    note carries `denomination_wei` so withdraw can re-pick the
+      //    right sub-pool (multi-denom awareness).
       const note = {
         chain: "base",
         pool: poolAddr,
@@ -124,21 +160,25 @@ export function ZKCommitments() {
         commitment: commitmentHex,
         nullifierHash,
         tx_hash: receipt?.hash ?? tx.hash,
-        leaf_index: leafIndex, // now populated from on-chain event
+        leaf_index: leafIndex,
         note_id: "upl-zk-" + crypto.randomUUID().slice(0, 8),
         saved_at: new Date().toISOString(),
       };
 
       setDepositNote(note);
       setSavedToDisk(false);
-      // Also tell the backend about the deposit so it can serve Merkle paths.
+      // 6. Tell the backend about the deposit so it can serve Merkle
+      //    paths scoped per denom. Non-fatal if it fails — the chain is
+      //    the source of truth and the backend can re-rebuild from the
+      //    Deposit event later.
       try {
         await axios.post(`${API}/zk-pool/deposit`, {
           commitment: toBytes32(commitmentHex),
           tx_hash: receipt?.hash ?? tx.hash,
+          leaf_index: leafIndex,
+          denomination_wei: Number(denom),
         });
       } catch (e) {
-        // Non-fatal — the chain is the source of truth.
         console.warn("Backend deposit record failed (non-fatal):", e);
       }
       await refreshPool();
@@ -167,16 +207,18 @@ export function ZKCommitments() {
   };
 
   const live = !!poolState?.live;
-  const denomEth = poolState?.denomination
-    ? Number(BigInt(poolState.denomination)) / 1e18
-    : null;
+  const denomEth = denomination ? formatEth(denomination) : "?";
+  const denomState = (poolState?.perDenomination || {})[denomination || ""] || null;
+  const denomRoot = denomState?.currentRoot || poolState?.currentRoot || null;
+  const denomLeafCount = denomState?.nextLeafIndex ?? poolState?.nextLeafIndex ?? null;
 
   return (
     <div className="space-y-4">
       <div className="text-sm text-white/50">
         Make a private deposit into the UPL PrivacyPool on Base. The deposit is
         unlinkable from any future withdrawal — only you can spend it, and only
-        if you save the note this page gives you.
+        if you save the note this page gives you. The pool supports multiple
+        denominations; each has its own Merkle tree.
       </div>
 
       {/* Pool status bar */}
@@ -184,7 +226,13 @@ export function ZKCommitments() {
         {live ? (
           <>
             <Shield className="w-3 h-3 inline mr-1" />
-            Pool live on Base · denomination {denomEth ?? "?"} ETH · root <span className="font-mono">{truncate(poolState.currentRoot, 14)}</span>
+            Pool live on Base · denominations {denominationOptions.map(d => `${d.eth} ETH`).join(", ") || "?"}
+            {denomRoot && (
+              <> · root <span className="font-mono">{truncate(denomRoot, 14)}</span></>
+            )}
+            {denomLeafCount != null && (
+              <> · {denomLeafCount} leaf{denomLeafCount === 1 ? "" : "s"}</>
+            )}
           </>
         ) : (
           <>PrivacyPool not live on Base yet — {poolState?.message ?? poolState?.error ?? "deploy pending"}</>
@@ -208,19 +256,50 @@ export function ZKCommitments() {
             <input value="Base Mainnet" readOnly
               className="w-full bg-white/5 border border-white/20 p-3 text-sm outline-none text-white/70" />
           </div>
+
+          {/* Denomination picker — the P4.1 multi-denom surface. */}
+          <div>
+            <label className="block text-xs text-white/50 uppercase mb-1">Denomination</label>
+            <div className="flex gap-2">
+              <select
+                data-testid="zk-denom-select"
+                value={denomination ?? ""}
+                onChange={e => setDenomination(e.target.value)}
+                disabled={!denominationOptions.length}
+                className="flex-1 bg-white/5 border border-white/20 p-3 text-sm outline-none focus:border-white"
+              >
+                {denominationOptions.length === 0 ? (
+                  <option value="">Loading…</option>
+                ) : (
+                  denominationOptions.map(d => (
+                    <option key={d.wei} value={d.wei} className="bg-black">{d.eth} ETH</option>
+                  ))
+                )}
+              </select>
+              <button onClick={refreshPool} data-testid="zk-refresh-btn"
+                className="px-3 border border-white/20 hover:bg-white/10 text-xs">
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="text-[10px] text-white/30 mt-1">
+              Each denomination has its own Poseidon Merkle tree. Withdrawals
+              must redeem against the same tree the deposit lives in.
+            </div>
+          </div>
+
           <div className="bg-white/5 border border-white/10 p-3 text-xs text-white/60 space-y-1">
             <div>• A Poseidon commitment is generated locally (nullifier + secret).</div>
-            <div>• The commitment is sent to <code>PrivacyPool.deposit()</code> as the leaf.</div>
-            <div>• The pool stores the leaf in a depth-20 Merkle tree; you receive a note.</div>
-            <div>• To withdraw: load the note in the <Link to="/zk-proofs" className="underline">ZK Proofs</Link> tab and generate a Groth16 proof.</div>
+            <div>• The commitment + chosen denomination is sent to <code>PrivacyPool.deposit()</code> as a new leaf.</div>
+            <div>• The pool stores the leaf in the depth-20 Merkle tree for that denom; you receive a note.</div>
+            <div>• To withdraw: load the note in the <Link to="/zk-proofs" className="underline">ZK Proofs</Link> tab — pick the matching denomination (the note carries it).</div>
           </div>
-          <button onClick={onDeposit} disabled={loading || !live}
+          <button onClick={onDeposit} disabled={loading || !live || !denomination}
             data-testid="zk-deposit-btn"
             className="w-full py-3 bg-white/10 border border-white/20 font-bold uppercase tracking-wider hover:bg-white/20 disabled:opacity-50 flex items-center justify-center gap-2">
             {loading
               ? <Loader2 className="w-5 h-5 animate-spin" />
               : <Lock className="w-5 h-5" />}
-            {txStatus ?? (live ? `Deposit ${denomEth ?? "?"} ETH` : "Pool not live")}
+            {txStatus ?? (live ? `Deposit ${denomEth} ETH` : "Pool not live")}
           </button>
         </div>
       )}
@@ -237,7 +316,9 @@ export function ZKCommitments() {
             <>
               <div className="bg-yellow-500/10 border border-yellow-500/30 p-3 text-xs text-yellow-200">
                 <strong>Save this note!</strong> The nullifier and secret can never be
-                recovered. Without them you cannot withdraw.
+                recovered. Without them you cannot withdraw. The
+                <code> denomination_wei</code> field pins you to the matching
+                sub-pool at withdraw time.
               </div>
               <pre className="bg-black border border-white/20 p-3 text-xs font-mono break-all whitespace-pre-wrap">
 {JSON.stringify(
