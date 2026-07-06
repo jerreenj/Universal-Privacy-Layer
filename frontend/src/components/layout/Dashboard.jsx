@@ -2,8 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from "re
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
-  Search, FileText, BookOpen, Hash, Send, ScanLine, Receipt,
-  ArrowDownUp
+  Search, FileText, BookOpen, Hash, Send, ScanLine, Receipt
 } from "lucide-react";
 import { CHAINS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -22,7 +21,10 @@ import { Landing } from "@/components/layout/Landing";
 const StealthContent          = lazy(() => import("@/components/features/StealthContent").then(m => ({ default: m.StealthContent })));
 const SendContent               = lazy(() => import("@/components/features/SendContent").then(m => ({ default: m.SendContent })));
 const SwapContent               = lazy(() => import("@/components/features/SwapContent").then(m => ({ default: m.SwapContent })));
-const UniswapPrivateSwap        = lazy(() => import("@/components/features/UniswapPrivateSwap").then(m => ({ default: m.UniswapPrivateSwap })));
+// UniswapPrivateSwap's lazy-load REMOVED: it's no longer a standalone
+// tile. Uniswap V3 is now an OPTION inside the 'swap' tile via the
+// SwapSVM DEX picker (Uniswap V3 + Aerodrome V2).
+// const UniswapPrivateSwap      = lazy(() => import("@/components/features/UniswapPrivateSwap").then(m => ({ default: m.UniswapPrivateSwap })));
 const HyperliquidPrivateTrading = lazy(() => import("@/components/features/HyperliquidPrivateTrading").then(m => ({ default: m.HyperliquidPrivateTrading })));
 const PolymarketPrivateBetting  = lazy(() => import("@/components/features/PolymarketPrivateBetting").then(m => ({ default: m.PolymarketPrivateBetting })));
 const HiddenBalanceDashboard    = lazy(() => import("@/components/features/HiddenBalanceDashboard").then(m => ({ default: m.HiddenBalanceDashboard })));
@@ -55,10 +57,13 @@ const SwapSVM                    = lazy(() => import("@/components/features/Swap
 const pages = {
   receive:     { title: "Private Receive",             Component: StealthContent,          key: "receive" },
   send:        { title: "Private Send",                Component: SendContent,             key: "send" },
-  swap:        { title: "Private Swap",                Component: SwapContent,             key: "swap" },
-  uniswap:     { title: "Uniswap V3 Private Swap",     Component: UniswapPrivateSwap,      key: "uniswap" },
+  // P4.2: Private Swap now mounts SwapSVM (the DEX picker) instead of
+  // the older SwapContent (which was Uniswap-V3-only). The picker
+  // supports Uniswap V3 + Aerodrome V2 today; future DEXes plug in by
+  // appending to SwapSVM.jsx's DEXES array.
+  swap:        { title: "Private Swap",                Component: SwapSVM,                 key: "swap" },
   hyperliquid: { title: "Hyperliquid Private Trading", Component: HyperliquidPrivateTrading, key: "hyperliquid" },
-  polymarket:  { title: "Polymarket Private Betting",  Component: PolymarketPrivateBetting, key: "polymarket" },
+  polymarket:  { title: "Polymarket Private Betting",  Component: PolymarketPrivateBetting,  key: "polymarket" },
   balance:     { title: "Hidden Balance",              Component: HiddenBalanceDashboard,  key: "balance" },
   history:     { title: "Transaction History",         Component: TransactionHistory,      key: "history" },
   wallet:      { title: "Dual Seed Setup",             Component: DualSeedSetup,           key: "wallet" },
@@ -76,8 +81,7 @@ const pages = {
   addressbook: { title: "Privacy Address Book",        Component: PrivacyAddressBook,      key: "addressbook" },
   zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments,           key: "zkcommit" },
   svmSend:     { title: "Stealth Send",                Component: StealthSendSVM,          key: "svm-send" },
-  svmScan:     { title: "Announcement Scanner (All Chains)", Component: ScannerSVM,         key: "svm-scanner" },
-  svmSwap:     { title: "Private Swap (Multi-DEX)",     Component: SwapSVM,                 key: "svm-swap" },
+  svmScan:     { title: "Scanner (All Chains)",     Component: ScannerSVM,         key: "svm-scanner" },
 };
 
 function LoadingFallback() {
@@ -301,8 +305,9 @@ export function Dashboard() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
             {[
-              { id: "uniswap", icon: <RefreshCw className="w-6 h-6 mb-3 text-blue-400" />, title: "Uniswap V3", desc: "Private token swaps via V3", badge: "LIVE", badgeColor: "text-blue-400 border-blue-400/40" },
-              { id: "svmSwap", icon: <ArrowDownUp className="w-6 h-6 mb-3 text-purple-400" />, title: "Private Swap (Multi-DEX)", desc: "Uniswap V3 + Aerodrome V2 (Base)", badge: "NEW", badgeColor: "text-purple-400 border-purple-400/40" },
+              // 'uniswap' tile removed - Uniswap V3 is now an option inside
+              // the Private Swap (Multi-DEX) tile above (Core Actions / swap).
+              // Adding standalone Uniswap + svmSwap duplicates the picker.
               { id: "hyperliquid", icon: <TrendingUp className="w-6 h-6 mb-3 text-green-400" />, title: "Hyperliquid", desc: "Anonymous perp trading", badge: "LIVE", badgeColor: "text-green-400 border-green-400/40" },
               { id: "polymarket", icon: <Globe className="w-6 h-6 mb-3 text-purple-400" />, title: "Polymarket", desc: "Private prediction bets", badge: "LIVE", badgeColor: "text-purple-400 border-purple-400/40" },
             ].map(({ id, icon, title, desc, badge, badgeColor }) => (
