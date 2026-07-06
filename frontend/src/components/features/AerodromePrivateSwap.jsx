@@ -242,6 +242,23 @@ export function AerodromePrivateSwap() {
       await axios.post(`${API}/stealth/use/${address}`, { feature: "swap" }).catch(() => {});
       await tx.wait();
       toast.success(`Confirmed — ${ethers.formatUnits(quote.expectedOut, BASE_TOKENS.find(t => t.symbol === tokenOut).decimals)} ${tokenOut} to stealth`);
+      // Record the swap to the unified transactions table so it shows
+      // up in the customer's Transaction History tile. /transactions/
+      // history/{address} is consumed ONLY by TransactionHistory.jsx
+      // (mounted only on pages.history), so the record does not
+      // surface anywhere else in the UI — per the "history section
+      // only" rule for customer-visible swap data. Fire-and-forget:
+      // a backend hiccup must not roll back the user's on-chain swap
+      // confirmation.
+      axios.post(`${API}/transactions/record`, {
+        tx_hash:     tx.hash,
+        from_address: address,
+        to_address:  stealthRecipient,
+        amount_wei:  ethers.parseEther(amount).toString(),
+        chain:       "base",
+        tx_type:     "private_swap",
+        status:      "confirmed",
+      }).catch(() => {});
       setQuote(null); setAmount("");
     } catch (e) {
       toast.error(e.message?.slice(0, 80) || "Swap failed");
