@@ -50,6 +50,14 @@ scripts/.upl_sol-deploy-keypair.json
 scripts/deployed_sol_devnet.json
 scripts/deployed_sol_mainnet.json
 
+# ─── PrivacyRelayer hot wallet (Gap 6 closer round) ─────────────
+# Dedicated hot wallet that fronts gas for PrivacyRelayer.relayAndAnnounce.
+# The deployer rotated ownership to this wallet via setRelayer (tx
+# 0x225c781e…); committing it would let anyone drain the relayer buffer
+# or impersonate the PrivacyRelayer's authorised caller.
+scripts/.relayer-hot-wallet.txt
+scripts/.relayer-hot-wallet.json
+
 # ─── Logs & test artifacts ──────────────────────────────────────
 *.log
 logs/
