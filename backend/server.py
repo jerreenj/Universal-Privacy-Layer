@@ -2590,6 +2590,171 @@ async def zk_pool_withdraw(req: ZKPoolWithdrawRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─── M2 — Backend-prover wiring (server-side Groth16, off-load the 5-20s
+#         browser WASM wait). Calls scripts/zk_pool_prover.js (Node +
+#         snarkjs) and returns {proof, publicSignals} so the frontend can
+#         skip directly to /api/zk-pool/withdraw with a server-generated
+#         proof instead of running snarkjs.groth16.fullProve in the
+#         browser. ────────────────────────────────────────────────────────────────
+#
+# Configuration (env, all optional):
+#   ZK_POOL_PROVER_ENABLED = "1"   to opt in; otherwise the endpoint
+#                                   returns 503 and the browser path
+#                                   takes over.
+#   ZK_POOL_ZKEY_PATH       absolute path to withdraw_final.zkey. Default:
+#                           /app/backend/zk_artifacts/withdraw_final.zkey
+#                           (matches the Dockerfile COPY in deploy).
+#   ZK_POOL_WASM_PATH       absolute path to witness wasm. Default:
+#                           /app/backend/zk_artifacts/withdraw_js/withdraw.wasm
+
+import json as _json
+import subprocess as _subprocess
+import tempfile as _tempfile
+import os as _os
+
+ZK_POOL_PROVER_ENABLED = _os.environ.get("ZK_POOL_PROVER_ENABLED", "0") == "1"
+ZK_POOL_ZKEY_PATH = _os.environ.get(
+    "ZK_POOL_ZKEY_PATH",
+    "/app/backend/zk_artifacts/withdraw_final.zkey",
+)
+ZK_POOL_WASM_PATH = _os.environ.get(
+    "ZK_POOL_WASM_PATH",
+    "/app/backend/zk_artifacts/withdraw_js/withdraw.wasm",
+)
+ZK_POOL_PROVER_TIMEOUT_S = int(_os.environ.get("ZK_POOL_PROVER_TIMEOUT_S", "60"))
+
+
+@api_router.get("/zk-pool/prove-options")
+async def zk_pool_prove_options():
+    """Tell the frontend whether server-side proving is available.
+
+    The frontend checks this on mount of the ZK Privacy Pool tile.
+    If enabled=true it offers a "Fast withdraw (server)" button that
+    routes through /api/zk-pool/prove; if not it falls back to the
+    in-browser snarkjs WASM (~5-20s on a mid laptop).
+    """
+    enabled = ZK_POOL_PROVER_ENABLED
+    zkey_exists = _os.path.isfile(ZK_POOL_ZKEY_PATH)
+    wasm_exists = _os.path.isfile(ZK_POOL_WASM_PATH)
+    return {
+        "enabled": enabled and zkey_exists and wasm_exists,
+        "zkey_present": zkey_exists,
+        "wasm_present": wasm_exists,
+        "backend_kind": "server" if (enabled and zkey_exists and wasm_exists) else "browser",
+        "timeout_seconds": ZK_POOL_PROVER_TIMEOUT_S,
+    }
+
+
+class ZKPoolProveRequest(BaseModel):
+    """Server-side Groth16 prover request. Same shape the browser would
+    assemble from /api/zk-pool/path: nullifier + secret + path elements +
+    path indices + recipient, plus the commitment-derived public root."""
+    nullifier:    str            # int256 as decimal string (Poseidon input)
+    secret:       str            # int256 as decimal string (Poseidon input)
+    denomination_wei: Optional[int] = None  # defaults to 0.1 ETH seed
+    recipient:    str            # 0x... 20-byte hex address (the stealth)
+    zkey_path:    Optional[str] = None       # override the default
+
+
+@api_router.post("/zk-pool/prove")
+async def zk_pool_prove(req: ZKPoolProveRequest):
+    """Run snarkjs.groth16.fullProve server-side via scripts/zk_pool_prover.js.
+
+    Body:
+      {
+        nullifier:    "<int256>",       # from the deposit record
+        secret:       "<int256>",       # from the deposit record
+        denomination_wei: 100000000000000000,  # optional; default 0.1 ETH
+        recipient:    "0x...",          # stealth recipient
+        zkey_path:    "/abs/...zkey"    # optional override
+      }
+
+    Returns:
+      { proof: { pi_a, pi_b, pi_c }, publicSignals: [...] }
+
+    The witness inputs are reconstructed server-side via the existing
+    generate_withdraw_inputs(nullifier, secret, denomination) — same code
+    the in-browser snarkjs path uses, so the resulting proof validates
+    against the on-chain Groth16Verifier identically.
+    """
+    if not ZK_POOL_PROVER_ENABLED:
+        raise HTTPException(status_code=503, detail="Server-side prover disabled (set ZK_POOL_PROVER_ENABLED=1)")
+    if not _os.path.isfile(_os.environ.get("ZK_POOL_ZKEY_PATH") or ZK_POOL_ZKEY_PATH):
+        raise HTTPException(status_code=503, detail=f"Missing zkey at {ZK_POOL_ZKEY_PATH}")
+    if not _os.path.isfile(_os.environ.get("ZK_POOL_WASM_PATH") or ZK_POOL_WASM_PATH):
+        raise HTTPException(status_code=503, detail=f"Missing wasm at {ZK_POOL_WASM_PATH}")
+
+    try:
+        # 1) Reconstruct the witness — same path the browser would use.
+        #    generate_withdraw_inputs(nullifier, secret) walks the stored
+        #    deposits in chronological order, rebuilding the same Poseidon
+        #    Merkle tree the circuit sees, and stops at the deposit whose
+        #    commitment matches Poseidon(nullifier, secret). The path +
+        #    root it returns are the exact witness inputs withdraw.circom
+        #    expects. (denomination_wei is informational in the request;
+        #    P4.1 multi-denom reuses one tree per denom, but the per-row
+        #    commitment equality is independent of denom.)
+        witness_inputs = await generate_withdraw_inputs(
+            int(req.nullifier),
+            int(req.secret),
+        )
+
+        # 2) Hand off the witness to the Node prover. The prover expects
+        #    bigints as strings (snarkjs also accepts that). The DOMAIN
+        #    separator bind from the circuit handling means uint256 fields
+        #    in the witness are decimal strings going in.
+        zkey_path = req.zkey_path or ZK_POOL_ZKEY_PATH
+        wasm_path = ZK_POOL_WASM_PATH
+        prover_input = {
+            "nullifier": str(int(req.nullifier)),
+            "secret": str(int(req.secret)),
+            "pathElements": [str(p) for p in witness_inputs.get("merklePathElements", [])],
+            "pathIndices":  [int(i) for i in witness_inputs.get("merklePathIndices", [])],
+            "root": str(witness_inputs.get("root", "0")),
+            "recipient": req.recipient,
+            "zkeyPath": zkey_path,
+            "wasmPath": wasm_path,
+        }
+
+        # 3) Spawn the Node helper. Pipe witness JSON in, read proof JSON out.
+        #    The script lives at /app/scripts/zk_pool_prover.js in the
+        #    backend container (see Dockerfile COPY layer).
+        with _tempfile.TemporaryFile(mode="w+b", suffix=".json", delete=False) as stdin_file:
+            stdin_file.write(_json.dumps(prover_input).encode("utf-8"))
+            stdin_path = stdin_file.name
+        try:
+            proc = _subprocess.run(
+                ["node", "/app/scripts/zk_pool_prover.js"],
+                stdin=open(stdin_path, "rb"),
+                capture_output=True,
+                timeout=ZK_POOL_PROVER_TIMEOUT_S,
+            )
+            if proc.returncode != 0:
+                logger.error(f"zk_pool_prover.js failed: rc={proc.returncode}, stderr={proc.stderr.decode('utf-8', 'replace')}")
+                raise HTTPException(status_code=500, detail=f"Prover failed: {proc.stderr.decode('utf-8', 'replace')[:300]}")
+            proof_doc = _json.loads(proc.stdout.decode("utf-8"))
+        finally:
+            try: _os.unlink(stdin_path)
+            except OSError: pass
+
+        return {
+            "backend": "server",
+            "elapsed_seconds": None,  # future: time the prover runner
+            "proof": proof_doc["proof"],
+            "publicSignals": proof_doc["publicSignals"],
+            "witness_inputs": {
+                "root":                witness_inputs.get("root"),
+                "nullifier_hash":      witness_inputs.get("nullifierHash"),
+                "commitment":          witness_inputs.get("commitment"),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"zk-pool/prove error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── P3.8 — secp256k1 Stealth-Address Ownership ZK (PoC / RESEARCH-ONLY) ───
 # ⚠ NOT FOR PRODUCTION USE. ⚠
 # See docs/secp256k1-stealth-zk.md for the full research doc + audit
