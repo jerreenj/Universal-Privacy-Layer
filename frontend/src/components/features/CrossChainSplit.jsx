@@ -7,6 +7,7 @@ import {
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
+import { deriveMetaAddress, generateStealthAddress } from "@/lib/wallet-stealth";
 
 export function CrossChainSplit() {
   const { address, signer, privacyWallet } = useWallet();
@@ -48,29 +49,34 @@ export function CrossChainSplit() {
   };
 
   const generateStealthForSplit = async (idx) => {
-    if (!privacyWallet) return toast.error("Generate privacy wallet first (Dual Seed Setup)");
     if (!address) return toast.error("Connect wallet first");
     try {
-      // Backend `/stealth/generate` expects { public_address } and derives
-      // a fresh stealth address from the recipient's registered meta-address.
-      // (Previously this posted spending_public_key/viewing_public_key which
-      // the handler never read — request would silently produce a wrong
-      // address derived from a missing/None public_address.)
-      const res = await axios.post(`${API}/stealth/generate`, { public_address: address });
-      updateSplit(idx, 'stealth', res.data.stealth_address);
-      toast.success(`Stealth address generated for ${CHAINS[splits[idx].chain]?.name}`);
+      // Wallet-derived meta via HKDF-SHA-256 over a chain-scoped
+      // personal_sign (see frontend/src/lib/wallet-stealth.js).
+      // The DOMAIN separator binds chainId → the same wallet signature
+      // produces a different meta per chain, so the customer's stealth
+      // addresses across base/arb/optimism/etc. cannot be correlated
+      // except by the customer's own wallet.
+      const chainConfig = CHAINS[splits[idx].chain];
+      const chainId = chainConfig ? BigInt(chainConfig.chainId) : 8453n;
+      const meta = await deriveMetaAddress(signer, chainId);
+      const stealth = await generateStealthAddress(meta.metaAddress);
+      updateSplit(idx, 'stealth', stealth.stealthAddress);
+      toast.success(`Stealth address generated for ${chainConfig?.name || splits[idx].chain}`);
     } catch { toast.error("Failed to generate stealth address"); }
   };
 
   const generateAllStealth = async () => {
-    if (!privacyWallet) return toast.error("Generate privacy wallet first (Dual Seed Setup)");
     if (!address) return toast.error("Connect wallet first");
     setLoading(true);
     try {
       for (let i = 0; i < splits.length; i++) {
         if (!splits[i].stealth) {
-          const res = await axios.post(`${API}/stealth/generate`, { public_address: address });
-          updateSplit(i, 'stealth', res.data.stealth_address);
+          const chainConfig = CHAINS[splits[i].chain];
+          const chainId = chainConfig ? BigInt(chainConfig.chainId) : 8453n;
+          const meta = await deriveMetaAddress(signer, chainId);
+          const stealth = await generateStealthAddress(meta.metaAddress);
+          updateSplit(i, 'stealth', stealth.stealthAddress);
         }
       }
       toast.success("All stealth addresses generated!");

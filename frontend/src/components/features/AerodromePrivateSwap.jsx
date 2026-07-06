@@ -14,7 +14,10 @@
  * Flow:
  *   1. User picks ETH (or WETH) -> USDC (or USDT), enters amount.
  *   2. We fetch the wrapper address from /api/deployments.
- *   3. Generate a stealth recipient via /api/stealth/generate.
+ *   3. Generate a stealth recipient wallet-side via HKDF over a wallet
+ *      signature (frontend/src/lib/wallet-stealth.js). No backend
+ *      round-trip — the meta-address is regenerated every time from
+ *      the same personal_sign, on any device.
  *   4. Construct the Aerodrome `Route[]`: [{from: WETH, to: USDC,
  *      stable: false, factory: 0x420…0fDa}] — Aerodrome V2's Route
  *      struct has 4 fields; the factory field is REQUIRED (the prior
@@ -36,6 +39,7 @@ import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { seal } from "@/lib/crypto-seal";
+import { deriveMetaAddress, generateStealthAddress } from "@/lib/wallet-stealth";
 
 // AerodromePrivacyWrapper — the ABI of the on-chain contract we call.
 // P4.2 hotfix: Route is now 4 fields (from, to, stable, factory).
@@ -149,16 +153,21 @@ export function AerodromePrivateSwap() {
   const autoGenStealth = async () => {
     if (!address) return toast.error("Connect wallet first");
     try {
-      const r = await axios.post(`${API}/stealth/generate`, { public_address: address, chain: "base" });
-      setStealthRecipient(r.data.stealth_address);
+      // Wallet-derived meta via HKDF-SHA-256 over a chain-scoped
+      // personal_sign (see frontend/src/lib/wallet-stealth.js).
+      // No backend round-trip — the customer's meta-address is
+      // regenerated every time from the same signature on any device.
+      const meta = await deriveMetaAddress(signer, 8453n);
+      const stealth = await generateStealthAddress(meta.metaAddress);
+      setStealthRecipient(stealth.stealthAddress);
       toast.success("Stealth address generated");
       // K4 follow-up: also seal + store the (EOA <-> stealth_address)
       // mapping server-side as unreadable ciphertext. Fire-and-
       // forget — a backend hiccup must not block the customer's swap.
       seal({
-        stealth_address:     r.data.stealth_address,
-        ephemeral_public_key: r.data.ephemeral_public_key,
-        view_tag:             r.data.view_tag,
+        stealth_address:     stealth.stealthAddress,
+        ephemeral_public_key: stealth.ephemeralPublicKey,
+        view_tag:             stealth.viewTag,
         chain:                "base",
         tx_type:              "stealthMapping",
         client:               "metadata",

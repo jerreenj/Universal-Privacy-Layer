@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { scanAnnouncements, computeStealthPrivKey, parseMetaAddress } from "../../utils/stealth";
 import { API, CHAINS } from "../../config/chains";
 import axios from "axios";
+import { fetchAnnouncements as fetchAnnouncementsDirect } from "@/lib/direct-rpc-scanner";
 
 const CHAIN_LIST = ["all", "base", "arbitrum", "polygon", "optimism", "bnb", "avalanche", "hyperliquid"];
 const EXPLORERS = {
@@ -144,10 +145,21 @@ export function StealthReceive({ address, chain: chainProp }) {
     setScanned(false);
     setMatches([]);
     try {
-      const r = await axios.get(`${API}/stealth/announcements`, {
-        params: { chain: selectedChain, limit: 1000 },
+      // Direct RPC scanner — reads StealthAnnouncement events straight
+      // from the Base StealthAddressRegistry via eth_getLogs. The
+      // customer's wallet provider is used when available (preferred
+      // because it has indexed logs); otherwise falls back to the
+      // chain's public RPC endpoint. NO backend round-trip.
+      const provider = (typeof window !== "undefined" && window.ethereum)
+        ? new ethers.BrowserProvider(window.ethereum)
+        : null;
+      const chainKey = selectedChain === "all" ? "base" : selectedChain;
+      const announcements = await fetchAnnouncementsDirect({
+        chain: chainKey,
+        provider: provider || undefined,
+        fromBlock: -5000n, // signed; let RPC pick a sensible recent window
+        toBlock: "latest",
       });
-      const announcements = r.data.announcements || [];
       const found = scanAnnouncements(announcements, viewPriv, spendPub);
       setMatches(found);
       setScanned(true);

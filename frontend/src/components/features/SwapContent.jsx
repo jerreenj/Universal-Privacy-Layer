@@ -42,6 +42,7 @@ import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { seal } from "@/lib/crypto-seal";
+import { deriveMetaAddress, generateStealthAddress } from "@/lib/wallet-stealth";
 
 // NativePrivateSwap ABI — only the calls the customer surface makes.
 const NATIVE_SWAP_ABI = [
@@ -134,20 +135,22 @@ export function SwapContent() {
   const autoGenStealth = async () => {
     if (!address) return toast.error("Connect wallet first");
     try {
-      const r = await axios.post(`${API}/stealth/generate`, {
-        public_address: address,
-        chain: chain === "base" ? "base" : "ethereum_sepolia",
-      });
-      setStealthRecipient(r.data.stealth_address);
+      // Wallet-derived meta via HKDF-SHA-256 over a chain-scoped
+      // personal_sign (see frontend/src/lib/wallet-stealth.js).
+      // No backend round-trip — the customer's meta-address is
+      // regenerated every time from the same personal_sign on any device.
+      const meta = await deriveMetaAddress(signer, 8453n);
+      const stealth = await generateStealthAddress(meta.metaAddress);
+      setStealthRecipient(stealth.stealthAddress);
       toast.success("Stealth address generated");
       // K4 follow-up: seal + store the (EOA <-> stealth_address) mapping
       // server-side so the row the backend stores is unreadable cipher-
       // text, not plaintext. Fire-and-forget — a backend hiccup must
       // not block the customer's swap.
       seal({
-        stealth_address:      r.data.stealth_address,
-        ephemeral_public_key: r.data.ephemeral_public_key,
-        view_tag:             r.data.view_tag,
+        stealth_address:      stealth.stealthAddress,
+        ephemeral_public_key: stealth.ephemeralPublicKey,
+        view_tag:             stealth.viewTag,
         chain:                "base",
         tx_type:              "stealthMapping",
         client:               "metadata",
