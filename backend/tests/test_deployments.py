@@ -125,6 +125,41 @@ class TestDeploymentsNoManifests:
         data = client.get("/api/deployments").json()
         assert data["evm"]["base"]["explorer"] == "https://basescan.org"
 
+    def test_deployments_evm_base_p4_contracts_present(self, client):
+        """Customer pilot lives on Base; all P4.1 + P4.2 contracts must be
+        surfaced in /api/deployments so the dashboard's send-receive-swap
+        flow can reach them.
+
+        This locks in the broadcast addresses for the customer-facing
+        surface area: if a future commit silently aliases or 'fixes' any
+        of these addresses (e.g. points the swap UI back at a wrapper
+        that reverts), this test fires before the customer catches it."""
+        data = client.get("/api/deployments").json()
+        base = data["evm"]["base"]
+        if not base["deployed"]:
+            pytest.skip("Base manifest not deployed in this env")
+        # P4.1 multi-denom PrivacyPool (send-flow + receive-flow both
+        # depend on it transitively via the network propagation path).
+        assert base.get("privacy_pool") == "0x3F0b23Aca0624981a503e8f042db2F3884D0C89C"
+        # P4.1 Groth16Verifier backing the ZK pool (deploy independently
+        # of the pool so verifying the surface area independently catches
+        # any drift between the two addresses).
+        assert base.get("privacy_verifier") == "0x838b7c20b1a97cAA6379542d03983b4571275679"
+        # P4.2 AerodromePrivacyWrapper (post-hotfix v2 — the swap tile
+        # routes here; v1 wraps a 3-field Route struct that reverts at
+        # Aerodrome Router with empty error data, so this exact address
+        # matters more than any other).
+        assert base.get("aerodrome_wrapper") == "0xe896e6f51af137c32db7eb4e3b2de795d392a646"
+        # UniswapPrivacyWrapper is also live on Base; the multi-DEX picker
+        # surfaces it for non-USDC pairs (no WETH/USDC pool on Uniswap V3
+        # per the P1.13 finding; do NOT promote it to default).
+        assert base.get("uniswap_wrapper") == "0x9C30cdCd73347BF18A5bD424C37E5714e2606362"
+        # Each address must be a valid 0x-prefixed 20-byte hex string.
+        for k in ["privacy_pool", "privacy_verifier", "aerodrome_wrapper", "uniswap_wrapper"]:
+            v = base.get(k)
+            assert v is not None
+            assert v.startswith("0x") and len(v) == 42, f"{k}={v!r} not a 0x-prefixed 20-byte address"
+
 
 # ── Tests: /api/sui/status (handles both deployed and not-deployed) ────────
 

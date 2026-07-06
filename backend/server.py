@@ -506,6 +506,13 @@ def _load_deployed_addresses(static_contracts: Dict[str, Dict[str, Any]]) -> Dic
         # the real mainnet address. (Previously only the relay + registry + uniswap
         # wrapper were recognised.)
         "privacy_pool", "privacy_verifier",
+        # Phase 4.2 (P4.2 hotfix): AerodromePrivacyWrapper added so the
+        # swap tile (Aerodrome V2 — Base's only DEX with a deep WETH/USDC
+        # pool) surfaces the real broadcast address from /api/deployments
+        # instead of falling back to a hardcoded one. Without this the
+        # hotfix wrapper would be invisible to the dashboard and the swap
+        # path would only work in a stale-cache window.
+        "aerodrome_wrapper",
         "deployer", "fee_recipient", "pool_owner",
     )
     provenance_keys = ("chainId", "deployedAt", "commit", "redeployedNote")
@@ -5629,18 +5636,33 @@ async def deployments():
         return cached
     evm = {}
     for chain, cfg in UPL_CONTRACTS.items():
-        relayer = cfg.get("privacy_relayer")
+        relayer  = cfg.get("privacy_relayer")
         registry = cfg.get("stealth_registry")
-        wrapper = cfg.get("uniswap_wrapper")
+        uwrapper = cfg.get("uniswap_wrapper")
+        # P3.4: PrivacyPool + Groth16Verifier surface for the ZK pool
+        # endpoints; surfaced here so the dashboard's privacy-pool tile
+        # can read the live broadcast address.
+        pool     = cfg.get("privacy_pool")
+        verifier = cfg.get("privacy_verifier")
+        # P4.2 (hotfix v2): AerodromePrivacyWrapper — Base's only DEX
+        # wrapper with a deep WETH/USDC pool; the swap tile reads this
+        # to populate the on-chain recipient of the /swap/quote path.
+        aero     = cfg.get("aerodrome_wrapper")
         # A chain is "deployed" if at least one contract has a real (non-zero)
         # address. Zero-address / None means not deployed.
         def _is_real(addr):
             return bool(addr) and addr not in ("0x0", "0x0000000000000000000000000000000000000000")
         evm[chain] = {
-            "privacy_relayer": relayer if _is_real(relayer) else None,
+            "privacy_relayer":  relayer  if _is_real(relayer)  else None,
             "stealth_registry": registry if _is_real(registry) else None,
-            "uniswap_wrapper": wrapper if _is_real(wrapper) else None,
-            "deployed": _is_real(relayer) or _is_real(registry) or _is_real(wrapper),
+            "uniswap_wrapper":  uwrapper if _is_real(uwrapper) else None,
+            "privacy_pool":     pool     if _is_real(pool)     else None,
+            "privacy_verifier": verifier if _is_real(verifier) else None,
+            "aerodrome_wrapper": aero    if _is_real(aero)      else None,
+            "deployed": (
+                _is_real(relayer)  or _is_real(registry) or _is_real(uwrapper)
+                or _is_real(pool)  or _is_real(verifier) or _is_real(aero)
+            ),
             "explorer": cfg.get("explorer"),
         }
     if SUI_DEPLOYMENT:
