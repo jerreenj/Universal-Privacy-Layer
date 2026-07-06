@@ -1,17 +1,32 @@
 {
   "base": {
     "chainId": 8453,
-    "deployedAt": "2026-07-04T22:32:00Z",
-    "commit": "P3.4-broadcast-audit-fixes",
-    "privacy_relayer": "0x0236451962b249c9a4D742b1ae99bD1F51692b7b",
-    "stealth_registry": "0x48363A533b23fa223C0f37DD99c556D9aAa62496",
-    "uniswap_wrapper": "0x9dB802599412729429765D73C7daca62Aac252F5",
-    "privacy_verifier": "0xcb2b6D1082e97557EF2d6aE5268f8e8d38DF72e3",
-    "privacy_pool": "0x3A7DA29bfd9853A0449c8c51F7007B7f5126C455",
+    "deployedAt": "2026-07-06T04:13:00Z",
+    "commit": "P4.1-multidenom-broadcast",
     "deployer": "0x3f44A6451439673D95082A1337045a25ec275394",
     "fee_recipient": "0x3f44A6451439673D95082A1337045a25ec275394",
-    "denomination_wei": "100000000000000000",
     "pool_owner": "0x3f44A6451439673D95082A1337045a25ec275394",
-    "redeployNote": "P3.4: PrivacyPool + Groth16Verifier deployed. PrivacyRelayer was redeployed (atomic relayAndAnnounce). StealthAddressRegistry + UniswapPrivacyWrapper redeployed at the new addresses above. Forge vm.writeJson quirk: in real broadcasts it persists only chainId, so the on-chain addresses were merged into the JSON from forge's ONCHAIN broadcast logs (this matches the same dry-run quirk observed earlier in this session)."
+    "privacy_relayer": "0x69DA62568CAbc0940a0Bb6Bc7017e3EB8BD7c175",
+    "stealth_registry": "0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1",
+    "uniswap_wrapper": "0x9C30cdCd73347BF18A5bD424C37E5714e2606362",
+    "privacy_verifier": "0x838b7c20b1a97cAA6379542d03983b4571275679",
+    "privacy_pool": "0x3F0b23Aca0624981a503e8f042db2F3884D0C89C",
+    "pool_kind": "multi-denom",
+    "initial_denominations_wei": "100000000000000000",
+    "deploy_tx_hashes": {
+      "stealth_registry":   "0xf15a9fb26bb9edac",
+      "privacy_relayer":    "0x240f9bbbf0dcc69d",
+      "uniswap_wrapper":    "0x6bb8f1f4aea69bd9",
+      "privacy_verifier":   "0x65f01d828d9596d7",
+      "privacy_pool":       "0x1fcac57d5d3e43b4"
+    },
+    "basescan": {
+      "stealth_registry":   "https://basescan.org/address/0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1",
+      "privacy_relayer":    "https://basescan.org/address/0x69DA62568CAbc0940a0Bb6Bc7017e3EB8BD7c175",
+      "uniswap_wrapper":    "https://basescan.org/address/0x9C30cdCd73347BF18A5bD424C37E5714e2606362",
+      "privacy_verifier":   "https://basescan.org/address/0x838b7c20b1a97cAA6379542d03983b4571275679",
+      "privacy_pool":       "https://basescan.org/address/0x3F0b23Aca0624981a503e8f042db2F3884D0C89C"
+    },
+    "redeployNote": "P4.1 MULTI-DENOM BROADCAST (2026-07-06). PrivacyPool rewritten to per-denom Poseidon trees + global spent set; constructor (address verifier, uint256[] initialDenominations). Single-denom back-compat achieved by seeding [100000000000000000] (0.1 ETH) - pool owner may call addDenomination(d) post-deploy to enable other face values. The prior P3.4 single-denom pool at 0x3A7DA29bfd9853A0449c8c51F7007B7f5126C455 remains on-chain but is no longer the canonical pool. Cost: ~0.000033 ETH (~$0.10) at 0.011 gwei; ~7,205,643 gas. Forge vm.writeJson quirk persists only chainId; this manifest was hand-enriched post-broadcast from contracts/broadcast/Deploy.s.sol/8453/run-latest.json."
   }
 }
