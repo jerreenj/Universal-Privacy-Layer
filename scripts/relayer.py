@@ -74,6 +74,55 @@ RELAY_INTENT_TYPE = {
 RELAY_INTENT_NAME = "UPL PrivacyRelayer"
 RELAY_INTENT_VERSION = "1"
 
+_HOT_WALLET_KEYFILE_CACHE = None
+
+
+def _read_hot_wallet_keyfile():
+    """Read the dedicated PrivacyRelayer hot-wallet keyfile (gitignored).
+
+    Resolution paths (first existing wins):
+      - RELAYER_KEYFILE_PATH env (override)
+      - <REPO_ROOT>/scripts/.relayer-hot-wallet.txt (local dev/CI)
+
+    Format expected (cast wallet output):
+
+      Successfully created new keypair.
+      Address:     0xABC...
+      Private key: 0x123...
+
+    Returns the 0x-prefixed 64-char private key string, or None if
+    the file is missing/unparseable. Cached per-process.
+    """
+    global _HOT_WALLET_KEYFILE_CACHE
+    if _HOT_WALLET_KEYFILE_CACHE is not None:
+        return _HOT_WALLET_KEYFILE_CACHE
+
+    candidates = []
+    override = os.environ.get("RELAYER_KEYFILE_PATH")
+    if override:
+        candidates.append(Path(override))
+    candidates.append(REPO_ROOT / "scripts" / ".relayer-hot-wallet.txt")
+
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8").strip()
+            for line in text.splitlines():
+                line = line.strip()
+                if ":" in line:
+                    label, _, value = line.partition(":")
+                    if label.strip().lower() in ("private key", "private_key"):
+                        key = value.strip()
+                        if key.startswith("0x") and len(key) == 66:
+                            _HOT_WALLET_KEYFILE_CACHE = key
+                            return key
+        except (OSError, UnicodeDecodeError) as e:
+            log(f"hot wallet keyfile read skipped for {path}: {e}")
+            continue
+
+    return None
+
 
 def log(msg):
     print(f"[relayer] {datetime.now(timezone.utc).isoformat()} {msg}", flush=True)
@@ -89,9 +138,24 @@ def load_env():
                 os.environ.setdefault(k.strip(), v.strip())
 
     rpc = os.environ.get("BASE_RPC_URL", "https://mainnet.base.org")
-    key = os.environ.get("DEPLOYER_PRIVATE_KEY") or os.environ.get("RELAYER_PRIVATE_KEY")
+    # Resolution order mirrors backend/server.py:
+    #   1) RELAYER_PRIVATE_KEY env (Azure / production)
+    #   2) scripts/.relayer-hot-wallet.txt on disk (local dev/CI;
+    #      gitignored - the keyfile shipped with the persona'd
+    #      deployer wallet after the gap-6 round)
+    #   3) DEPLOYER_PRIVATE_KEY env (legacy fallback; will revert
+    #      on Base against the new hot-wallet slot — kept for
+    #      backwards-compat with old contract deploys)
+    key = (
+        os.environ.get("RELAYER_PRIVATE_KEY")
+        or _read_hot_wallet_keyfile()
+        or os.environ.get("DEPLOYER_PRIVATE_KEY")
+    )
     if not key:
-        log("ERROR: No DEPLOYER_PRIVATE_KEY or RELAYER_PRIVATE_KEY in env")
+        log("ERROR: No DEPLOYER_PRIVATE_KEY or RELAYER_PRIVATE_KEY in env "
+            "AND scripts/.relayer-hot-wallet.txt is missing or unreadable. "
+            "Set RELAYER_PRIVATE_KEY env OR drop the gitignored "
+            "scripts/.relayer-hot-wallet.txt next to scripts/.")
         sys.exit(1)
     return rpc, key
 

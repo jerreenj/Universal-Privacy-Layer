@@ -26,6 +26,75 @@ from web3 import Web3
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env', override=False)  # Railway injects env vars; .env is optional
 
+
+def _read_hot_wallet_keyfile() -> Optional[str]:
+    """Read the dedicated PrivacyRelayer hot-wallet keyfile.
+
+    Resolution paths (first existing wins):
+      - RELAYER_KEYFILE_PATH env (override)
+      - /app/scripts/.relayer-hot-wallet.txt (Docker bind-mount path)
+      - <repo-root>/scripts/.relayer-hot-wallet.txt (local dev)
+      - scripts/.relayer-hot-wallet.txt (cwd-relative for tests)
+
+    The file is produced by `cast wallet new` after the gap-6
+    round and stored gitignored (per .gitignore entries
+    `scripts/.relayer-hot-wallet.{txt,json}`). Format expected
+    (cast wallet output):
+
+      Successfully created new keypair.
+      Address:     0xABC...
+      Private key: 0x123...
+
+    Returns the 0x-prefixed 64-char private key string, or None
+    if the file is missing/unparseable. Cached per-process.
+
+    Why this fallback exists: PrivacyRelayer.sol's `relayer()`
+    slot is rebuilt to use a dedicated hot-wallet EOA
+    (`0x2d82E56f…`) so the deployer EOA can rotate out +
+    keep governance separate from gas-funding. The new key MUST
+    sign every relayAndAnnounce tx. Loading it from the
+    .gitignored file means a fresh clone with the key restored
+    from secure storage can run the relayer end-to-end without
+    also having to inject a manual env var on every Azure
+    re-deploy.
+    """
+    global _HOT_WALLET_KEYFILE_CACHE
+    if _HOT_WALLET_KEYFILE_CACHE is not None:
+        return _HOT_WALLET_KEYFILE_CACHE
+
+    candidates = []
+    override = os.environ.get("RELAYER_KEYFILE_PATH")
+    if override:
+        candidates.append(Path(override))
+    candidates.append(Path("/app/scripts/.relayer-hot-wallet.txt"))
+    repo_root = Path(__file__).resolve().parent.parent  # backend/ -> repo root
+    candidates.append(repo_root / "scripts" / ".relayer-hot-wallet.txt")
+    candidates.append(Path("scripts/.relayer-hot-wallet.txt"))
+
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8").strip()
+            # Parse the `cast wallet new` output shape — "Private key:" line.
+            for line in text.splitlines():
+                line = line.strip()
+                if ":" in line:
+                    label, _, value = line.partition(":")
+                    if label.strip().lower() in ("private key", "private_key"):
+                        key = value.strip()
+                        if key.startswith("0x") and len(key) == 66:
+                            _HOT_WALLET_KEYFILE_CACHE = key
+                            return key
+        except (OSError, UnicodeDecodeError) as e:
+            logger.warning(f"hot wallet keyfile read skipped for {path}: {e}")
+            continue
+
+    return None
+
+
+_HOT_WALLET_KEYFILE_CACHE: Optional[str] = None
+
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL', '')
 if not mongo_url:
@@ -3121,10 +3190,40 @@ async def submit_relayer_intent(request: RelayerSubmitRequest):
         if not registry_address:
             raise HTTPException(status_code=503, detail=f"StealthAddressRegistry not deployed on '{request.chain}'")
 
-        # The relayer's private key — must be the authorized relayer on the contract.
-        relayer_key = os.environ.get("RELAYER_PRIVATE_KEY") or os.environ.get("DEPLOYER_PRIVATE_KEY")
+        # The relayer's private key — must be the authorized relayer on the
+        # contract slot. Resolution order:
+        #   1) RELAYER_PRIVATE_KEY env (Azure / production deployments)
+        #   2) scripts/.relayer-hot-wallet.txt on disk (local dev/CI; the
+        #      hot wallet keyfile shipped with the repo, .gitignored)
+        #   3) DEPLOYER_PRIVATE_KEY env (legacy fallback — DEPRECATED for
+        #      production: signing with this key against the new
+        #      0x2d82E56f… hot-wallet slot reverts with "Not authorised
+        #      relayer"; kept only for dev/test deployments)
+        # Without (1) or (2), the /api/relayer/submit path returns 503
+        # with an explicit message — no silent fallback that would
+        # produce on-chain reverts.
+        relayer_key = (
+            os.environ.get("RELAYER_PRIVATE_KEY")
+            or _read_hot_wallet_keyfile()
+            or os.environ.get("DEPLOYER_PRIVATE_KEY")
+        )
+        relayer_key_source = (
+            "env:RELAYER_PRIVATE_KEY" if os.environ.get("RELAYER_PRIVATE_KEY")
+            else "keyfile" if _read_hot_wallet_keyfile()
+            else "env:DEPLOYER_PRIVATE_KEY" if os.environ.get("DEPLOYER_PRIVATE_KEY")
+            else None
+        )
         if not relayer_key:
-            raise HTTPException(status_code=503, detail="Relayer wallet not configured (set RELAYER_PRIVATE_KEY env)")
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Relayer wallet not configured. Set RELAYER_PRIVATE_KEY env "
+                    "OR drop the gitignored scripts/.relayer-hot-wallet.txt "
+                    "next to backend/ so the on-disk fallback picks it up. "
+                    "(See docs/base-pilot-closer.md § Step 1 of operator "
+                    "action — one env flip on app-privacycloak.)"
+                ),
+            )
 
         # 1. Validate the EIP-712 signature off-chain
         intent = request.intent
