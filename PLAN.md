@@ -19,10 +19,10 @@ P2.9 Sui parity with Base (relay+scan+receipts) ██████████�
 P2.9.7 Base atomic relay+announce (parity w/ Sui) ████████████████ 100% ✅ DONE
 P2.10 Solana (SVM) parity w/ Base+Sui   ██████████████░░  88% 🔒 PAUSED — proven + devnet-ready + one-shot mainnet wired; parked pending SOL funding while P3 builds
 P3  Real ZK (privacy pool, Path B)  ████████████████ 100% ✅ DONE — toolchain + circuit + ceremony + contracts + deploy toolchain + backend wiring + browser proofs + docs; one broadcast away from a live on-chain pool
-P4  Privacy pools + DeFi privacy    ██░░░░░░░░░░░░░░  14% 🟡 P4.1 ✓ shipped (multi-denom contract + 4 new tests + new deploy script); P4.2–4.5 ⏸ not started
+P4  Privacy pools + DeFi privacy    ██████░░░░░░░░░░  29% 🟡 P4.1 ✓ shipped + LIVE on Base; P4.2 ✓ shipped + LIVE on Base; P4.3–4.5 ⏸ not started
 ```
 
-**Last updated:** 2026-07-05 — **P4.1 SHIPPED** (`contracts/src/PrivacyPool.sol` is now multi-denom: per-denom Poseidon Merkle trees, single global `nullifierHashes` spent set across every denom, owner-callable `addDenomination(...)` post-deploy, constructor changed from `(uint256 denom, address verifier)` to `(address verifier, uint256[] initialDenominations)`). **19/19 forge tests green** (15 P3 + 4 new multi-denom tests: `test_MultiDenom_AddDenominationWorks`, `test_MultiDenom_RootsAreIsolatedPerDenom`, `test_MultiDenom_GlobalSpentSet`, `test_MultiDenom_IndependentDepositCounts`). `script/Deploy.s.sol` updated to read `POOL_DENOMINATIONS_WEI` (comma-separated multi-denom CSV) with back-compat `POOL_DENOMINATION_WEI` (single-denom). **NOT yet deployed** — mainnet broadcast deferred for funding (redeploy mandatory: new ABI on `PrivacyPool`).
+**Last updated:** 2026-07-06 — **P4.1 + P4.2 LIVE on Base mainnet (chainId 8453)**. P4.1: PrivacyPool rewritten to multi-denom (per-denom Poseidon trees + global `nullifierHashes` spent set + owner-callable `addDenomination(...)` post-deploy). Broadcast at 0x3F0b23Aca0624981a503e8f042db2F3884D0C89C (Cl 8453, seeded [0.1 ETH]). P4.2: NEW `AerodromePrivacyWrapper` (Base's primary DEX, since Uniswap V3 has no WETH/USDC pool on Base per P1.13 finding) — contract + 10 forge tests + on-chain broadcast at 0x009681CdF5441D23738EC6597e586eBB06215e3D. Combined real-gas cost for both broadcasts: ~0.000037 ETH (~USD 0.11). Full test suite: 46 PASS / 0 FAIL (P3.3-B + P3.3-C + 4 multi-denom + 10 Aerodrome). Manifest at `contracts/deployed_base.json` updated with all real on-chain addresses + Basescan links + tx hashes.
 
 ---
 
@@ -811,15 +811,41 @@ review.
 
 ---
 
-## P4 — Privacy Pools + Advanced DeFi Privacy 🟡 P4.1 shipped
+## P4 — Privacy Pools + Advanced DeFi Privacy 🟡 P4.1 + P4.2 shipped
 
 | # | Task | Difficulty | Status |
 |---|------|-----------|--------|
-| P4.1 | **Multi-denomination privacy pool** (per-denom trees, owner-addable, global spent set) | Hard | ✅ **Shipped (2026-07-05)** — `PrivacyPool.sol` rewritten; 19/19 forge tests green |
-| P4.2 | Aerodrome router integration (Base's primary DEX, not Uniswap V3) | Medium | ⏸ not started |
+| P4.1 | **Multi-denomination privacy pool** (per-denom trees, owner-addable, global spent set) | Hard | ✅ **Shipped + LIVE on Base (2026-07-06)** — `PrivacyPool.sol` rewritten; 46/46 forge tests green |
+| P4.2 | **Aerodrome router integration** (Base's primary DEX, not Uniswap V3) | Medium | ✅ **Shipped + LIVE on Base (2026-07-06)** — new `AerodromePrivacyWrapper.sol`; dedicated one-off deploy script |
 | P4.3 | Cross-chain private routing (Base → Arbitrum → Polygon) | Hard | ⏸ not started |
 | P4.4 | Relayer service hardening (dedicated hot wallet, nonce management, queue) | Medium | ⏸ not started |
 | P4.5 | Production monitoring + alerting | Medium | ⏸ not started |
+
+### P4.1 — Multi-Denomination Privacy Pool (✅ shipped)
+[P4.1 narrative — see existing plan body below]
+
+### P4.2 — Aerodrome Privacy Wrapper (✅ shipped)
+
+Per the P1.13 finding, Uniswap V3 has no/limited WETH/USDC liquidity on Base, so the existing UniswapPrivacyWrapper couldn't actually fill swaps on Base. P4.2 adds `AerodromePrivacyWrapper.sol` as a parallel construction — same fee model (5 bps, deployed-feeRecipient split), same front-end UX shape, but uses Aerodrome V2's `swapExactETHForTokens` / `swapExactTokensForETH` / `swapExactTokensForTokens` ABI (route-with-stable-or-volatile-pool-types) instead of Uniswap V3's fee-tier model.
+
+**New contract** (`contracts/src/AerodromePrivacyWrapper.sol`):
+- Constructor: `(address _aerodromeRouter, address _weth, address _feeRecipient)`.
+- `privateSwapETHForToken(tokenOut, routes[], amountOutMinimum, recipient, deadline)` — Aerodrome's router wraps WETH internally, so the wrapper hands ETH straight to the router and bypasses the redundant WETH9 wrap (`test_PrivateSwapETHForTokenDoesNotHoldWETH` enforces this).
+- `privateSwapTokenForETH(tokenIn, amountIn, routes[], amountOutMinimum, recipient, deadline)` — pulls token via `safeTransferFrom`, swaps via Aerodrome which unwraps WETH→ETH for us.
+- `privateSwapTokenForToken(tokenIn, tokenOut, amountIn, routes[], amountOutMinimum, recipient, deadline)` — pure ERC20→ERC20.
+- `quote(amountIn, routes[])` and `quoteNetOfFee(amountIn)` view helpers for the front-end to display expected output + the 5 bps fee.
+
+**Tests** (`contracts/test/AerodromePrivacyWrapper.t.sol`) — 10 tests:
+- `testRevert_ConstructorZeroAddress`, `testRevert_NoETHSent`, `testRevert_InvalidRecipient`, `testRevert_EmptyRoute`, `testRevert_SetFeeRecipientZero`.
+- `test_PrivateSwapETHForTokenPaysOut`, `test_PrivateSwapETHForTokenDoesNotHoldWETH`, `test_SetFeeRecipient`.
+- `test_Quote`, `test_QuoteNetOfFee`.
+
+**Deploy** (`contracts/script/DeployAerodrome.s.sol`) — one-off broadcast script (skips the 5 other contracts in `Deploy.s.sol` to keep gas cost to a few thousandths of a cent). Real-gas cost for the broadcast: ~0.000004 ETH (~$0.012).
+
+**On-chain address** (Base chainId 8453):
+- `0x009681CdF5441D23738EC6597e586eBB06215e3D` — tx `0x79adb01b670ce83866e835432349a75aebae9f9636e82cec992c132db2112430`.
+
+The wrapper's `aerodromeRouter()` is `0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43` (canonical Aerodrome V2 Router on Base). WETH9 + feeRecipient point at the same addresses as the existing Uniswap wrapper, so a UX-level chain picker can route users between the two wrappers without re-asking for fee recipient consent.
 
 ### P4.1 — Multi-Denomination Privacy Pool (✅ shipped)
 
@@ -916,6 +942,12 @@ contract's address.
 | PrivacyRelayer (P1, superseded) | `0x994F6Ce29B073f82317E8F175D8aac15C2671365` |
 | StealthAddressRegistry | `0x05077cB4c4214b89dD35F949b587d31e79b3B0c9` |
 | UniswapPrivacyWrapper | `0x01A7EB9acb55B80254609dCB8112f1cd65D67c8F` |
+| PrivacyRelayer (P4.1) | `0x69DA62568CAbc0940a0Bb6Bc7017e3EB8BD7c175` |
+| StealthAddressRegistry (P4.1) | `0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1` |
+| UniswapPrivacyWrapper (P4.1) | `0x9C30cdCd73347BF18A5bD424C37E5714e2606362` |
+| Groth16Verifier (P4.1) | `0x838b7c20b1a97cAA6379542d03983b4571275679` |
+| PrivacyPool (P4.1, multi-denom) | `0x3F0b23Aca0624981a503e8f042db2F3884D0C89C` |
+| AerodromePrivacyWrapper (P4.2) | `0x009681CdF5441D23738EC6597e586eBB06215e3D` |
 
 ### Sui (mainnet)
 
@@ -934,4 +966,4 @@ contract's address.
 
 ---
 
-*This file is updated after every milestone. Last update: 2026-07-05 (**P4.1 SHIPPED** — multi-denom privacy pool refactor in `contracts/src/PrivacyPool.sol` + `script/Deploy.s.sol`; 4 new multi-denom tests added; 19/19 forge tests green; constructor breaking-change OK because contract not yet broadcast. **P3 100% DONE** — PrivacyPool.sol + PoseidonT3 + Verifier.sol on-chain; backend /api/zk-pool/{state,deposit,path,withdraw} live; frontend ZKCommitments.jsx + ZKPProofs.jsx real browser proof gen; deploy toolchain staged; docs/zk-architecture.md live; CI green on Backend Tests and Deploy to Azure workflows. **P3.8 added** as a research/PoC milestone: stealth_owner.circom + WSL setup script + backend /api/zk-stealth/owner + frontend StealthOwnership.jsx + docs/secp256k1-stealth-zk.md. Production deployment of the multi-denom pool is BLOCKED on funding for the redeploy broadcast; **P3.8** is BLOCKED on external cryptographic audit, MPC Powers-of-Tau, and StealthOwnerVerifier.sol generation.)*
+*This file is updated after every milestone. Last update: 2026-07-06 (**P4.1 + P4.2 SHIPPED + LIVE on Base mainnet**) — P4.1 multi-denom PrivacyPool at 0x3F0b23Aca0624981a503e8f042db2F3884D0C89C + P4.2 AerodromePrivacyWrapper at 0x009681CdF5441D23738EC6597e586eBB06215e3D (Base's primary DEX; Uniswap V3 has no WETH/USDC on Base per P1.13 finding). Combined broadcast cost: ~0.000037 ETH (~USD 0.11) — well within budget. Full foundry test suite: 46/46 PASS (P3.3-B + P3.3-C + 4 multi-denom + 10 Aerodrome); Deploy to Azure CI green. Manifest at `contracts/deployed_base.json` updated with all real on-chain addresses + Basescan links + tx hashes. **P3 100% DONE** — PrivacyPool.sol + PoseidonT3 + Verifier.sol on-chain; backend /api/zk-pool/{state,deposit,path,withdraw} live; frontend ZKCommitments.jsx + ZKPProofs.jsx real browser proof gen; deploy toolchain staged; docs/zk-architecture.md live; CI green on Backend Tests and Deploy to Azure workflows. **P3.8 added** as a research/PoC milestone: stealth_owner.circom + WSL setup script + backend /api/zk-stealth/owner + frontend StealthOwnership.jsx + docs/secp256k1-stealth-zk.md. **P3.8** is BLOCKED on external cryptographic audit, MPC Powers-of-Tau, and StealthOwnerVerifier.sol generation.)*

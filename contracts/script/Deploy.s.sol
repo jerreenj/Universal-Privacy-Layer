@@ -6,6 +6,7 @@ import {Script, console2} from "forge-std/Script.sol";
 import {StealthAddressRegistry} from "../src/StealthAddressRegistry.sol";
 import {PrivacyRelayer} from "../src/PrivacyRelayer.sol";
 import {UniswapPrivacyWrapper} from "../src/UniswapPrivacyWrapper.sol";
+import {AerodromePrivacyWrapper} from "../src/AerodromePrivacyWrapper.sol";
 import {Groth16Verifier} from "../src/Verifier.sol";
 import {PrivacyPool} from "../src/PrivacyPool.sol";
 
@@ -65,6 +66,16 @@ contract DeployScript is Script {
 
     /// @dev Base WETH9 — 0x420…0006, the canonical WETH on all OP-stack L2s.
     address constant DEFAULT_WETH = 0x4200000000000000000000000000000000000006;
+
+    /// @dev Aerodrome V2 Router — Base mainnet production router.
+    /// P4.2: Uniswap V3 has no/limited WETH/USDC liquidity on Base; Aerodrome
+    /// is the primary DEX. The frontend will route to whichever wrapper
+    /// the user picked; the Aerodrome wrapper supports ETH<->Token swaps
+    /// through Aerodrome's stable/volatile pool types (instead of the
+    /// single-v3-pool-fee-tier model). The same constants are shared
+    /// across wrappers, so the user can swap WETH<->USDC through either
+    /// DEX without redeploying.
+    address constant DEFAULT_AERODROME_ROUTER = 0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43;
 
     /// @dev Default privacy-pool denomination seed: 0.1 ETH (1e17 wei). Fixed
     ///      denominations are what make deposits unlinkable — every 0.1 ETH
@@ -128,6 +139,18 @@ contract DeployScript is Script {
         console2.log("  WETH:", wrapper.WETH());
         console2.log("  feeRecipient:", wrapper.feeRecipient());
 
+        // 3b. AerodromePrivacyWrapper (P4.2) — runs in parallel to the
+        //     Uniswap wrapper. Same shape + fee model, but uses Aerodrome's
+        //     Router (which is Base's primary DEX; Uniswap V3 has no
+        //     WETH/USDC pool on Base per the P1.13 finding). The frontend
+        //     dispatches per selected chain / per preferred DEX.
+        address aerodromeRouter = vm.envOr("AERODROME_ROUTER", DEFAULT_AERODROME_ROUTER);
+        AerodromePrivacyWrapper aeroWrapper = new AerodromePrivacyWrapper(aerodromeRouter, weth, feeRecipient);
+        console2.log("AerodromePrivacyWrapper deployed:", address(aeroWrapper));
+        console2.log("  aerodromeRouter:", aeroWrapper.aerodromeRouter());
+        console2.log("  WETH:", aeroWrapper.WETH());
+        console2.log("  feeRecipient:", aeroWrapper.feeRecipient());
+
         // 4. Groth16Verifier (P3.4) — the snarkjs-generated verifier for
         //    withdraw.circom. Zero args. Public-signal order
         //    [nullifierHash, root, recipient] is baked into the generated code.
@@ -159,6 +182,7 @@ contract DeployScript is Script {
         baseObj = vm.serializeAddress(baseObj, "privacy_relayer", address(relayer));
         baseObj = vm.serializeAddress(baseObj, "stealth_registry", address(registry));
         baseObj = vm.serializeAddress(baseObj, "uniswap_wrapper", address(wrapper));
+        baseObj = vm.serializeAddress(baseObj, "aerodrome_wrapper", address(aeroWrapper));
         baseObj = vm.serializeAddress(baseObj, "privacy_verifier", address(verifier));
         baseObj = vm.serializeAddress(baseObj, "privacy_pool", address(pool));
         baseObj = vm.serializeUint(baseObj, "chainId", BASE_CHAIN_ID);
