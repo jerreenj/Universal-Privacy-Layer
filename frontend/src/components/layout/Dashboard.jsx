@@ -21,14 +21,12 @@ import { Landing } from "@/components/layout/Landing";
 const StealthContent          = lazy(() => import("@/components/features/StealthContent").then(m => ({ default: m.StealthContent })));
 const SendContent               = lazy(() => import("@/components/features/SendContent").then(m => ({ default: m.SendContent })));
 const SwapContent               = lazy(() => import("@/components/features/SwapContent").then(m => ({ default: m.SwapContent })));
-// P4.2 NEW LAYOUT: Uniswap V3 is back as a 3rd-party swapper tile
-// in Private DeFi (alongside Hyperliquid + Polymarket). The 'swap'
-// tile in Core Actions stays internal / native (SwapSVM w/ multi-DEX
-// picker). So we now have:
-//   Core Actions / Private Swap  -> SwapSVM (native multi-DEX)
-//   Private DeFi  / Uniswap V3   -> UniswapPrivateSwap (3rd party)
-//   Private DeFi  / ...           ...
-const UniswapPrivateSwap      = lazy(() => import("@/components/features/UniswapPrivateSwap").then(m => ({ default: m.UniswapPrivateSwap })));
+// All-in-One Swap is a multi-DEX picker mounted on the 'allswap'
+// tile. UniswapPrivateSwap and AerodromePrivateSwap are still
+// kept around as fallback single-DEX components in case we want
+// to surface them later, but they are no longer routed from this
+// Dashboard.
+// const UniswapPrivateSwap      = lazy(() => import("@/components/features/UniswapPrivateSwap").then(m => ({ default: m.UniswapPrivateSwap })));
 const HyperliquidPrivateTrading = lazy(() => import("@/components/features/HyperliquidPrivateTrading").then(m => ({ default: m.HyperliquidPrivateTrading })));
 const PolymarketPrivateBetting  = lazy(() => import("@/components/features/PolymarketPrivateBetting").then(m => ({ default: m.PolymarketPrivateBetting })));
 const HiddenBalanceDashboard    = lazy(() => import("@/components/features/HiddenBalanceDashboard").then(m => ({ default: m.HiddenBalanceDashboard })));
@@ -62,7 +60,12 @@ const pages = {
   receive:     { title: "Private Receive",             Component: StealthContent,          key: "receive" },
   send:        { title: "Private Send",                Component: SendContent,             key: "send" },
   swap:        { title: "Private Swap",                Component: SwapContent,             key: "swap" },
-  uniswap:     { title: "Uniswap V3 Private Swap",     Component: UniswapPrivateSwap,      key: "uniswap" },
+  // 'All in One Swap' tile mounts the SwapSVM multi-DEX picker: live
+  // Uniswap V3 + Aerodrome V2 today; 1inch, CoW, OpenOcean, Matcha
+  // show 'coming soon' honest placeholders until their respective
+  // privacy wrappers land on Base. The picker is what the customer
+  // sees when they click this tile.
+  allswap:     { title: "All in One Swap",             Component: SwapSVM,                 key: "all-swap" },
   hyperliquid: { title: "Hyperliquid Private Trading", Component: HyperliquidPrivateTrading, key: "hyperliquid" },
   polymarket:  { title: "Polymarket Private Betting",  Component: PolymarketPrivateBetting,  key: "polymarket" },
   balance:     { title: "Hidden Balance",              Component: HiddenBalanceDashboard,  key: "balance" },
@@ -306,7 +309,7 @@ export function Dashboard() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
             {[
-              { id: "uniswap", icon: <RefreshCw className="w-6 h-6 mb-3 text-blue-400" />, title: "Uniswap V3", desc: "Private token swaps via V3", badge: "LIVE", badgeColor: "text-blue-400 border-blue-400/40" },
+              { id: "allswap", icon: <RefreshCw className="w-6 h-6 mb-3 text-blue-400" />, title: "All in One Swap", desc: "Uniswap V3, Aerodrome V2 + more", badge: "LIVE", badgeColor: "text-blue-400 border-blue-400/40" },
               { id: "hyperliquid", icon: <TrendingUp className="w-6 h-6 mb-3 text-green-400" />, title: "Hyperliquid", desc: "Anonymous perp trading", badge: "LIVE", badgeColor: "text-green-400 border-green-400/40" },
               { id: "polymarket", icon: <Globe className="w-6 h-6 mb-3 text-purple-400" />, title: "Polymarket", desc: "Private prediction bets", badge: "LIVE", badgeColor: "text-purple-400 border-purple-400/40" },
             ].map(({ id, icon, title, desc, badge, badgeColor }) => (
