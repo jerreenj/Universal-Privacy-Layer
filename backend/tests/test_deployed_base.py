@@ -25,14 +25,20 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MANIFEST = REPO_ROOT / "contracts" / "deployed_base.json"
 
-# The known-good addresses from commit 96e9fb5 (P3.4 broadcast).
+# The canonical addresses for the current Base mainnet deployment.
+# P4.1 redeploy (commits 0f5a1e2 + 15e76a4 + 51e3aec): every contract's
+# address is fresh, multi-denom semantics replace single-denom. pre-P4.1
+# addresses (those listed in commit 96e9fb5) are still on-chain but have
+# been superseded; the backend is intentionally pointed ONLY at the new
+# pool for any active route.
 EXPECTED_BASE = {
-    "privacy_pool": "0x3A7DA29bfd9853A0449c8c51F7007B7f5126C455",
-    "privacy_verifier": "0xcb2b6D1082e97557EF2d6aE5268f8e8d38DF72e3",
-    "privacy_relayer": "0x0236451962b249c9a4D742b1ae99bD1F51692b7b",
-    "stealth_registry": "0x48363A533b23fa223C0f37DD99c556D9aAa62496",
-    "uniswap_wrapper": "0x9dB802599412729429765D73C7daca62Aac252F5",
-    "deployer": "0x3f44A6451439673D95082A1337045a25ec275394",
+    "privacy_pool":     "0x3F0b23Aca0624981a503e8f042db2F3884D0C89C",  # P4.1 multi-denom
+    "privacy_verifier": "0x838b7c20b1a97cAA6379542d03983b4571275679",  # P4.1
+    "privacy_relayer":  "0x69DA62568CAbc0940a0Bb6Bc7017e3EB8BD7c175",  # P4.1
+    "stealth_registry": "0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1",  # P4.1
+    "uniswap_wrapper":  "0x9C30cdCd73347BF18A5bD424C37E5714e2606362",  # P4.1
+    "aerodrome_wrapper": "0x009681CdF5441D23738EC6597e586eBB06215e3D", # P4.2 (added later)
+    "deployer":         "0x3f44A6451439673D95082A1337045a25ec275394",  # unchanged
 }
 EXPECTED_CHAIN_ID = 8453
 

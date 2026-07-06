@@ -1978,14 +1978,36 @@ PRIVACY_POOL_ABI = [
     {"inputs":[],"name":"currentRoot","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
     {"inputs":[{"name":"root","type":"uint256"}],"name":"isKnownRoot","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
     {"inputs":[{"name":"nullifierHash","type":"uint256"}],"name":"isSpent","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+    # === P4.1 multi-denom extension — appended ===
+    {"inputs":[{"name":"denomination","type":"uint256"}],"name":"addDenomination","outputs":[],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[],"name":"getDenominationList","outputs":[{"name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"denomination","type":"uint256"}],"name":"isDenominationEnabled","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"denomination","type":"uint256"}],"name":"currentRootOf","outputs":[{"name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"denomination","type":"uint256"}],"name":"depositCount","outputs":[{"name":"","type":"uint32"}],"stateMutability":"view","type":"function"},
 ]
 
+
+# (route declarations follow)
 @api_router.get("/zk-pool/state")
-async def zk_pool_state():
+async def zk_pool_state(denomination: Optional[str] = None):
     """
     Public state of the PrivacyPool on Base.
-    Returns denomination, current root (rebuilt from DB deposits if on-chain
-    root is not yet available), next leaf index, etc.
+    P4.1: this is now MULTI-DENOMINATION — the pool exposes
+    `addDenomination(d)`-managed fixed-denomination sub-pools, each with
+    its own Poseidon Merkle tree + root history. Returns:
+
+      - 'denominations' list of all registered denomination(wei) on this
+        chain.
+      - For each denomination:
+          'currentRoot', 'onchainRoot', 'nextLeafIndex', 'storedDeposits'.
+
+    Query param:
+      - denomination (optional integer in wei; defaults to the first
+        registered denomination if omitted).
+
+    The 'effective root' is rebuilt from DB-stored deposits if the
+    on-chain root isn't yet available, OR if there were no on-chain
+    deposits yet (the empty-tree root = zeros[20]).
     """
     try:
         deployed = UPL_CONTRACTS
@@ -2002,39 +2024,89 @@ async def zk_pool_state():
         w3 = get_w3("base")
         pool = w3.eth.contract(address=pool_addr, abi=PRIVACY_POOL_ABI)
 
-        denomination = pool.functions.denomination().call()
-        onchain_root = pool.functions.currentRoot().call()
-        next_leaf = pool.functions.nextLeafIndex().call()
+        # P4.1: read the contract's registered denomination list, then if a
+        # specific denomination is requested scope the responses to it,
+        # otherwise include every denom with its own root + count.
+        try:
+            denom_list = pool.functions.getDenominationList().call()
+        except Exception as e:
+            # Defensive: pre-P4.1 single-denom ABI on a still-deployed
+            # single-denom pool. Surface the legacy field.
+            return _legacy_single_denom_state(pool, deployed)
 
-        # Rebuild root from stored deposits (P3.5-B).
-        # Use the lazy import helper — IncrementalMerkleTree is intentionally
-        # NOT in module scope so module-load can't fail on a circomlib parse
-        # error (see #audit-P3 hardening). If the import fails, stored_count
-        # stays 0 and we fall back to the on-chain root.
-        cursor = db.pool_deposits.find({}, {"commitment": 1}).sort("created_at", 1)
-        stored_count = 0
-        effective_root = onchain_root
+        # If a specific denomination was requested but isn't registered, 404.
+        if denomination is not None:
+            d_req = int(denomination)
+            d_req_status = pool.functions.isDenominationEnabled(d_req).call()
+            if not d_req_status:
+                return JSONResponse(
+                    status_code=404,
+                    content={
+                        "ready": False,
+                        "error": f"Denomination {d_req} not enabled on this pool",
+                        "denominations": [str(d) for d in denom_list],
+                    },
+                )
+            scope = [d_req]
+            default_d = d_req
+        else:
+            # Default to the first registered denom + report them all.
+            scope = list(denom_list)
+            default_d = denom_list[0] if denom_list else None
+
+        # Lazy import the offline-compatible tree class.
         (
             IncrementalMerkleTree, *_rest,
         ) = _try_import_zk_merkle()
-        if IncrementalMerkleTree is not None:
-            tree = IncrementalMerkleTree()
-            try:
-                async for doc in cursor:
-                    try:
-                        leaf = int(doc["commitment"], 16)
-                        tree.insert(leaf)
-                        stored_count += 1
-                    except Exception:
-                        continue
-                if stored_count > 0:
-                    effective_root = tree.root
-            except Exception as e:
-                logger.warning(
-                    f"zk-pool/state: tree rebuild failed, falling back to onchain root: {e}"
-                )
-                stored_count = 0
-                effective_root = onchain_root
+
+        per_denom = {}
+        for d in scope:
+            onchain_root = pool.functions.currentRootOf(d).call()
+            next_leaf = pool.functions.depositCount(d).call()
+
+            stored_count = 0
+            effective_root = onchain_root
+            if IncrementalMerkleTree is not None:
+                tree = IncrementalMerkleTree()
+                try:
+                    # The DB filter on `denomination_wei` keeps each tree
+                    # scoped to its denom. Legacy rows pre-P4.1 are tagged
+                    # with the implicit 0.1 ETH on read.
+                    LEGACY = 10**17  # 0.1 ETH
+                    tag = d
+                    cursor = db.pool_deposits.find(
+                        {"$or": [
+                            {"denomination_wei": str(d)},
+                            # Back-compat: rows deposited before the
+                            # denomination field was added are matched
+                            # against 0.1 ETH (the pre-P4.1 default).
+                            {"denomination_wei": {"$exists": False}, "denomination": LEGACY},
+                            {"denomination": int(d)},
+                        ]},
+                        {"commitment": 1}
+                    ).sort("created_at", 1)
+                    async for doc in cursor:
+                        try:
+                            leaf = int(doc["commitment"], 16)
+                            tree.insert(leaf)
+                            stored_count += 1
+                        except Exception:
+                            continue
+                    if stored_count > 0:
+                        effective_root = tree.root
+                except Exception as e:
+                    logger.warning(
+                        f"zk-pool/state: tree rebuild for denom {d} failed, falling back to onchain root: {e}"
+                    )
+                    stored_count = 0
+                    effective_root = onchain_root
+
+            per_denom[str(d)] = {
+                "currentRoot":    str(effective_root),
+                "onchainRoot":    str(onchain_root),
+                "nextLeafIndex":  next_leaf,
+                "storedDeposits": stored_count,
+            }
 
         return {
             "live": True,
@@ -2042,29 +2114,55 @@ async def zk_pool_state():
             "chainId": 8453,
             "privacy_pool": pool_addr,
             "verifier": verifier_addr,
-            "denomination": str(denomination),
-            "currentRoot": str(effective_root),
-            "onchainRoot": str(onchain_root),
-            "nextLeafIndex": next_leaf,
-            "storedDeposits": stored_count,
-            "rootHistorySize": 100,
+            "kind": "multi-denom",
+            "denominations": [str(d) for d in denom_list],
+            "defaultDenomination": str(default_d) if default_d is not None else None,
             "merkleDepth": 20,
+            "rootHistorySize": 100,
+            "perDenomination": per_denom,
         }
     except Exception as e:
-        logger.warning(f"zk-pool/state not yet reachable (P3.4 pending broadcast): {e}")
+        logger.warning(f"zk-pool/state not yet reachable: {e}")
         return {
             "live": False,
             "chain": "base",
             "ready": True,
-            "message": "PrivacyPool not yet deployed on Base (P3.4 pending broadcast)",
+            "message": "PrivacyPool not yet deployed on Base",
             "error": str(e),
         }
+
+
+def _legacy_single_denom_state(pool, deployed):
+    """Defensive: pre-P4.1 single-denom pool ABI. Returns the legacy shape so
+    legacy tooling still works until the next deploy script picks them up."""
+    try:
+        denomination = pool.functions.denomination().call()
+        onchain_root = pool.functions.currentRoot().call()
+        next_leaf = pool.functions.nextLeafIndex().call()
+        return {
+            "live": True,
+            "chain": "base",
+            "chainId": 8453,
+            "privacy_pool": deployed.get("base", {}).get("privacy_pool"),
+            "verifier": deployed.get("base", {}).get("privacy_verifier"),
+            "kind": "single-denom-legacy",
+            "denomination": str(denomination),
+            "currentRoot": str(onchain_root),
+            "onchainRoot": str(onchain_root),
+            "nextLeafIndex": next_leaf,
+        }
+    except Exception as e:
+        raise RuntimeError(f"legacy single-denom state failed: {e}")
 
 
 class ZKPoolDepositRequest(BaseModel):
     commitment: str          # hex string of the Poseidon(nullifier, secret)
     tx_hash: Optional[str] = None
     leaf_index: Optional[int] = None
+    # P4.1: the denomination this deposit belongs to (wei). Optional —
+    # defaults to 0.1 ETH (the pre-P4.1 single-denom seed) so legacy
+    # clients still write the same row shape.
+    denomination_wei: Optional[int] = None
 
 
 @api_router.post("/zk-pool/deposit")
@@ -2072,17 +2170,25 @@ async def zk_pool_deposit(req: ZKPoolDepositRequest):
     """
     Record a deposit into the PrivacyPool.
     The frontend (or relayer) calls this after a successful on-chain deposit tx.
-    The backend stores the commitment so it can later serve Merkle paths.
+    The backend stores the commitment + its denomination so it can later
+    serve Merkle paths scoped per tree.
     """
     try:
+        LEGACY_DENOM = 10**17  # 0.1 ETH (P3.4 default)
+        d = req.denomination_wei if req.denomination_wei is not None and req.denomination_wei > 0 else LEGACY_DENOM
         doc = {
             "commitment": req.commitment,
             "leaf_index": req.leaf_index,
             "tx_hash": req.tx_hash,
+            "denomination_wei": str(d),
             "created_at": datetime.now(timezone.utc),
         }
         await db.pool_deposits.insert_one(doc)
-        return {"status": "recorded", "commitment": req.commitment}
+        return {
+            "status": "recorded",
+            "commitment": req.commitment,
+            "denomination_wei": str(d),
+        }
     except Exception as e:
         logger.error(f"zk-pool/deposit error: {e}")
         raise HTTPException(status_code=500, detail="Failed to record deposit")
@@ -2109,6 +2215,16 @@ class ZKPoolWithdrawRequest(BaseModel):
 
 
 async def _serve_zk_pool_path(req: ZKPoolDepositRequest):
+    """
+    P4.1: scoped per-denomination. The on-chain Merkle tree that produced the
+    witness for this `commitment` depends on which `denomination_wei` the
+    depositor chose at deposit time. The Merkle path MUST be rebuilt from
+    same-denom siblings, otherwise the path is invalid for the on-chain
+    Poseidon root.
+
+    Defaults to the legacy 0.1 ETH denom if no `denomination_wei` is
+    supplied.
+    """
     try:
         (
             _IMT, _p2, _p1, _cc, _nh,
@@ -2121,13 +2237,25 @@ async def _serve_zk_pool_path(req: ZKPoolDepositRequest):
 
         commit_hex = req.commitment
         commit_int = int(commit_hex, 16) if commit_hex.startswith("0x") else int(commit_hex)
+        LEGACY = 10**17
+        d = req.denomination_wei if req.denomination_wei is not None and req.denomination_wei > 0 else LEGACY
 
         temp_tree = _IMT()
         found = False
         leaf_index = -1
         elements = []
         indices = []
-        async for doc in db.pool_deposits.find({}, {"commitment": 1}).sort("created_at", 1):
+        # Scope cursor to same-denom commitments only — siblings from a
+        # different denomination's tree would compute wrong path indices.
+        cursor = db.pool_deposits.find(
+            {"$or": [
+                {"denomination_wei": str(d)},
+                # Back-compat: missing denom field treated as legacy 0.1 ETH.
+                {"denomination_wei": {"$exists": False}},
+            ]},
+            {"commitment": 1}
+        ).sort("created_at", 1)
+        async for doc in cursor:
             try:
                 leaf = int(doc["commitment"], 16)
                 if leaf == commit_int:
@@ -2141,7 +2269,11 @@ async def _serve_zk_pool_path(req: ZKPoolDepositRequest):
         if not found:
             return JSONResponse(
                 status_code=404,
-                content={"ready": False, "error": "Commitment not found"},
+                content={
+                    "ready": False,
+                    "error": "Commitment not found for the requested denomination",
+                    "denomination_wei": str(d),
+                },
             )
 
         return {
@@ -2152,6 +2284,7 @@ async def _serve_zk_pool_path(req: ZKPoolDepositRequest):
             "merklePathElements": [str(x) for x in elements],
             "merklePathIndices": [str(x) for x in indices],
             "merkleDepth": 20,
+            "denomination_wei": str(d),
         }
     except Exception as e:
         logger.warning(f"zk-pool/path error: {e}")
