@@ -60,11 +60,12 @@ const SwapSVM                    = lazy(() => import("@/components/features/Swap
 const pages = {
   receive:     { title: "Private Receive",             Component: StealthContent,             key: "receive" },
   send:        { title: "Private Send",                Component: SendContent,                key: "send" },
-  // 'Private Swap' tile in Core Actions mounts the **native single-DEX**
-  // swap UI (SwapContent). ETH in, USDC/USDT out, paid to a stealth
-  // recipient through AerodromePrivacyWrapper directly — no picker.
-  // Visually + behaviourally distinct from the PrivateDeFi 'All in One
-  // Swap' tile (which mounts the multi-DEX picker below).
+  // 'Private Swap' tile in Core Actions mounts the **native in-house**
+  // swap UI (SwapContent). ETH in, USDC out, paid to a stealth
+  // recipient through NativePrivateSwap vault — owned by us, no
+  // third-party router, no picker. Visually + behaviourally distinct
+  // from the PrivateDeFi 'All in One Swap' tile (the third-party
+  // picker that routes through the Aerodrome / Uniswap wrappers).
   swap:        { title: "Private Swap",                Component: SwapContent,                key: "swap" },
   // 'All in One Swap' tile (PrivateDeFi section) is the third-party
   // multi-DEX picker. Customer opens the picker, picks Uniswap V3 or

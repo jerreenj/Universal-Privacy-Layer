@@ -2,26 +2,33 @@
  * SwapContent — the **native** private swap on Base.
  *
  * Mounted on the Core Actions grid via the 'Private Swap' tile. This is the
- * single-DEX, no-picker baseline: ETH in, a Base-mainstream ERC20 out (USDC
- * or USDT), paid to a stealth recipient via Aerodrome V2's
- * `AerodromePrivacyWrapper.privateSwapETHForToken` (the post-P4.2-hotfix
- * wrapper at 0xe896e6f51af137c32db7eb4e3b2de795d392a646).
+ * in-house baseline: ETH in, USDC out, paid straight to a stealth recipient
+ * via NativePrivateSwap.swapETHForUSDC (the in-house vault at
+ * 0x58..d09, deployed via contracts/script/DeployNative.s.sol and surfaced
+ * by backend /api/deployments as `native_swap_wrapper`).
  *
- * Kept deliberately different from SwapSVM (multi-DEX picker) which mounts
- * on the PrivateDeFi 'All in One Swap' tile. Same backing contract family
- * (AerodromePrivacyWrapper) but a much simpler surface — the customer who
- * just wants "private ETH -> USDC on Base" lands here, the customer who
- * wants to pick a DEX lands in SwapSVM.
+ * Kept deliberately different from AerodromePrivateSwap (the third-party
+ * picker) which mounts on the PrivateDeFi 'All in One Swap' tile. The Core
+ * 'Private Swap' tile is **owned by us** — no Aerodrome, no third-party
+ * router; USDC reserves sit in the vault and the vault pays the stealth
+ * recipient directly. The third-party Tile keeps the Aerodrome wrapper for
+ * customers who explicitly want to route through Aerodrome.
  *
- * Quote path is read-only: a direct call to Aerodrome Router's
- * `getAmountsOut(amountIn, routes)` so the customer sees the exact output
- * the Router will credit (no extra backend round-trip).
+ * Quote path uses two read-only calls:
+ *   - vault.usdcPerEth()  — the per-ETH 6-decimal rate
+ *   - vault.quote(ethIn) — exact-USDC-out from the vault's own formula
+ *     (matches what the contract computes inside _executeSwap), so the
+ *     preview is byte-for-byte the amount the tx will deliver (no race
+ *     against a public-router pricing curve).
  *
- * Switch path is one wallet tx: it hands ETH straight to the wrapper, which
- * sends the 5 bps protocol fee to the deployer (`feeRecipient`) and the
- * remainder to Aerodrome Router. The Router wraps/unwraps WETH internally
- * for ETH -> ERC20 and credits the ERC20 straight to the stealth recipient.
- * The customer's EOA never appears as the swap sender on-chain.
+ * Switch path is one wallet tx: it hands ETH straight to the vault, the
+ * vault deducts 5 bps protocol fee, sends the fee on-chain to feeRecipient,
+ * and credits the equivalent USDC straight to the stealth recipient. No
+ * third-party swap logs, no WETH leg, no router. The customer's EOA
+ * appears exactly once on-chain as the msg.sender of swapETHForUSDC;
+ * the stealth EOA is the `recipient` parameter. Recipients are linked
+ * only by the wallet-derived sealed record on /api/transactions/record,
+ * never by an on-chain hop.
  *
  * After settlement we record the tx to /api/transactions/record so it shows
  * up in the customer's Transaction History tile — and only there. No
@@ -36,50 +43,34 @@ import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { seal } from "@/lib/crypto-seal";
 
-// AerodromePrivacyWrapper ABI — only the calls the customer surface makes
-// (quote + swap + read stable/volatile factory so the Route struct can be
-// built fully populated; mirrors the same 4-field Route shape that the
-// P4.2 hotfix landed).
-const AERODROME_WRAPPER_ABI = [
-  "function privateSwapETHForToken(address tokenOut, tuple(address from, address to, bool stable, address factory)[] routes, uint256 amountOutMinimum, address recipient, uint256 deadline) payable returns (uint256 amountOut)",
-  "function feeRate() view returns (uint256)",
-  "function WETH() view returns (address)",
-  "function aerodromeRouter() view returns (address)",
-  "function volatileFactory() view returns (address)",
-  "function stableFactory() view returns (address)",
-  "function factoryFor(bool stable) view returns (address)",
+// NativePrivateSwap ABI — only the calls the customer surface makes.
+const NATIVE_SWAP_ABI = [
+  "function swapETHForUSDC(address recipient, uint256 minUsdcOut) payable returns (uint256)",
+  "function quote(uint256 ethIn) view returns (uint256)",
+  "function usdcPerEth() view returns (uint256)",
+  "function reserveBalance() view returns (uint256)",
+  "function USDC() view returns (address)",
+  "function feeBps() view returns (uint256)",
+  "function feeRecipient() view returns (address)",
+  "function owner() view returns (address)",
 ];
 
-// Aerodrome Router — we only call `getAmountsOut` (preview, no gas).
-const AERODROME_ROUTER_ABI = [
-  "function getAmountsOut(uint256 amountIn, tuple(address from, address to, bool stable, address factory)[] routes) view returns (uint256[] memory)",
-];
+// USDC on Base mainnet — the only output token our NativePrivateSwap vault
+// holds reserves for. Address is kept as a constant so the customer UI is
+// self-explanatory ("ETH -> USDC"). Any future WETH/USDT/wBTC extension
+// would add a parallel vault, not a token picker here.
+const USDC = {
+  symbol: "USDC",
+  address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  decimals: 6,
+};
 
-// Base mainstream tokens Aerodrome V2 has live pools for. USDC = volatile
-// pool paired against WETH; USDT = stable pool (stableusd-stableusd). Keep
-// the list short — native swap is meant to be "ETH -> a stable" in one
-// click; anything more exotic lives in SwapSVM's picker.
-const NATIVE_OUTPUT_TOKENS = [
-  { symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6, stable: false },
-  { symbol: "USDT", address: "0xfde4C96cAd36929608d35fFBd6A11dD60b3EA633", decimals: 6, stable: true  },
-];
-const WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
-
-// Hard-coded fallback for the wrapper address — confirms the post-P4.2
-// hotfix v2 wrapper if /api/deployments hasn't been reloaded since the
-// hotfix broadcast. Constant-only — a stale value surfaces immediately
-// as a 'not connected' error to the user rather than silently swapping
-// against a stale wrapper.
-const FALLBACK_WRAPPER = "0xe896e6f51af137c32db7eb4e3b2de795d392a646";
-
-// Hard-coded fallback for the Aerodrome PoolFactory on Base — handles
-// both stable and volatile pools (PoolFactory stores them in a bool-keyed
-// mapping per upstream contracts/factories/PoolFactory.sol).
-const FALLBACK_AERODROME_FACTORY = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da";
+// Hard-coded fallback for the vault — confirms the broadcast address
+// from contracts/deployed_base.json if /api/deployments hasn't reloaded.
+const FALLBACK_VAULT = "0x582c57a7ba6e7758e75dc5334a5e8ff096515d09";
 
 export function SwapContent() {
   const { address, chain, signer, fetchBalance } = useWallet();
-  const [outputSymbol, setOutputSymbol] = useState("USDC");
   const [amount, setAmount] = useState("");
   const [slippageBps, setSlippageBps] = useState(50); // 0.5 %
   const [stealthRecipient, setStealthRecipient] = useState("");
@@ -87,29 +78,58 @@ export function SwapContent() {
   const [loading, setLoading] = useState(false);
   const [swapping, setSwapping] = useState(false);
   const [txHash, setTxHash] = useState(null);
-  const [wrapperAddr, setWrapperAddr] = useState(FALLBACK_WRAPPER);
-  const [wrapperMeta, setWrapperMeta] = useState({ network: "base", fallback: false });
+  const [vaultAddr, setVaultAddr] = useState(FALLBACK_VAULT);
+  const [vaultMeta, setVaultMeta] = useState({ network: "base", fallback: false });
+  const [reserve, setReserve] = useState(null);
+  const [usdcPerEth, setUsdcPerEth] = useState(null);
 
-  // Resolve the live wrapper address from /api/deployments (P4.2 hotfix v2).
+  // Resolve the live vault address from /api/deployments. NativePrivateSwap
+  // is surfaced under `native_swap_wrapper` (own contract — not the
+  // `aerodrome_wrapper` slot that the 3rd-party picker reads).
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const r = await axios.get(`${API}/deployments`);
         const base = (r.data && r.data.evm && r.data.evm.base) || {};
-        if (!cancelled && base.aerodrome_wrapper) {
-          setWrapperAddr(base.aerodrome_wrapper);
-          setWrapperMeta({ network: "base", fallback: false });
+        if (!cancelled && base.native_swap_wrapper) {
+          setVaultAddr(base.native_swap_wrapper);
+          setVaultMeta({ network: "base", fallback: false });
           return;
         }
       } catch { /* fall through */ }
       if (!cancelled) {
-        setWrapperAddr(FALLBACK_WRAPPER);
-        setWrapperMeta({ network: "base", fallback: true });
+        setVaultAddr(FALLBACK_VAULT);
+        setVaultMeta({ network: "base", fallback: true });
       }
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // Pull live reserve + rate so the customer sees current liquidity
+  // alongside the swap form. Cached once per mount — no need to
+  // re-poll; the rates are owner-set and update only on broadcast.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const provider = signer?.provider || (typeof window !== "undefined" && window.ethereum
+          ? new ethers.BrowserProvider(window.ethereum) : null);
+        if (!provider) return;
+        const net = await provider.getNetwork();
+        if (Number(net.chainId) !== 8453) return;
+        const vault = new ethers.Contract(vaultAddr, NATIVE_SWAP_ABI, provider);
+        const [bal, rate] = await Promise.all([
+          vault.reserveBalance(),
+          vault.usdcPerEth(),
+        ]);
+        if (cancelled) return;
+        setReserve(ethers.formatUnits(bal, USDC.decimals));
+        setUsdcPerEth(ethers.formatUnits(rate, USDC.decimals));
+      } catch { /* silent — fallback UI shows rate within quote step */ }
+    })();
+    return () => { cancelled = true; };
+  }, [vaultAddr, signer]);
 
   const autoGenStealth = async () => {
     if (!address) return toast.error("Connect wallet first");
@@ -120,12 +140,12 @@ export function SwapContent() {
       });
       setStealthRecipient(r.data.stealth_address);
       toast.success("Stealth address generated");
-      // K4 follow-up: also seal + store the (EOA <-> stealth_address)
-      // mapping server-side so the row the backend stores about the
-      // mapping is unreadable ciphertext, not plaintext. Fire-and-
-      // forget — a backend hiccup must not block the customer's swap.
+      // K4 follow-up: seal + store the (EOA <-> stealth_address) mapping
+      // server-side so the row the backend stores is unreadable cipher-
+      // text, not plaintext. Fire-and-forget — a backend hiccup must
+      // not block the customer's swap.
       seal({
-        stealth_address:     r.data.stealth_address,
+        stealth_address:      r.data.stealth_address,
         ephemeral_public_key: r.data.ephemeral_public_key,
         view_tag:             r.data.view_tag,
         chain:                "base",
@@ -155,49 +175,44 @@ export function SwapContent() {
         setLoading(false);
         return;
       }
-      const out = NATIVE_OUTPUT_TOKENS.find(t => t.symbol === outputSymbol);
-      if (!out) throw new Error(`Unknown output token ${outputSymbol}`);
       const amountInWei = ethers.parseEther(amount);
 
-      // Pull volatileFactory / stableFactory from the wrapper so the
-      // 4-field Route struct matches what Aerodrome Router's decoder
-      // expects. Fallback to the canonical Aerodrome PairFactory on Base
-      // if the wrapper is the not-yet-restarted v1 (selector-less).
-      let factory = FALLBACK_AERODROME_FACTORY;
-      try {
-        const w = new ethers.Contract(wrapperAddr, AERODROME_WRAPPER_ABI, provider);
-        factory = await w.factoryFor(!!out.stable);
-      } catch (e) {
-        // Stale FALLBACK_WRAPPER (pre-hotfix) or RPC hiccup — use the
-        // canonical Aerodrome PairFactory so quote preview still works.
+      // Read straight from the vault: quote(ethIn) is what the contract
+      // will pay the recipient post-fee. We then apply slippage to the
+      // result so the customer's "Get Quote" preview is the exact
+      // number they'll see in the wallet prompt for `minUsdcOut`.
+      const vault = new ethers.Contract(vaultAddr, NATIVE_SWAP_ABI, provider);
+      const [expectedOut, feeBps, rate, bal] = await Promise.all([
+        vault.quote(amountInWei),
+        vault.feeBps(),
+        vault.usdcPerEth(),
+        vault.reserveBalance(),
+      ]);
+
+      if (bal < expectedOut) {
+        toast.error("Vault reserves too low for this amount");
+        setLoading(false);
+        return;
       }
 
-      const routes = [{
-        from:    WETH_ADDRESS,
-        to:      out.address,
-        stable:  !!out.stable,
-        factory: factory,
-      }];
-
-      const router = new ethers.Contract(
-        "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43",
-        AERODROME_ROUTER_ABI,
-        provider
-      );
-      const amounts = await router.getAmountsOut(amountInWei, routes);
-      const expectedOut = amounts[amounts.length - 1];
-      const fee = (amountInWei * 5n) / 10000n;
-      const netIn = amountInWei - fee;
       const minOut = (expectedOut * BigInt(10000 - Math.floor(slippageBps))) / 10000n;
+      const fee = (amountInWei * BigInt(feeBps)) / 10000n;
+
+      if (rate && reserve !== ethers.formatUnits(bal, USDC.decimals)) {
+        // re-render headline numbers
+        setReserve(ethers.formatUnits(bal, USDC.decimals));
+        setUsdcPerEth(ethers.formatUnits(rate, USDC.decimals));
+      }
 
       setQuote({
-        amountIn: netIn.toString(),
+        amountIn: (amountInWei - fee).toString(),
         amountInWithFee: amountInWei.toString(),
         fee: fee.toString(),
+        feeBps: Number(feeBps),
         expectedOut: expectedOut.toString(),
         amountOutMinimum: minOut.toString(),
-        routes,
-        outputToken: out,
+        outputToken: USDC,
+        rate: ethers.formatUnits(rate, USDC.decimals),
       });
     } catch (e) {
       toast.error(e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Quote failed");
@@ -219,13 +234,10 @@ export function SwapContent() {
       const activeSigner = signer || await provider.getSigner();
       if (!activeSigner) { toast.error("No signer"); setSwapping(false); return; }
 
-      const wrapper = new ethers.Contract(wrapperAddr, AERODROME_WRAPPER_ABI, activeSigner);
-      const tx = await wrapper.privateSwapETHForToken(
-        quote.outputToken.address,
-        quote.routes,
-        quote.amountOutMinimum,
+      const vault = new ethers.Contract(vaultAddr, NATIVE_SWAP_ABI, activeSigner);
+      const tx = await vault.swapETHForUSDC(
         stealthRecipient,
-        Math.floor(Date.now() / 1000) + 600, // 10 min
+        quote.amountOutMinimum,
         { value: quote.amountInWithFee }
       );
       setTxHash(tx.hash);
@@ -233,7 +245,7 @@ export function SwapContent() {
       // Stealth-use counter (used in the backend for stats).
       axios.post(`${API}/stealth/use/${address}`, { feature: "swap" }).catch(() => {});
       await tx.wait();
-      toast.success(`Confirmed — ${ethers.formatUnits(quote.expectedOut, quote.outputToken.decimals).slice(0, 8)} ${outputSymbol} to stealth`);
+      toast.success(`Confirmed — ${ethers.formatUnits(quote.expectedOut, quote.outputToken.decimals).slice(0, 8)} ${USDC.symbol} to stealth`);
       // Record the swap so it shows up in the Transaction History tile
       // (the /transactions/history/{address} endpoint is consumed ONLY
       // by TransactionHistory.jsx, so this never surfaces anywhere else).
@@ -268,12 +280,12 @@ export function SwapContent() {
   return (
     <div className="space-y-4" data-testid="swap-content">
       <div className="flex items-center gap-2 text-xs text-blue-300 bg-blue-500/10 border border-blue-500/30 p-2">
-        <Lock className="w-3 h-3" /> Native private swap on Base via Aerodrome V2 — ETH in, output to a stealth recipient.
+        <Lock className="w-3 h-3" /> Native private swap on Base via our in-house vault — ETH in, USDC to a stealth recipient. No third-party router.
       </div>
 
-      {wrapperMeta?.fallback && (
+      {vaultMeta?.fallback && (
         <div className="text-xs text-yellow-300 bg-yellow-500/10 border border-yellow-500/30 p-2">
-          Using hard-coded wrapper fallback (waiting for /api/deployments to refresh after P4.2 hotfix).
+          Using hard-coded vault fallback (waiting for /api/deployments to refresh).
         </div>
       )}
 
@@ -288,24 +300,22 @@ export function SwapContent() {
             placeholder="0.0"
             className="w-full bg-transparent text-2xl font-mono outline-none"
           />
-          <div className="text-[10px] text-white/30 mt-1">via Aerodrome Router ETH→WETH→output</div>
+          <div className="text-[10px] text-white/30 mt-1">
+            {usdcPerEth ? `vault rate: 1 ETH ≈ ${Number(usdcPerEth).toFixed(2)} USDC` : "via NativePrivateSwap vault"}
+          </div>
         </div>
         <div className="bg-white/5 border border-white/20 p-4">
           <label className="block text-xs text-gray-500 uppercase mb-2">You Get</label>
-          <select
+          <div
             data-testid="swap-output-token"
-            value={outputSymbol}
-            onChange={e => { setOutputSymbol(e.target.value); setQuote(null); }}
-            className="w-full bg-transparent text-base font-semibold outline-none"
+            className="w-full bg-transparent text-base font-semibold outline-none py-1"
           >
-            {NATIVE_OUTPUT_TOKENS.map(t => (
-              <option key={t.symbol} value={t.symbol} className="bg-black">{t.symbol}</option>
-            ))}
-          </select>
+            {USDC.symbol}
+          </div>
           <div className="text-[10px] text-white/30 mt-1">
             {quote
-              ? `~${ethers.formatUnits(quote.expectedOut, NATIVE_OUTPUT_TOKENS.find(t => t.symbol === outputSymbol)?.decimals ?? 6).slice(0, 8)} ${outputSymbol}`
-              : "—"}
+              ? `~${ethers.formatUnits(quote.expectedOut, USDC.decimals).slice(0, 8)} ${USDC.symbol}`
+              : `vault reserve${reserve ? `: ${Number(reserve).toFixed(2)} ${USDC.symbol}` : ""}`}
           </div>
         </div>
       </div>
@@ -346,24 +356,28 @@ export function SwapContent() {
       {quote && (
         <div className="bg-white/5 border border-white/10 p-3 text-xs space-y-1">
           <div className="flex justify-between">
-            <span className="text-white/40">Input (after 5 bps fee)</span>
+            <span className="text-white/40">Input (after {quote.feeBps} bps fee)</span>
             <span className="font-mono">{ethers.formatEther(quote.amountIn).slice(0, 10)} ETH</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-white/40">Vault rate</span>
+            <span className="font-mono">{Number(quote.rate).toFixed(2)} USDC / ETH</span>
           </div>
           <div className="flex justify-between">
             <span className="text-white/40">Expected out</span>
             <span className="font-mono">
-              {ethers.formatUnits(quote.expectedOut, quote.outputToken.decimals).slice(0, 10)} {outputSymbol}
+              {ethers.formatUnits(quote.expectedOut, quote.outputToken.decimals).slice(0, 10)} {USDC.symbol}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-white/40">Min out (after slippage)</span>
             <span className="font-mono text-green-400">
-              {ethers.formatUnits(quote.amountOutMinimum, quote.outputToken.decimals).slice(0, 10)} {outputSymbol}
+              {ethers.formatUnits(quote.amountOutMinimum, quote.outputToken.decimals).slice(0, 10)} {USDC.symbol}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-white/40">Route</span>
-            <span className="font-mono text-[10px]">Aerodrome V2 ({quote.outputToken.stable ? "stable" : "volatile"} pool)</span>
+            <span className="font-mono text-[10px]">NativePrivateSwap vault (in-house)</span>
           </div>
         </div>
       )}
