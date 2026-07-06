@@ -78,6 +78,24 @@ jobs:
             --name ${{ vars.ACA_APP_NAME }} \
             --image ${{ vars.ACR_NAME }}.azurecr.io/privacycloak:${{ env.IMAGE_TAG }}
 
+      - name: Sync RELAYER_PRIVATE_KEY secret
+        env:
+          ACA_RG: ${{ vars.ACA_RESOURCE_GROUP }}
+          ACA_APP: ${{ vars.ACA_APP_NAME }}
+          RELAYER_HOT_KEY: ${{ secrets.RELAYER_PRIVATE_KEY }}
+        run: |
+          set -e
+          RG="$ACA_RG"
+          APP="$ACA_APP"
+          KEY="$RELAYER_HOT_KEY"
+          if [ -z "$KEY" ]; then
+            echo "no RELAYER_PRIVATE_KEY secret; skipping"
+            exit 0
+          fi
+          az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "relayer-private-key=$KEY"
+          az containerapp update --resource-group "$RG" --name "$APP" --set-env-vars "RELAYER_PRIVATE_KEY=secretref:relayer-private-key"
+          echo "RELAYER_PRIVATE_KEY flipped"
+
       # ─── 7. Smoke-test the health endpoint ─────────────────────────────────
       - name: Health check
         run: |
