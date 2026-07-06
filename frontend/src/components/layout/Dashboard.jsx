@@ -20,13 +20,14 @@ import { Landing } from "@/components/layout/Landing";
  */
 const StealthContent          = lazy(() => import("@/components/features/StealthContent").then(m => ({ default: m.StealthContent })));
 const SendContent               = lazy(() => import("@/components/features/SendContent").then(m => ({ default: m.SendContent })));
-const SwapContent               = lazy(() => import("@/components/features/SwapContent").then(m => ({ default: m.SwapContent })));
-// All-in-One Swap is a multi-DEX picker mounted on the 'allswap'
-// tile. UniswapPrivateSwap and AerodromePrivateSwap are still
-// kept around as fallback single-DEX components in case we want
-// to surface them later, but they are no longer routed from this
-// Dashboard.
-// const UniswapPrivateSwap      = lazy(() => import("@/components/features/UniswapPrivateSwap").then(m => ({ default: m.UniswapPrivateSwap })));
+// 'Private Swap' tile in Core Actions + 'All in One Swap' tile in
+// PrivateDeFi both mount the SwapSVM multi-DEX picker (defaults to
+// Aerodrome V2 — the only wrapper with a deep WETH/USDC pool on Base;
+// Uniswap V3 has no WETH/USDC pool per the P1.13 finding and reverts
+// for the ETH -> USDC path the customer exercises). SwapContent is
+// kept on disk for any later single-DEX relight but is no longer
+// routed from this Dashboard.
+// const SwapContent            = lazy(() => import("@/components/features/SwapContent").then(m => ({ default: m.SwapContent })));
 const HyperliquidPrivateTrading = lazy(() => import("@/components/features/HyperliquidPrivateTrading").then(m => ({ default: m.HyperliquidPrivateTrading })));
 const PolymarketPrivateBetting  = lazy(() => import("@/components/features/PolymarketPrivateBetting").then(m => ({ default: m.PolymarketPrivateBetting })));
 const HiddenBalanceDashboard    = lazy(() => import("@/components/features/HiddenBalanceDashboard").then(m => ({ default: m.HiddenBalanceDashboard })));
@@ -59,12 +60,14 @@ const SwapSVM                    = lazy(() => import("@/components/features/Swap
 const pages = {
   receive:     { title: "Private Receive",             Component: StealthContent,          key: "receive" },
   send:        { title: "Private Send",                Component: SendContent,             key: "send" },
-  swap:        { title: "Private Swap",                Component: SwapContent,             key: "swap" },
-  // 'All in One Swap' tile mounts the SwapSVM multi-DEX picker: live
-  // Uniswap V3 + Aerodrome V2 today; 1inch, CoW, OpenOcean, Matcha
-  // show 'coming soon' honest placeholders until their respective
-  // privacy wrappers land on Base. The picker is what the customer
-  // sees when they click this tile.
+  // 'Private Swap' tile in Core Actions mounts the SwapSVM multi-DEX
+  // picker (defaults to Aerodrome V2 — the only wrapper with a deep
+  // WETH/USDC pool on Base; Uniswap V3 has no WETH/USDC pool on Base
+  // per the P1.13 finding). Customer clicks Private Swap -> picker
+  // opens pre-selected on Aerodrome V2 -> ETH -> USDC round-trip.
+  swap:        { title: "Private Swap",                Component: SwapSVM,                 key: "swap" },
+  // 'All in One Swap' tile (PrivateDeFi section) is the same picker,
+  // for the customer who prefers the "browse-the-aggregator" framing.
   allswap:     { title: "All in One Swap",             Component: SwapSVM,                 key: "all-swap" },
   hyperliquid: { title: "Hyperliquid Private Trading", Component: HyperliquidPrivateTrading, key: "hyperliquid" },
   polymarket:  { title: "Polymarket Private Betting",  Component: PolymarketPrivateBetting,  key: "polymarket" },

@@ -20,7 +20,7 @@ const DEXES = [
   {
     id: "uniswap",
     label: "Uniswap V3",
-    desc:  "UniswapPrivacyWrapper.sol live on Base (P4.1 broadcast)",
+    desc:  "UniswapPrivacyWrapper.sol live on Base (P4.1 broadcast) — note: no WETH/USDC pool on Base, will revert for ETH/USDC routes",
     color: "text-blue-400",
     SubComponent: UniswapPrivateSwap,
     subProps: {},
@@ -28,7 +28,7 @@ const DEXES = [
   {
     id: "aerodrome",
     label: "Aerodrome V2",
-    desc:  "AerodromePrivacyWrapper.sol live on Base (P4.2 broadcast)",
+    desc:  "AerodromePrivacyWrapper.sol live on Base (P4.2 broadcast, 4-field Route struct with factory) — recommended: has the deep WETH/USDC pool",
     color: "text-purple-400",
     SubComponent: AerodromePrivateSwap,
     subProps: {},
@@ -44,7 +44,12 @@ function Fallback() {
 }
 
 export function SwapSVM() {
-  const [dexId, setDexId] = useState(DEXES[0].id);
+  // Default to Aerodrome V2 — Base's only DEX with a deep WETH/USDC
+  // pool, so the swap picker opens with a working route on the very
+  // first customer click (P1.13 finding; Uniswap V3 has no WETH/USDC
+  // pool on Base and would revert). Customer can still pick Uniswap
+  // V3 explicitly to see that failure path.
+  const [dexId, setDexId] = useState("aerodrome");
   const dex = DEXES.find(d => d.id === dexId);
   return (
     <div className="space-y-4" data-testid="swap-svm">
