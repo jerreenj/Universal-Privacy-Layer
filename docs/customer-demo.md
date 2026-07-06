@@ -19,6 +19,7 @@ lives, and what is left to do.
 | **Announcement scanner (all chains)** | ✅ live | Reads the per-chain registry; tiles in the dashboard. |
 | **ZK privacy pool (Tornado-style)** | ✅ live (multi-denom) | 3 denominations: **0.01 / 0.1 / 1 ETH**. Deposit + withdraw via real Groth16-proof verified on-chain by the snarkjs-generated `Groth16Verifier`. |
 | **All in One Swap (DEX-aggregator tile)** | ✅ live | Pick **Uniswap V3** or **Aerodrome V2** inside a single tile. Both wrappers are deployed on Base with the 4-field `Route` struct + factory field. E2E smoke green: Aerodrome ETH→USDC round-trip mined on Base. |
+| **Private Swap (Core tile — in-house vault)** | ✅ live | ETH → USDC via `NativePrivateSwap` vault **owned by us** (no third-party AMM). **1 tx** = `swapETHForUSDC(stealthRecipient, minOut){value: ethIn}` — vault pays USDC straight to the stealth recipient. Quote path: read-only `vault.quote(ethIn)`. E2E smoke green: live broadcast on Base, recipient delta = `+2998 µUSDC` == `vault.quote(1e12)` byte-for-byte. |
 | **Hyperliquid / Polymarket (3rd-party)** | ✅ wraps are wired | Surfaced in the dashboard; not all 3rd-party flows are smoke-tested end-to-end yet — flag to the customer that we are 2 wrappers live + 1 in scope. |
 
 ## TL;DR — what is NOT live
@@ -65,11 +66,23 @@ lives, and what is left to do.
 5. Click **Swap Privately** → fires `AerodromePrivacyWrapper.privateSwapETHForToken(USDC, routes, 0, stealthRecipient, deadline+10min){value: 0.001 ETH}` → the wrapper takes ETH, splits off the 5 bps fee to the deployer (`feeRecipient = 0x3f44…`), forwards the remaining 0.000995 ETH to Aerodrome Router, Aerodrome swaps and credits the output USDC **directly to the stealth recipient** (so the wallet never appears as the on-chain swap sender).
 6. Basescan link is at the bottom of the tile.
 
+### Step 4b — Private Swap on the in-house vault (Core tile)
+1. Click **Private Swap** (Core Actions grid) — this is the **second** swap tile, mounted on Core rather than PrivateDeFi.
+2. The vault is **owned by us**: `NativePrivateSwap.swapETHForUSDC(stealthRecipient, minUsdcOut){value: ethIn}`. No third-party AMM hop.
+3. Set `Amount = 0.001 ETH`, `slippage = 0.5 %`, click **Auto** to generate a stealth recipient.
+4. Click **Get Quote** → pulls `vault.quote(0.001 ether)`, `vault.usdcPerEth()`, `vault.reserveBalance()` directly. Pre-fills `minUsdcOut` from the slippage-adjusted quote.
+5. Click **Swap Privately** → one tx broadcasts: vault takes 0.001 ETH, skims 5 bps fee, transfers `~2.99 USDC` straight to the stealth recipient. No Aerodrome log, no router hop, no second contract in the trace.
+6. Recipient sees the USDC via the **Announcement Scanner** + the **Transaction History** tile (sealed record only — backend stores ciphertext).
+
 ### Step 5 — Verify on BaseScan
 - The smoke tx referenced in this doc:
   [`0xebdfbbca29c67334c63c50a50c11b452e3cab2c60fbc5ac8caef53d7ff3090c1`](https://basescan.org/tx/0xebdfbbca29c67334c63c50a50c11b452e3cab2c60fbc5ac8caef53d7ff3090c1)
 - The Wrapper that processed it (P4.2 hotfix v2):
   [`0xe896e6f51af137c32db7eb4e3b2de795d392a646`](https://basescan.org/address/0xe896e6f51af137c32db7eb4e3b2de795d392a646)
+- **NativePrivateSwap in-house vault** (Core tile):
+  [`0x582c57a7ba6e7758e75dc5334a5e8ff096515d09`](https://basescan.org/address/0x582c57a7ba6e7758e75dc5334a5e8ff096515d09)
+- **Latest live smoke tx on NativePrivateSwap**:
+  [`0x73a67e9595f99ca77b9b82044c1a68649f81346f05a111814c626f4b976bfbb4`](https://basescan.org/tx/0x73a67e9595f99ca77b9b82044c1a68649f81346f05a111814c626f4b976bfbb4)
 - Multi-denom PrivacyPool (P4.1):
   [`0x3F0b23Aca0624981a503e8f042db2F3884D0C89C`](https://basescan.org/address/0x3F0b23Aca0624981a503e8f042db2F3884D0C89C)
 - PrivacyRelayer (P2.9.7 atomic):
@@ -85,6 +98,7 @@ lives, and what is left to do.
 3. Multi-chain announcement scanner + receipts viewer.
 4. ZK pool deposit + browser-generated Groth16 proof + on-chain withdraw.
 5. **P4.2 hotfix** All-in-One Swap tile → Uniswap V3 OR Aerodrome V2.
+6. **NativePrivateSwap** Core 'Private Swap' tile → in-house ETH→USDC vault (no third-party router). Surfaced via `/api/deployments` `native_swap_wrapper`.
 
 ### Internal surfaces (server-tested, no UI button yet)
 - `/api/swap/quote` — Uniswap & Aerodrome fee math (used by the tile).
@@ -104,6 +118,7 @@ lives, and what is left to do.
 | PrivacyPool (multi-denom, P4.1) | `0x3F0b23Aca0624981a503e8f042db2F3884D0C89C` | ✅ live, 3 denoms |
 | **AerodromePrivacyWrapper (P4.2 hotfix)** | **`0xe896e6f51af137c32db7eb4e3b2de795d392a646`** | ✅ live, **E2E smoke green** |
 | AerodromePrivacyWrapper (P4.2 v1, superseded) | `0x009681CdF5441D23738EC6597e586eBB06215e3D` | superseded |
+| **NativePrivateSwap (Core 'Private Swap' vault)** | **`0x582c57a7ba6e7758e75dc5334a5e8ff096515d09`** | ✅ live, **in-house**, E2E smoke green |
 
 > **Honest note:** the v1 Aerodrome wrapper had a 3-field Route struct that
 > mis-aligned with Aerodrome's actual 4-field Route struct, so real swaps
