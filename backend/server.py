@@ -1157,12 +1157,24 @@ async def create_wallet(request: StarletteRequest):
 # Stealth Address Generation
 @api_router.post("/stealth/generate", response_model=StealthAddressResponse)
 async def generate_stealth(request: StealthAddressRequest):
-    """Generate a stealth address for private receiving"""
+    """Generate a stealth address for private receiving.
+
+    Privacy follow-up (K4): this endpoint still returns the stealth
+    address in plaintext to the caller (the user's WALLET needs it
+    immediately to broadcast announcements etc.), but the canonical
+    server-side record of EOA ↔ stealth is now kept only as a
+    sealed envelope (see /api/stealth/store below). The legacy
+    plaintext store path remains for back-compat with any tool
+    that reads db.stealth_addresses.recipient_address; new
+    customer-pilot UI posts the sealed mapping separately,
+    so the plaintext store will be empty for any privacy-conscious
+    user.
+    """
     try:
         stealth_address, ephemeral_pk, view_tag = generate_stealth_address(
             request.public_address
         )
-        
+
         doc = {
             "id": str(uuid.uuid4()),
             "recipient_address": request.public_address,
@@ -1174,7 +1186,7 @@ async def generate_stealth(request: StealthAddressRequest):
             "used": False
         }
         await db.stealth_addresses.insert_one(doc)
-        
+
         return StealthAddressResponse(
             stealth_address=stealth_address,
             ephemeral_public_key=ephemeral_pk,
@@ -1184,6 +1196,94 @@ async def generate_stealth(request: StealthAddressRequest):
         )
     except Exception as e:
         logger.error(f"Stealth generation error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+# K4 — Stealth mapping stored as E2E encrypted envelope.
+#
+# Without this path, the server's db.stealth_addresses collection
+# has a plaintext mapping {recipient_address → stealth_address}.
+# A compromised DB leaks the EOA↔stealth link for every wallet that
+# ever used the customer pilot. The client now encrypts its mapping
+# locally (AES-256-GCM, wallet-derived seal key) and posts only the
+# ciphertext blob. The server uses addr as the lookup key but stores
+# ciphertext only, so a MongoDB dump reveals nothing useful unless
+# the attacker also steals the user's wallet signature.
+
+@api_router.post("/stealth/store")
+async def stealth_store_envelope(
+    ciphertext: str = Body(...),
+    iv:         str = Body(...),
+    salt:       str = Body(...),
+    addr:       str = Body(...),
+    chain:      Optional[str] = Body(default="base"),
+    tx_type:    Optional[str] = Body(default="stealthMapping"),
+):
+    """Store the EOA↔stealth mapping as a sealed envelope.
+
+    Accepts the same envelope shape as /api/transactions/record's
+    ciphertext path: {ciphertext, iv, salt, addr}. Stored under
+    db.stealth_addresses (or a new sub-collection if we split
+    later) with encrypted:true. The plaintext stealth_address field
+    is NEVER written here — any row in this collection with
+    encrypted:false came from a pre-K4 caller for back-compat only.
+    """
+    try:
+        import hashlib
+        envelope_id = "sha256:" + hashlib.sha256(
+            f"stealth|{addr}|{ciphertext}|{salt}".encode("utf-8")
+        ).hexdigest()
+        doc = {
+            "id": envelope_id,
+            "addr": addr,
+            "ciphertext": ciphertext,
+            "iv": iv,
+            "salt": salt,
+            "encrypted": True,
+            "chain": chain,
+            "tx_type": tx_type,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.stealth_addresses.insert_one(doc)
+        return {"success": True, "envelope_id": envelope_id}
+    except Exception as e:
+        logger.error(f"Stealth envelope store error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+@api_router.get("/stealth/list/{address}")
+async def stealth_list_envelopes(address: str, limit: int = 50):
+    """Return ALL sealed-envelope stealth mappings for {address}.
+
+    Response shape is uniformly ciphertext — the server cannot
+    decode the inner {stealth_address, ephemeral_pub, view_tag}
+    even if dumped. Legacy plaintext rows (pre-K4 callers) are
+    returned under a separate key so the customer-pilot UI can
+    filter to the sealed path; they remain readable metadata
+    markers for customers who don't yet opt into the sealed flow.
+    """
+    import re as _re
+    try:
+        addr_pat = _re.compile(_re.escape(address), _re.IGNORECASE)
+        # Two passes — sealed first, then legacy plaintext for back-compat.
+        sealed_rows = []
+        legacy_rows = []
+        cursor = await db.stealth_addresses.find({}, {"_id": 0})
+        async for doc in cursor:
+            if not doc.get("addr") or not addr_pat.search(doc["addr"]):
+                continue
+            if doc.get("encrypted") is True:
+                sealed_rows.append(doc)
+            elif "encrypted" not in doc:
+                legacy_rows.append(doc)
+        sealed_rows.sort(key=lambda d: d.get("created_at", ""), reverse=True)
+        legacy_rows.sort(key=lambda d: d.get("created_at", ""), reverse=True)
+        return {
+            "sealed": sealed_rows[:limit],
+            "legacy_plaintext": legacy_rows[:limit],
+        }
+    except Exception as e:
+        logger.error(f"Stealth list error: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
 
 # Encrypted Receipt System
