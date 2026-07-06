@@ -72,11 +72,15 @@ jobs:
       # Dependencies are gitignored — fetch them fresh on the runner.
       # `forge install` with no args only works if .gitmodules already lists
       # the deps; since lib/ is gitignored there are no submodules, so we
-      # install explicitly by repo. --no-commit avoids dirtying the worktree.
+      # install explicitly by repo. Default behavior is to commit the
+      # submodule registration (--commit / no flag) on the runner's working
+      # copy — there's no functional cost: the runner discards the worktree
+      # after the job finishes anyway, so no need for --no-commit (which
+      # the v1.7.1 stable toolchain dropped in favor of --commit).
       - name: Install dependencies
         run: |
-          forge install foundry-rs/forge-std --no-commit
-          forge install OpenZeppelin/openzeppelin-contracts --no-commit
+          forge install foundry-rs/forge-std
+          forge install OpenZeppelin/openzeppelin-contracts
 
       - name: Check formatting
         run: forge fmt --check
