@@ -42,6 +42,7 @@ const PrivacyAddressBook        = lazy(() => import("@/components/features/Priva
 const ZKCommitments             = lazy(() => import("@/components/features/ZKCommitments").then(m => ({ default: m.ZKCommitments })));
 const StealthSendSVM            = lazy(() => import("@/components/features/StealthSendSVM").then(m => ({ default: m.StealthSendSVM })));
 const ScannerSVM                = lazy(() => import("@/components/features/ScannerSVM").then(m => ({ default: m.ScannerSVM })));
+const SwapSVM                    = lazy(() => import("@/components/features/SwapSVM").then(m => ({ default: m.SwapSVM })));
 
 /* Page metadata – references the lazy Component *type*, not a rendered element. The `key` field is passed to ChunkErrorBoundary so it can show what failed.
  *
@@ -75,6 +76,7 @@ const pages = {
   zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments,           key: "zkcommit" },
   svmSend:     { title: "Stealth Send",                Component: StealthSendSVM,          key: "svm-send" },
   svmScan:     { title: "Announcement Scanner (All Chains)", Component: ScannerSVM,         key: "svm-scanner" },
+  svmSwap:     { title: "Private Swap (Multi-DEX)",     Component: SwapSVM,                 key: "svm-swap" },
 };
 
 function LoadingFallback() {
