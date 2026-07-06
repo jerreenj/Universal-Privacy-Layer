@@ -102,11 +102,20 @@ function MatchCard({ match, onSweep }) {
   );
 }
 
-export function StealthReceive({ address }) {
+export function StealthReceive({ address, chain: chainProp }) {
+  // When wired from the umbrella ScannerSVM.jsx the parent passes a SPECIFIC
+  // chain (e.g. "base"), so the internal chain selector is irrelevant — we
+  // pin `selectedChain` to whatever the parent chose and hide the selector
+  // (set `showChainPicker = false`). When called standalone (from
+  // StealthContent.jsx's "Scan & Receive" tab) `chainProp` is undefined and
+  // the user gets the full "all / base / arbitrum / ..." picker.
+  const initialChain = (chainProp && chainProp !== "all") ? chainProp : "all";
+  const showChainPicker = !chainProp || chainProp === "all";
+
   const [viewPriv, setViewPriv] = useState("");
   const [spendPub, setSpendPub] = useState("");
   const [spendPriv, setSpendPriv] = useState(""); // only for sweep
-  const [selectedChain, setSelectedChain] = useState("all");
+  const [selectedChain, setSelectedChain] = useState(initialChain);
   const [matches, setMatches] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [scanned, setScanned] = useState(false);
@@ -250,18 +259,22 @@ export function StealthReceive({ address }) {
           </div>
         )}
 
-        {/* Chain filter */}
-        <div className="flex flex-wrap gap-2">
-          {CHAIN_LIST.map(c => (
-            <button
-              key={c}
-              onClick={() => setSelectedChain(c)}
-              className={`text-xs px-3 py-1 border capitalize transition-colors ${selectedChain === c ? "border-blue-400 text-blue-400 bg-blue-400/10" : "border-white/20 text-white/40 hover:border-white/40"}`}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
+        {/* Chain filter — hidden when an umbrella component (ScannerSVM) has
+            already pinned the chain (avoids a duplicate UI). Standalone
+            (StealthContent tab) callers still see the picker. */}
+        {showChainPicker && (
+          <div className="flex flex-wrap gap-2">
+            {CHAIN_LIST.map(c => (
+              <button
+                key={c}
+                onClick={() => setSelectedChain(c)}
+                className={`text-xs px-3 py-1 border capitalize transition-colors ${selectedChain === c ? "border-blue-400 text-blue-400 bg-blue-400/10" : "border-white/20 text-white/40 hover:border-white/40"}`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
 
         <button
           data-testid="scan-btn"

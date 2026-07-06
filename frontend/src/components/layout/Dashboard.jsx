@@ -74,7 +74,7 @@ const pages = {
   addressbook: { title: "Privacy Address Book",        Component: PrivacyAddressBook,      key: "addressbook" },
   zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments,           key: "zkcommit" },
   svmSend:     { title: "Stealth Send",                Component: StealthSendSVM,          key: "svm-send" },
-  svmScan:     { title: "Announcement Scanner (SVM)",  Component: ScannerSVM,              key: "svm-scanner" },
+  svmScan:     { title: "Announcement Scanner (All Chains)", Component: ScannerSVM,         key: "svm-scanner" },
 };
 
 function LoadingFallback() {
