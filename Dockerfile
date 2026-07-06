@@ -25,16 +25,18 @@ WORKDIR /app
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Node.js + npm + snarkjs + circomlibjs for the M2 server-side
-# Groth16 prover. `npm install -g` writes into /usr/local/lib/node_modules
-# so /app/scripts/zk_pool_prover.js can `require("snarkjs")` against
-# the global module path under all Node versions. Mount zkey + wasm
-# below so the backend can find them at the documented defaults
-# (/app/backend/zk_artifacts/withdraw_final.zkey +
-#  /app/backend/zk_artifacts/withdraw_js/withdraw.wasm).
+# Install Node.js + npm + snarkjs for the M2 server-side Groth16
+# prover. `npm install -g` writes into /usr/local/lib/node_modules
+# so /app/scripts/zk_pool_prover.js can `require("snarkjs")`
+# against the global module path. circomlibjs is NOT required
+# (snarkjs 0.7+ ships its own Poseidon impl). Version pinned
+# to the latest available on npm as of 2026-07-06 — the ^0.5.2
+# circomlibjs once requested here does NOT exist on npm
+# (that package only goes up to ^0.1.7; pinning that instead
+# would have masked the bug for weeks).
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
- && npm install -g snarkjs@^0.7.5 circomlibjs@^0.5.2 \
+ && npm install -g snarkjs@^0.7.6 \
  && rm -rf /var/lib/apt/lists/*
 
 # Copy backend code
