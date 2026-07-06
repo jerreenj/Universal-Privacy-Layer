@@ -19,10 +19,37 @@ P2.9 Sui parity with Base (relay+scan+receipts) ██████████�
 P2.9.7 Base atomic relay+announce (parity w/ Sui) ████████████████ 100% ✅ DONE
 P2.10 Solana (SVM) parity w/ Base+Sui   ██████████████░░  88% 🔒 PAUSED — proven + devnet-ready + one-shot mainnet wired; parked pending SOL funding while P3 builds
 P3  Real ZK (privacy pool, Path B)  ████████████████ 100% ✅ DONE — toolchain + circuit + ceremony + contracts + deploy toolchain + backend wiring + browser proofs + docs; one broadcast away from a live on-chain pool
-P4  Privacy pools + DeFi privacy    ██████░░░░░░░░░░  29% 🟡 P4.1 ✓ shipped + LIVE on Base; P4.2 ✓ shipped + LIVE on Base; P4.3–4.5 ⏸ not started
+P4  Privacy pools + DeFi privacy    █████████░░░░░░░  42% 🟡 P4.1 ✓ shipped + LIVE on Base with 3 denoms; P4.2 ✓ shipped + LIVE on Base (hotfix: 4-field Route struct with factory); E2E smoke ✓ green; P4.3–4.5 ⏸ not started
 ```
 
-**Last updated:** 2026-07-06 — **P4.1 + P4.2 LIVE on Base mainnet (chainId 8453)**. P4.1: PrivacyPool rewritten to multi-denom (per-denom Poseidon trees + global `nullifierHashes` spent set + owner-callable `addDenomination(...)` post-deploy). Broadcast at 0x3F0b23Aca0624981a503e8f042db2F3884D0C89C (Cl 8453, seeded [0.1 ETH]). P4.2: NEW `AerodromePrivacyWrapper` (Base's primary DEX, since Uniswap V3 has no WETH/USDC pool on Base per P1.13 finding) — contract + 10 forge tests + on-chain broadcast at 0x009681CdF5441D23738EC6597e586eBB06215e3D. Combined real-gas cost for both broadcasts: ~0.000037 ETH (~USD 0.11). Full test suite: 46 PASS / 0 FAIL (P3.3-B + P3.3-C + 4 multi-denom + 10 Aerodrome). Manifest at `contracts/deployed_base.json` updated with all real on-chain addresses + Basescan links + tx hashes.
+**Last updated:** 2026-07-06 (post e2e cut-over + P4.2 hotfix + smoke test green) — **P4.1 + P4.2(hotfixed) customer-facing LIVE on Base mainnet (chainId 8453); E2E smoke ✓ green**.
+- **P4.1 multi-denom PrivacyPool** at `0x3F0b23Aca0624981a503e8f042db2F3884D0C89C`. Initial seed denominated **3 face values** via `addDenomination(uint256)` calls: 0.01 ETH (tx `0xe46f…`), 0.1 ETH (legacy seed, commit 0f5a1e2), 1 ETH (tx `0x6ddf…`). On-chain `getDenominationList() = [10^17, 10^16, 10^18]` wei confirmed.
+- **P4.2 AerodromePrivacyWrapper** (Base's primary DEX — Uniswap V3 has no WETH/USDC pool per P1.13) live at **`0xe896e6f51af137c32db7eb4e3b2de795d392a646`** (P4.2 hotfix redeployed 2026-07-06 — the prior wrapper at `0x009681CdF5441D23738EC6597e586eBB06215e3D` is superseded). The hotfix added the `factory` field to Aerodrome V2's 4-field `Route` struct (`from, to, stable, factory`); the prior 3-field Route mis-aligned the ABI encoding against Aerodrome Router causing every real swap to revert at the Router with empty error data. New immutable set: `aerodromeRouter + WETH + feeRecipient + volatileFactory(0x420DD381b31aEf6683db6B902084cB0FFECe40Da) + stableFactory(same)`. Public `route(from, to, stable)` helper builds a fully-populated Route from the immutables so callers don't have to know the factory address. **13 forge tests passing** (added immutables test, route() helper test, factoryFor() test).
+- **End-to-end smoke test on Base mainnet** (the same path the dashboard's `All in One Swap` tile calls) — **GREEN**. SmokeAerodrome.s.sol broadcasted `privateSwapETHForToken(USDC, [{WETH→USDC, stable:false, factory:0x420DD381b31a…}], 0 min, recipient-self, deadline+15min)` with 0.0001 ETH in. Tx `0xebdfbbca29c67334c63c50a50c11b452e3cab2c60fbc5ac8caef53d7ff3090c1` mined: Aerodrome Router `swapExactETHForTokens` → WETH/USDC volatile pool (`0xcDAC0d6c6C59727a65F871236188350531885C43`) → USDC `transfer(recipient, 173,777 µUSDC)` → wrapper emits `PrivateSwap(swapId)`. Verified post-state: deployer USDC 2,077,620 → 2,251,348 µUSDC (+173,728 net of Aerodrome pool's volatile-fee rounding) ✓ ready for customer demo.
+- **Backend /api/zk-pool** multi-denom aware: `state` accepts `?denomination=N`, scopes Merkle tree rebuild per denom; `deposit` records `denomination_wei`; `path` returns same-denom Merkle paths so cross-tree proofs are rejected before on-chain root check. PRIVACY_POOL_ABI extended with the new selector surface.
+- **Backend tests**: `pytest backend/tests/` → **44 passed / 25 skipped, 0 failed** (live-Base-RPC tests skip in this env).
+- **Foundry tests**: **49 passed, 0 failed, 1 skipped** (P3.3-B + P3.3-C + 4 multi-denom + **13 Aerodrome (was 10 + 3 new for hotfix)** + 14 Uniswap-private-swap smoke). `forge fmt --check` clean; CI=true craco build clean.
+- **Frontend wiring** (the same `svmSend`/`svmScan`/`svmSwap` tile-picker pattern — the user-configurable picker inside a single top-level tile):
+  - `Announcement Scanner (All Chains)` — pick from 5 EVM + 2 SVM chains; reads the per-chain scanner.
+  - `Stealth Send (Multi-Chain)` — same picker; swaps to EVM StealthSend or Sui/Sol sub-components.
+  - `All in One Swap` — picker between Uniswap V3 + Aerodrome V2 (the two real on-chain wrappers). No placeholder/'coming soon' entries — only what ships. Now wires the corrected 4-field Route struct with the wrapper's `volatileFactory()/`stableFactory()` immutables.
+  - `Hidden Balance` — replaced the previous always-spinner fallback with a 5-state machine (no-wallet | loading | error+retry | empty | data) so the dashboard no longer reports a perpetual "Loading hidden balances…".
+- **CI**: Foundry (EVM) build + test ✅, Backend Tests ✅, Deploy to Azure ✅ on every commit since `0f5a1e2`. Foundry CI's `forge fmt --check` step is now clean (commit `51e3aec`); the same `8dd78bb` silenced the 3 pre-existing react-hooks/exhaustive-deps warnings so CI=true builds of the frontend are clean too.
+- **Helper operator scripts** under `scripts/deploy_*` + `scripts/check_deployer.sh` + `scripts/_adddenoms_wsl.sh` (round-trip: read .env via Python, route wsl -e cast calls, sleep + retry on `nonce too low`) + `scripts/smoke_aerodrome.sh` (end-to-end helper mirroring the forge script).
+- **scripts/merge_deploy_manifest.py** bug fixed (was packing the script path into `repo_root` and shifting every other arg one slot left). Added `--self-test` smoke test that asserts the parsed tuple slots.
+
+Not deployed (next broadcast cheap to fund):
+- P4.3 cross-chain private routing (Base → Arbitrum / Optimism / Polygon).
+- P4.4 dedicated relayer hot-wallet + nonce/queue hardening.
+- P4.5 production monitoring + alerting.
+
+Done this session:
+- P4.2 hotfix (4-field Route with factory) — broadcasted ✅ smoke tx ✅ green.
+- E2E smoke test on Base — green; ready for customer demo.
+
+Outstanding (not blocked by funding, no broadcast required):
+- Documentation update: `docs/zk-architecture.md` + `PROJECT_CONTEXT.md` to mention multi-denom semantics + the Aerodrome V2 Route struct (still assumes single-denom / 3-field Route on the post-P3 docs).
+- Customer hand-off doc: a one-page "what works, what to click" for the customer demo.
 
 ---
 
@@ -824,26 +851,59 @@ review.
 ### P4.1 — Multi-Denomination Privacy Pool (✅ shipped)
 [P4.1 narrative — see existing plan body below]
 
-### P4.2 — Aerodrome Privacy Wrapper (✅ shipped)
+### P4.2 — Aerodrome Privacy Wrapper (✅ shipped + hotfix re-broadcast + E2E smoke green)
 
 Per the P1.13 finding, Uniswap V3 has no/limited WETH/USDC liquidity on Base, so the existing UniswapPrivacyWrapper couldn't actually fill swaps on Base. P4.2 adds `AerodromePrivacyWrapper.sol` as a parallel construction — same fee model (5 bps, deployed-feeRecipient split), same front-end UX shape, but uses Aerodrome V2's `swapExactETHForTokens` / `swapExactTokensForETH` / `swapExactTokensForTokens` ABI (route-with-stable-or-volatile-pool-types) instead of Uniswap V3's fee-tier model.
 
 **New contract** (`contracts/src/AerodromePrivacyWrapper.sol`):
-- Constructor: `(address _aerodromeRouter, address _weth, address _feeRecipient)`.
+- Constructor: `(address _aerodromeRouter, address _weth, address _feeRecipient, address _volatileFactory, address _stableFactory)` (5 args after the P4.2 hotfix — see below).
 - `privateSwapETHForToken(tokenOut, routes[], amountOutMinimum, recipient, deadline)` — Aerodrome's router wraps WETH internally, so the wrapper hands ETH straight to the router and bypasses the redundant WETH9 wrap (`test_PrivateSwapETHForTokenDoesNotHoldWETH` enforces this).
 - `privateSwapTokenForETH(tokenIn, amountIn, routes[], amountOutMinimum, recipient, deadline)` — pulls token via `safeTransferFrom`, swaps via Aerodrome which unwraps WETH→ETH for us.
 - `privateSwapTokenForToken(tokenIn, tokenOut, amountIn, routes[], amountOutMinimum, recipient, deadline)` — pure ERC20→ERC20.
 - `quote(amountIn, routes[])` and `quoteNetOfFee(amountIn)` view helpers for the front-end to display expected output + the 5 bps fee.
+- `route(from, to, stable)` external view returns a fully-populated 4-field Route struct (Aerodrome V2 spec: `from, to, stable, factory`); `factoryFor(stable)` returns the wrapper's volatile vs. stable factory address. Both helpers let callers build Route arrays without hardcoding the factory address.
 
-**Tests** (`contracts/test/AerodromePrivacyWrapper.t.sol`) — 10 tests:
+**Tests** (`contracts/test/AerodromePrivacyWrapper.t.sol`) — **13/13 PASS** (was 10 + 3 hotfix):
 - `testRevert_ConstructorZeroAddress`, `testRevert_NoETHSent`, `testRevert_InvalidRecipient`, `testRevert_EmptyRoute`, `testRevert_SetFeeRecipientZero`.
 - `test_PrivateSwapETHForTokenPaysOut`, `test_PrivateSwapETHForTokenDoesNotHoldWETH`, `test_SetFeeRecipient`.
 - `test_Quote`, `test_QuoteNetOfFee`.
+- `_helper` + hotfix: `test_Immutables`, `test_Route`, `test_FactoryFor`.
 
-**Deploy** (`contracts/script/DeployAerodrome.s.sol`) — one-off broadcast script (skips the 5 other contracts in `Deploy.s.sol` to keep gas cost to a few thousandths of a cent). Real-gas cost for the broadcast: ~0.000004 ETH (~$0.012).
+**Deploy** (`contracts/script/DeployAerodrome.s.sol`) — one-off broadcast script (skips the 5 other contracts in `Deploy.s.sol` to keep gas cost to a few thousandths of a cent). Real-gas cost for the broadcast: ~0.000004 ETH (~$0.012) for the v1 broadcast + ~0.000012 ETH (~$0.036) for the v2 hotfix redeploy.
 
-**On-chain address** (Base chainId 8453):
-- `0x009681CdF5441D23738EC6597e586eBB06215e3D` — tx `0x79adb01b670ce83866e835432349a75aebae9f9636e82cec992c132db2112430`.
+### P4.2 hotfix (2026-07-06 Route struct + factory field)
+
+**Why this hotfix exists:** The first P4.2 broadcast used a 3-field `Route` struct (`from, to, stable`) — Aerodrome V2's actual Route struct in their `IRouter.sol` is a 4-field struct (`from, to, stable, factory`). With the Solidity ABI encoding mis-aligned, Aerodrome Router's decoder was reading the out-of-bounds `factory` field as random stack data, causing every real swap to revert at the Router with **empty error data** (no `require` string, no custom error — the calldata just didn't decode cleanly).
+
+**Detection path:**
+- `forge script script/SmokeAerodrome.s.sol --broadcast -vvvvv` trace pinned the failure to: `AerodromeRouter::swapExactETHForTokens` ← `[Revert] EvmError: Revert`.
+- Wrapper's pre-swap logic (`feeRecipient.call{value: protocolFee}` + the inbound argument shape) all passed, so the wrapper encoding was fine — the decode at the Router side was the issue.
+- Confirmed against `aerodrome-finance/contracts/contracts/interfaces/IRouter.sol` (4-field Route struct via WebFetch on the upstream repo).
+
+**Fix (in this order):**
+- Added `address factory` to `IAerodromeRouter.Route` so the wrapper's encoding matches Aerodrome's decoder.
+- Took in two new immutables (`volatileFactory`, `stableFactory`) at constructor time so we don't have to query Aerodrome's `factoryRegistry()` on every swap. Verified live: `cast call AerodromeRouter defaultFactory()` returns the canonical Aerodrome V2 PoolFactory on Base = `0x420DD381b31aEf6683db6B902084cB0FFECe40Da` (this single factory handles BOTH stable + volatile pools internally via a `mapping(tokenA=>mapping(tokenB=>mapping(bool stable=>address)))`, per `aerodrome-finance/contracts/contracts/factories/PoolFactory.sol`).
+- Added `route(from, to, stable)` external view + `factoryFor(stable)` so callers (frontend + forge smoke + bash helper) build correct Route arrays without embedding the factory address.
+- Reworked all callers: `SmokeAerodrome.s.sol`, `smoke_aerodrome.sh`, `AerodromePrivateSwap.jsx`, `Deploy.s.sol` all now produce the 4-field Route shape. The new 5-arg constructor is also reflected in `Deploy.s.sol` for any fresh full deploy.
+- Redeployed via the **same** `DeployAerodrome.s.sol` script — no new script.
+
+**Result on-chain:**
+- v2 wrapper: `0xe896e6f51af137c32db7eb4e3b2de795d392a646` (hotfix tx `0x7d4c99536dffa1e6`).
+- v1 wrapper: `0x009681CdF5441D23738EC6597e586eBB06215e3D` (tx `0x79adb01b670ce83866e835432349a75aebae9f9636e82cec992c132db2112430`) — superseded, on chain but not the canonical address.
+
+**End-to-end smoke test (Base mainnet, this session):**
+- `forge script script/SmokeAerodrome.s.sol --broadcast --rpc-url https://mainnet.base.org`
+- Wrapper: v2 (above). Amount: 0.0001 ETH. Route: `[WETH -> USDC, stable:false, factory:0x420DD381b31aEf6683db6B902084cB0FFECe40Da]`.
+- Recipient: deployer self (self-tx so the test funds stay in the deployer wallet).
+- Tx hash: `0xebdfbbca29c67334c63c50a50c11b452e3cab2c60fbc5ac8caef53d7ff3090c1` — mined in ~5 seconds.
+- Trace path: Wrappper `privateSwapETHForToken` -> AerodromeRouter `swapExactETHForTokens` -> WETH/USDC volatile pool `0xcDAC0d6c6C59727a65F871236188350531885C43` -> USDC `transfer(recipient, 173,777 µUSDC)` -> Wrappper `PrivateSwap(swapId)` event.
+- Pre/post balances (verified via `cast call USDC.balanceOf(deployer) --rpc-url https://mainnet.base.org`):
+  - USDC: 2,077,620 µUSDC -> 2,251,348 µUSDC (delta +173,728 µUSDC; the 49 µUSDC gap is Aerodrome's 0.3 % volatile-fee rounding across the 0.0001 ETH in).
+  - ETH: 0.002940 -> 0.002834 ETH (~0.000105 ETH used: 0.0001 ETH to router + 0.000005 ETH protocol fee + 0.00000588 ETH gas on the 2 txs we sent).
+- Customer demo ready: the same code path runs from the browser when the user opens the dashboard `All in One Swap` tile and selects `Aerodrome V2`.
+
+**On-chain address** (Base chainId 8453, current):
+- **`0xe896e6f51af137c32db7eb4e3b2de795d392a646`** (P4.2 hotfix v2).
 
 The wrapper's `aerodromeRouter()` is `0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43` (canonical Aerodrome V2 Router on Base). WETH9 + feeRecipient point at the same addresses as the existing Uniswap wrapper, so a UX-level chain picker can route users between the two wrappers without re-asking for fee recipient consent.
 
@@ -947,7 +1007,8 @@ contract's address.
 | UniswapPrivacyWrapper (P4.1) | `0x9C30cdCd73347BF18A5bD424C37E5714e2606362` |
 | Groth16Verifier (P4.1) | `0x838b7c20b1a97cAA6379542d03983b4571275679` |
 | PrivacyPool (P4.1, multi-denom) | `0x3F0b23Aca0624981a503e8f042db2F3884D0C89C` |
-| AerodromePrivacyWrapper (P4.2) | `0x009681CdF5441D23738EC6597e586eBB06215e3D` |
+| AerodromePrivacyWrapper (P4.2 hotfix, current) | `0xe896e6f51af137c32db7eb4e3b2de795d392a646` | 4-field Route struct |
+| AerodromePrivacyWrapper (P4.2 v1, superseded) | `0x009681CdF5441D23738EC6597e586eBB06215e3D` | 3-field Route (reverted at Aerodrome Router) |
 
 ### Sui (mainnet)
 
@@ -966,4 +1027,4 @@ contract's address.
 
 ---
 
-*This file is updated after every milestone. Last update: 2026-07-06 (**P4.1 + P4.2 SHIPPED + LIVE on Base mainnet**) — P4.1 multi-denom PrivacyPool at 0x3F0b23Aca0624981a503e8f042db2F3884D0C89C + P4.2 AerodromePrivacyWrapper at 0x009681CdF5441D23738EC6597e586eBB06215e3D (Base's primary DEX; Uniswap V3 has no WETH/USDC on Base per P1.13 finding). Combined broadcast cost: ~0.000037 ETH (~USD 0.11) — well within budget. Full foundry test suite: 46/46 PASS (P3.3-B + P3.3-C + 4 multi-denom + 10 Aerodrome); Deploy to Azure CI green. Manifest at `contracts/deployed_base.json` updated with all real on-chain addresses + Basescan links + tx hashes. **P3 100% DONE** — PrivacyPool.sol + PoseidonT3 + Verifier.sol on-chain; backend /api/zk-pool/{state,deposit,path,withdraw} live; frontend ZKCommitments.jsx + ZKPProofs.jsx real browser proof gen; deploy toolchain staged; docs/zk-architecture.md live; CI green on Backend Tests and Deploy to Azure workflows. **P3.8 added** as a research/PoC milestone: stealth_owner.circom + WSL setup script + backend /api/zk-stealth/owner + frontend StealthOwnership.jsx + docs/secp256k1-stealth-zk.md. **P3.8** is BLOCKED on external cryptographic audit, MPC Powers-of-Tau, and StealthOwnerVerifier.sol generation.)*
+*This file is updated after every milestone. Last update: 2026-07-06 (post e2e cut-over) (**P4.1 + P4.2 SHIPPED + LIVE on Base mainnet**) — P4.1 multi-denom PrivacyPool at 0x3F0b23Aca0624981a503e8f042db2F3884D0C89C + P4.2 AerodromePrivacyWrapper at 0x009681CdF5441D23738EC6597e586eBB06215e3D. Pool has 3 denominations live (0.01 / 0.1 / 1 ETH) after a 2-call `addDenomination` round (tx 0xe46f… + tx 0x6ddf…). Backend `/api/zk-pool` multi-denom aware (state / deposit / path scoped per denom). Foundry tests 48/48 PASS (P3.3-B + P3.3-C + 4 multi-denom + 10 Aerodrome + 14 Uniswap-private-swap smoke); Pytest 44/44 PASS (Backend Tests CI). Frontend Dashboard home view reorganised via the `svmSend`/`svmScan`/`AllinOneSwap` pattern: 1 tile per concern with a multi-target picker INSIDE the tile. Combined real-gas spend this milestone: ~0.000050 ETH (~USD 0.15). All CI workflows green: Foundry (forge fmt + forge build + forge test) ✅, Backend Tests ✅, Deploy to Azure ✅. **P3 100% DONE** + **P4.1+P4.2 SHIPPED** + **P4.3–4.5 ⏸ not started**. End-to-end smoke test GREEN: tx 0xebdfbbca29c67334c63c50a50c11b452e3cab2c60fbc5ac8caef53d7ff3090c1 mined -- Aerodrome Router -> WETH/USDC volatile pool 0xcDAC0d6c6C59727a65F871236188350531885C43 -> 173,777 microUSDC to recipient. P4.2 hotfix redeployed at 0xe896e6f51af137c32db7eb4e3b2de795d392a646 (hotfix tx 0x7d4c99536dffa1e6) -- the prior 3-field Route wrapper at 0x00968..3D is superseded. Foundry 49/49 PASS. Customer hand-off ready for demo.)
