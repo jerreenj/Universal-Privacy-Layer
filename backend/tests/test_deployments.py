@@ -155,6 +155,20 @@ class TestDeploymentsNoManifests:
         # involvement; the only on-chain artefacts are an ETH.transfer
         # in and a USDC.transfer out to the stealth recipient.
         assert base.get("native_swap_wrapper") == "0x582c57a7ba6e7758e75dc5334a5e8ff096515d09"
+        # Lock-in the canonical P2.9.7 PrivacyRelayer (atomic
+        # relay+announce). The legacy `0x69DA62568CAbc094...` is on
+        # Base too but its `registry()` view returns 0x0 — any
+        # relayAndAnnounce() call against it reverts with "Registry
+        # not set". The `0xCea5b3dD...` contract is the one with the
+        # registry wired (P4.1 rebatched) AND the new hot-wallet
+        # relayer slot set (gap-6 closer). Caught this exact
+        # regression on 2026-07-06; the lock-in ensures it can't
+        # recur silently.
+        assert base.get("privacy_relayer") == "0xCea5b3dD22c5306dEF78767b27Ec9E276c5e1C42", (
+            "privacy_relayer is pointing at the legacy unwired contract. "
+            "Update contracts/deployed_base.json to the atomic P2.9.7 "
+            "PrivacyRelayer at 0xCea5b3dD22c5306dEF78767b27Ec9E276c5e1C42."
+        )
         # UniswapPrivacyWrapper is also live on Base; the multi-DEX picker
         # surfaces it for non-USDC pairs (no WETH/USDC pool on Uniswap V3
         # per the P1.13 finding; do NOT promote it to default).

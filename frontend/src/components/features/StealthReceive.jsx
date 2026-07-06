@@ -10,6 +10,8 @@ import { scanAnnouncements, computeStealthPrivKey, parseMetaAddress } from "../.
 import { API, CHAINS } from "../../config/chains";
 import axios from "axios";
 import { fetchAnnouncements as fetchAnnouncementsDirect } from "@/lib/direct-rpc-scanner";
+import { deriveMetaAddress } from "@/lib/wallet-stealth";
+import { useWallet } from "@/context/WalletContext";
 
 const CHAIN_LIST = ["all", "base", "arbitrum", "polygon", "optimism", "bnb", "avalanche", "hyperliquid"];
 const EXPLORERS = {
@@ -104,6 +106,7 @@ function MatchCard({ match, onSweep }) {
 }
 
 export function StealthReceive({ address, chain: chainProp }) {
+  const { signer } = useWallet();
   // When wired from the umbrella ScannerSVM.jsx the parent passes a SPECIFIC
   // chain (e.g. "base"), so the internal chain selector is irrelevant — we
   // pin `selectedChain` to whatever the parent chose and hide the selector
@@ -138,6 +141,34 @@ export function StealthReceive({ address, chain: chainProp }) {
     };
     reader.readAsText(file);
   };
+
+  // Derive meta-address from the customer's wallet signature. This
+  // is the symmetric path to SwapContent/AerodromePrivateSwap etc.,
+  // which already use `deriveMetaAddress` from `@/lib/wallet-stealth`.
+  // When the customer clicks this, MetaMask/web3 wallet pops a
+  // single `personal_sign` request; the HKDF produces the same
+  // (spend_priv, view_priv) as the Send side, so the customer
+  // does NOT need to paste keys OR upload a keystore file —
+  // they just click sign and the scanner can find payments.
+  const deriveFromWallet = useCallback(async () => {
+    if (!signer) return toast.error("Connect wallet first");
+    try {
+      const chainId = chainProp && chainProp !== "all" ? await signer.provider.getNetwork().then(n => Number(n.chainId)) : 8453;
+      const meta = await deriveMetaAddress(signer, BigInt(chainId));
+      setViewPriv(meta.viewPriv);
+      setSpendPub(meta.spendPub);
+      // spendPriv is intentionally NOT set here — the scanner path
+      // only needs view_priv + spend_pub to filter announcements.
+      // (The sweep button keeps demanding spend_priv; the customer
+      // can paste their saved keystore later.)
+      setSpendPriv(meta.spendPriv || "");
+      // Optionally cache spend_priv on disk for later sweeps —
+      // user-confirm toast: "Spend key cached locally for sweeps".
+      toast.success(meta.spendPriv
+        ? "Meta derived from wallet; spend key cached locally for sweeps"
+        : "Meta derived from wallet (view-only; paste spend key later to sweep)");
+    } catch (e) { toast.error("Derive failed: " + (e.message || e).slice(0, 80)); }
+  }, [signer, chainProp]);
 
   const scan = useCallback(async () => {
     if (!viewPriv || !spendPub) return;
@@ -226,6 +257,19 @@ export function StealthReceive({ address, chain: chainProp }) {
             Load Key File
           </button>
         </div>
+
+        {/* Third option: derive meta from wallet signature. Wallet pops
+            one `personal_sign`, HKDF produces view_priv + spend_pub;
+            no paste, no file upload. The button below sits OUTSIDE the
+            {useFile ? ... file loader : ... manual} toggle so a customer
+            can always one-click derive. */}
+        <button
+          data-testid="derive-from-wallet-btn"
+          onClick={deriveFromWallet}
+          className="w-full flex items-center justify-center gap-2 border border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/15 py-2 text-xs text-blue-300 transition-colors"
+        >
+          <Key className="w-3 h-3" /> Derive From Wallet (one signature, no paste)
+        </button>
 
         {useFile ? (
           <label className="flex items-center justify-center gap-2 border border-dashed border-white/20 py-4 cursor-pointer hover:border-white/40 transition-colors text-sm text-white/40">
