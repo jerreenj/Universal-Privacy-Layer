@@ -10,6 +10,15 @@
 # under contracts/lib/, which is gitignored. The job fetches them with
 # `forge install` before building, so the tree stays clean and the language bar
 # reflects our own source, not vendored framework code.
+#
+# Foundry toolchain: pinned to **stable v1.7.1** (`foundry-rs/foundry@v1.7.1`,
+# commit SHA 4072e487…0caed8). Earlier revisions used `version: nightly`, which
+# drifted between local stable tooling and CI nightly builds in the formatter
+# (`forge fmt --check` would pass locally but fail on CI's stricter nightly
+# whitespace rules — e.g. test/NativePrivateSwap.t.sol line 66 wanted
+# `usdc = new MockUSDC();` single-space where 1.7.1 happily emitted
+# `usdc  = new MockUSDC();`). Pinning to a stable tag makes CI = local: any
+# deviation a contributor sees locally will surface identically on CI.
 
 name: Foundry (EVM) build + test
 
@@ -52,10 +61,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Foundry
+      - name: Install Foundry (stable v1.7.1)
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: nightly
+          version: v1.7.1
 
       - name: Show Forge version
         run: forge --version
