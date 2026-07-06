@@ -247,7 +247,6 @@ function computeEcdhSharedSecret(priv, pubUncompressed) {
   }
   // Lazy require: @noble/secp256k1 is in package.json (^3.0.0).
   // We don't import at top of file to avoid SSR-time issues.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const noble = require("@noble/secp256k1");
   const point = noble.Point.fromHex("04" + pubUncompressed.slice(2));
   const scalar = bigintToBytes(priv);

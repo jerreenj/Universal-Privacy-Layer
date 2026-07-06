@@ -25,6 +25,8 @@
       "native_swap_wrapper": "0x68bd7107439f108b1e846e9c996d8f2eb78692031425ae313ddc20bd4f4c1407",
       "native_swap_smoke": "0x73a67e9595f99ca77b9b82044c1a68649f81346f05a111814c626f4b976bfbb4",
       "native_swap_topup_fundUSDC": "0xbd16f192577b3d403abae80d22433a6d460db4e069b45f27cef5f82414919fd8",
+      "native_swap_topup2_approve": "0x474e4c95a6edbc3b7b045cb946e7806a6e62e6a88295710f0c5c6e41e7245ce7",
+      "native_swap_topup2_fundUSDC": "0x709008fe3fd55110a5caae1947967671da6d16001916986db34906d272a67f9e",
       "native_swap_setRate_1700": "0xbb183bb2dbb36958be0f7fca7aaa15f39d5d4bcb23569da1a1407589cb885484",
       "relayer_hot_wallet_fund": "0xeec582a4aa166be5c8ec159c8e974495d2b0e206563ae5ac6fd260b73f4b5f29",
       "relayer_setRelayer": "0x225c781ee541c19ba20bfdd6bffa892f74746ce89b69a344eeed3731fa6a3d67"
@@ -44,7 +46,7 @@
     "native_swap_wrapper": "0x582c57a7ba6e7758e75dc5334a5e8ff096515d09",
     "native_swap_usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     "native_swap_rate_per_eth": "1700000000",
-    "native_swap_reserve_usdc": "2251348",
+    "native_swap_reserve_usdc": "6081433",
     "privacy_relayer_hot_wallet": "0x2d82E56f56e4483032fEf8248c2EB75C45A68D2d",
     "privacy_relayer_hot_wallet_keyfile": "scripts/.relayer-hot-wallet.txt"
   }

@@ -46,22 +46,30 @@ COPY backend/ ./backend/
 # subprocess target).
 COPY scripts/zk_pool_prover.js ./scripts/zk_pool_prover.js
 
-# Mount the snarkjs artifacts (zkey + was) into the backend image
-# so the prover has everything it needs without re-running the
-# Powers-of-Tau ceremony. These files are gitignored by default —
-# the build context must include them via a separate sync step
-# or the Bazel-like artefact promotion pipeline. If absent the
-# backend still runs; /api/zk-pool/prove-options returns
-# backend_kind=browser and the in-browser snarkjs WASM path
-# takes over (current default until the next deploy bundles them).
-COPY contracts/circuits/build/withdraw_final.zkey  ./backend/zk_artifacts/withdraw_final.zkey
-COPY contracts/circuits/build/withdraw_js/        ./backend/zk_artifacts/withdraw_js/
+# OPTIONAL: snarkjs artefacts (withdraw_final.zkey +
+# withdraw_js/withdraw.wasm) for the M2 server-side prover.
+# These files are gitignored — the public-CI build context does
+# NOT contain them. The DEFAULT backend image ships WITHOUT the
+# artefacts; /api/zk-pool/prove-options then reports
+# backend_kind=browser and the in-browser snarkjs WASM path takes
+# over (current customer-pilot behaviour). Operators who want the
+# server prover flip should:
+#   1. Build locally:  cd contracts && bash scripts/zk_powers_of_tau.sh
+#      (or `forge build circuits` for a fresh ceremony).
+#   2. tar + upload to private Azure blob storage.
+#   3. Add a late Dockerfile layer (BEFORE the user cuts an image):
+#      COPY zk_artifacts/withdraw_final.zkey \
+#           /app/backend/zk_artifacts/withdraw_final.zkey
+#      COPY zk_artifacts/withdraw_js \
+#           /app/backend/zk_artifacts/withdraw_js
+#   4. Set ZK_POOL_PROVER_ENABLED=1 env on the Container App.
+# The COPY lines are intentionally absent from the public image so
+# the public-CI docker build does NOT fail on missing files.
+# We pre-create the directory so server.py's missing-file check
+# returns a clean 503 (not a 500 stacktrace) on Day 1.
+RUN mkdir -p /app/backend/zk_artifacts/withdraw_js
 
-# Copy the Node prover runner script into the backend image (so
-# /api/zk-pool/prove -> subprocess can find it).
-# (We COPY the same script a second time below to /app/scripts so
-# the absolute path matched in server.py (/app/scripts/zk_pool_prover.js)
-# is correct. Idempotent.)
+
 
 # Copy built frontend into backend/static for serving
 COPY --from=frontend-build /build/frontend/build ./backend/static
