@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from "re
 import {
   Eye, EyeOff, RefreshCw, Zap, Fingerprint, Globe, Layers, Lock,
   History, Key, Image, FileCode, TrendingUp, MessageSquare, Users,
-  Search, FileText, BookOpen, Hash, Send, ScanLine, Receipt
+  Search, FileText, BookOpen, Hash, Send, ScanLine, Receipt,
+  ArrowDownUp
 } from "lucide-react";
 import { CHAINS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -301,6 +302,7 @@ export function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
             {[
               { id: "uniswap", icon: <RefreshCw className="w-6 h-6 mb-3 text-blue-400" />, title: "Uniswap V3", desc: "Private token swaps via V3", badge: "LIVE", badgeColor: "text-blue-400 border-blue-400/40" },
+              { id: "svmSwap", icon: <ArrowDownUp className="w-6 h-6 mb-3 text-purple-400" />, title: "Private Swap (Multi-DEX)", desc: "Uniswap V3 + Aerodrome V2 (Base)", badge: "NEW", badgeColor: "text-purple-400 border-purple-400/40" },
               { id: "hyperliquid", icon: <TrendingUp className="w-6 h-6 mb-3 text-green-400" />, title: "Hyperliquid", desc: "Anonymous perp trading", badge: "LIVE", badgeColor: "text-green-400 border-green-400/40" },
               { id: "polymarket", icon: <Globe className="w-6 h-6 mb-3 text-purple-400" />, title: "Polymarket", desc: "Private prediction bets", badge: "LIVE", badgeColor: "text-purple-400 border-purple-400/40" },
             ].map(({ id, icon, title, desc, badge, badgeColor }) => (
