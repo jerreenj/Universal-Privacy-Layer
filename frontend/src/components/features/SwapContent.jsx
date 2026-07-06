@@ -120,6 +120,23 @@ export function SwapContent() {
       });
       setStealthRecipient(r.data.stealth_address);
       toast.success("Stealth address generated");
+      // K4 follow-up: also seal + store the (EOA <-> stealth_address)
+      // mapping server-side so the row the backend stores about the
+      // mapping is unreadable ciphertext, not plaintext. Fire-and-
+      // forget — a backend hiccup must not block the customer's swap.
+      seal({
+        stealth_address:     r.data.stealth_address,
+        ephemeral_public_key: r.data.ephemeral_public_key,
+        view_tag:             r.data.view_tag,
+        chain:                "base",
+        tx_type:              "stealthMapping",
+        client:               "metadata",
+      }, signer, address).then((envelope) => {
+        axios.post(`${API}/stealth/store`, {
+          ...envelope,
+          chain: "base",
+        }).catch(() => { /* non-fatal */ });
+      }).catch(() => { /* non-fatal */ });
     } catch { toast.error("Failed to generate stealth address"); }
   };
 
