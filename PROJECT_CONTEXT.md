@@ -35,14 +35,13 @@ Supporting:
 |------|--------|-------|
 | Frontend | ✅ Working | Polished UI, broad feature set |
 | Backend | ✅ Working | 80+ endpoints, database-backed, auth, Dockerized, deployed |
-| Contracts (EVM) | ⚠️ Written, NOT deployed | Placeholder addresses (same fake addr reused for 5 chains), no Hardhat/Foundry |
+| Contracts (EVM) | ✅ Live on Base | Foundry scaffold, 49/49 tests green, 6 contracts deployed + verified via Basescan; canonical PrivacyPool at 0x3F0b...389C (multi-denom 0.01/0.1/1 ETH); AerodromePrivacyWrapper hotfix v2 at 0xe896...a646 (E2E smoke green) |
 | Contracts (Sui) | ✅ Written + tested | 12-module Move package `upl` (6 core + 6 Sui-native extensions), 123/123 unit tests green, CI-gated; ~26% of repo language bytes; mainnet publish staged (S2 done, P2 deploy pending) |
-| ZK proofs | ⚠️ Cosmetic | Backend only format-checks; `Groth16Verifier` had fake key constants (file removed P1.3 / PR #2; dead verifier glue stripped in P1.3 follow-up) |
+| ZK proofs | ✅ Real Groth16 on Base | snarkjs-generated verifier at 0x838b...5679; PrivacyPool at 0x3F0b...389C is multi-denom (0.01/0.1/1 ETH live); browser-side proof generation in the Privacy Pool tile scans the Merkle path against the right sub-pool tree per P4.1 |
 | Tests | ⚠️ Ad-hoc (EVM) / ✅ real (Sui) | Sui Move package has a real 123-test suite + CI gate; EVM side still has only the 2 manual `requests`-based scripts |
-| DeFi privacy | ⚠️ Partial | Mostly prepares/records txs rather than executing private on-chain swaps |
+| DeFi privacy | ✅ Aerodrome live | AerodromePrivacyWrapper (hotfix v2) at 0xe896...a646 wraps private ETH→USDC/USDT swaps with stealth recipient; E2E smoke green on Base mainnet (tx 0xebdfbbca…); the simpler Private Swap tile (SwapContent) and the multi-DEX picker tile (SwapSVM) are visually distinct surfaces in the dashboard |
 
-**One-line:** the web app and backend are real and broad; the deeper on-chain crypto
-claims outrun what's actually wired up. Normal for early stage — just don't overpromise.
+**One-line:** the web app, backend, and on-chain stack are now all real and live on Base mainnet. Real Aerodrome private swap (P4.2 hotfix v2 at 0xe896...a646) + real Groth16 ZK pool (multi-denom 0.01/0.1/1 ETH) + atomic EIP-712 relayer + recipient-side stealth announcement scanner. The Sui Move package is on mainnet with 4 canonical contracts. Customer pilot send+receive+swap on Base works end-to-end (live tx 0xebdfbbca).
 
 ## 4. Known issues (discovered 2026-06-21)
 

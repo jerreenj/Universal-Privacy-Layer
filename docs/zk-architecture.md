@@ -187,7 +187,7 @@ Threat model the user is in:
 | Colluding relayer | can refuse to broadcast `withdraw` | cannot front-run — `nullifierHash` is unique per deposit |
 
 **Out of scope (Future work — P4):**
-- Multi-denomination pools (today every deposit is the same `denomination`)
+- ~~Multi-denomination pools (today every deposit is the same denomination)~~ — **SHIPPED** (P4.1, 2026-07-06): PrivacyPool now supports per-denomination sub-pools (0.01 / 0.1 / 1 ETH live on Base mainnet, pool at 0x3F0b...389C). Each denomination has its own depth-20 Poseidon Merkle tree; deposit() takes the denomination as a second arg; each tree keeps its own 100-root history buffer. The global nullifierHashes spent set is intentionally shared across all sub-pools so a single note cannot be redeemed twice across two sub-pools.
 - Linking prevention against an adversary who sees the WHOLE chain (they see
   `deposit + withdraw` times but not values; with timing analysis they can
   correlate if deposits and withdrawals are statistically rare, hence the
@@ -199,7 +199,7 @@ Threat model the user is in:
 |-------|-------|-------|
 | Deposits per pool | 2²⁰ ≈ 1,048,576 | depth 20 Merkle tree |
 | Root history window | 100 | `ROOT_HISTORY_SIZE` in `PrivacyPool.sol` |
-| Fixed denomination | 0.1 ETH (default, overridable) | immutably set at deploy |
+| Per-denomination sub-pools (P4.1) | 0.01 / 0.1 / 1 ETH live on Base | owner-callable `addDenomination(d)` seeds a fresh depth-20 Poseidon Merkle tree per denom |
 | Proof generation | 5–20 s (browser, mid-laptop) | UX surfaces "generating proof…" |
 | Nullifier reuse protection | on-chain `nullifierHashes` set | double-spend reverts |
 | Ceremony trust | single-runner self-ceremony | centralised; MPC upgrade path |
