@@ -80,25 +80,27 @@ jobs:
 
       # ─── 6a. Sync the PrivacyRelayer hot-wallet key into the Container App
       #         so the relayed send path can sign with the dedicated
-      #         hot-wallet address `0x2d82E56f…` (NOT the deployer EOA).
-      #         If `secrets.RELAYER_PRIVATE_KEY` is unset (e.g. early
-      #         bootstrapping), the script SKIPS the secret setting so we
-      #         don't leave a half-set state on the Container App.
+      #         hot-wallet address 0x2d82E56f... (NOT the deployer EOA).
+      #         Idempotent: az containerapp secret set + update are both
+      #         no-ops when the secret is already current. Step is gated by
+      #         the GH repo secret being set; if it is not (e.g. someone
+      #         accidentally cleared it), the step is a no-op and we log
+      #         a warning instead of leaving the Container App half-set.
       - name: Sync RELAYER_PRIVATE_KEY into Container App
-        if: ${{ vars.ACA_RESOURCE_GROUP != '' && secrets.RELAYER_PRIVATE_KEY != '' }}
+        if: ${{ secrets.RELAYER_PRIVATE_KEY != '' }}
         env:
           RELAYER_PK: ${{ secrets.RELAYER_PRIVATE_KEY }}
         run: |
-          echo "::notice::Setting RELAYER_PRIVATE_KEY secret on Container App"
+          echo Setting RELAYER_PRIVATE_KEY secret on Container App
           az containerapp secret set \
             --resource-group "${{ vars.ACA_RESOURCE_GROUP }}" \
             --name "${{ vars.ACA_APP_NAME }}" \
-            --secrets "relayer-private-key=${RELAYER_PK}"
+            --secrets "relayer-private-key=$RELAYER_PK"
           az containerapp update \
             --resource-group "${{ vars.ACA_RESOURCE_GROUP }}" \
             --name "${{ vars.ACA_APP_NAME }}" \
             --set-env-vars "RELAYER_PRIVATE_KEY=secretref:relayer-private-key"
-          echo "::notice::RELAYER_PRIVATE_KEY set; backend /api/relayer/submit can now sign"
+          echo RELAYER_PRIVATE_KEY set; backend /api/relayer/submit can now sign
 
       # ─── 7. Smoke-test the health endpoint ─────────────────────────────────
       - name: Health check
