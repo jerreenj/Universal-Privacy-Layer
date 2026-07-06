@@ -1,19 +1,83 @@
 import { useState } from "react";
-import { RefreshCw, ChevronDown, Loader2 } from "lucide-react";
+import { RefreshCw, ChevronDown, Loader2, Wallet, AlertCircle, Search } from "lucide-react";
 import { CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 
 export function HiddenBalanceDashboard() {
-  const { hiddenBalance, fetchHiddenBalance } = useWallet();
+  const { address, hiddenBalance, hiddenBalanceError, fetchHiddenBalance, connectWallet } = useWallet();
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(null);
 
   const refresh = async () => { setLoading(true); await fetchHiddenBalance(); setLoading(false); };
 
-  if (!hiddenBalance) return (
-    <div className="text-center py-8">
-      <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-white/50" />
-      <p className="text-white/50">Loading hidden balances...</p>
+  // ───── State machine — never block on "Loading…" forever. The previous
+  // implementation showed the spinner when hiddenBalance stayed null, which
+  // is true for ANY of: (a) no wallet, (b) silent fetch failure, (c) the
+  // fetch simply hasn't returned yet. We split each case so the user gets
+  // an actionable response. ─────
+
+  // (a) No wallet connected — nothing to load; prompt to connect.
+  if (!address) return (
+    <div className="text-center py-12 space-y-3">
+      <Wallet className="w-10 h-10 mx-auto text-white/30" />
+      <p className="text-white/60 font-semibold">Connect a wallet to view hidden balances</p>
+      <p className="text-xs text-white/40">Your stealth-address balances aggregate here once you're connected.</p>
+      <button
+        onClick={connectWallet}
+        className="mt-2 inline-flex items-center gap-2 px-4 py-2 bg-white text-black text-xs font-semibold hover:bg-white/90 transition-colors"
+      >
+        Connect Wallet
+      </button>
+    </div>
+  );
+
+  // (b) Fetch failed — surface the error + offer Retry. The previous empty
+  // `catch {}` left the user staring at a spinner forever.
+  if (hiddenBalanceError) return (
+    <div className="text-center py-12 space-y-3">
+      <AlertCircle className="w-10 h-10 mx-auto text-red-400" />
+      <p className="text-white/60 font-semibold">Couldn't load hidden balances</p>
+      <p className="text-xs text-red-400/70 max-w-md mx-auto">{hiddenBalanceError}</p>
+      <button
+        onClick={refresh}
+        disabled={loading}
+        className="mt-2 inline-flex items-center gap-2 px-4 py-2 border border-white/40 text-white text-xs font-semibold hover:bg-white/10 transition-colors disabled:opacity-40"
+      >
+        <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+        {loading ? "Retrying…" : "Retry"}
+      </button>
+    </div>
+  );
+
+  // (c) Loading — the wallet is connected, no error, but the response hasn't
+  // come back yet (or has never been triggered). Try to fire the fetch on
+  // render if we haven't already — fixes the case where the user lands here
+  // before WalletContext's mount-time useEffect ran.
+  if (!hiddenBalance) {
+    if (!loading) refresh();
+    return (
+      <div className="text-center py-8">
+        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-white/50" />
+        <p className="text-white/50">Loading hidden balances…</p>
+      </div>
+    );
+  }
+
+  // (d) Loaded but no stealth addresses yet — friendly empty state.
+  const totalAddresses = hiddenBalance.stealth_address_count || 0;
+  if (totalAddresses === 0 && Object.keys(hiddenBalance.chains || {}).length === 0) return (
+    <div className="text-center py-12 space-y-3">
+      <Search className="w-10 h-10 mx-auto text-white/30" />
+      <p className="text-white/60 font-semibold">No stealth addresses yet</p>
+      <p className="text-xs text-white/40 max-w-md mx-auto">Send privately to your meta-address, then come back here to see aggregated balances across all chains.</p>
+      <button
+        onClick={refresh}
+        disabled={loading}
+        className="mt-2 inline-flex items-center gap-2 px-4 py-2 border border-white/20 text-white/70 text-xs hover:border-white/40 hover:text-white transition-colors disabled:opacity-40"
+      >
+        <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+        {loading ? "Refreshing…" : "Refresh"}
+      </button>
     </div>
   );
 

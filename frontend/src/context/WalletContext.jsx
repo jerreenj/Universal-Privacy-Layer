@@ -41,6 +41,7 @@ export function WalletProvider({ children }) {
   // Dashboard hero so users see the number that matters to them.
   const [usdcBalance, setUsdcBalance] = useState(null);
   const [hiddenBalance, setHiddenBalance] = useState(null);
+  const [hiddenBalanceError, setHiddenBalanceError] = useState(null);
   const [signer, setSigner] = useState(null);
   const [solConn, setSolConn] = useState(null);
   const [connecting, setConnecting] = useState(false);
@@ -258,11 +259,25 @@ export function WalletProvider({ children }) {
   }, [address, chain, vm, solConn]);
 
   const fetchHiddenBalance = useCallback(async () => {
-    if (!address) return;
+    if (!address) {
+      // No wallet -> there's nothing to fetch. Surface this distinctly from
+      // a real fetch error so the UI shows "Connect a wallet" instead of
+      // an infinite spinner (the previous behaviour).
+      setHiddenBalance(null);
+      setHiddenBalanceError(null);
+      return;
+    }
     try {
       const res = await axios.get(`${API}/balance/hidden/${address}`);
       setHiddenBalance(res.data);
-    } catch {}
+      setHiddenBalanceError(null);
+    } catch (e) {
+      // Surface the failure to the UI — the previous empty `catch {}` left
+      // `hiddenBalance` stuck at `null` and the dashboard rendered "Loading…"
+      // forever. We keep the spinner going while retrying, then render the
+      // error explicitly on the dashboard with a Retry button.
+      setHiddenBalanceError(e?.response?.data?.detail || e?.message || "Failed to load hidden balance");
+    }
   }, [address]);
 
   useEffect(() => { if (address) { fetchBalance(); fetchUsdcBalance(); fetchHiddenBalance(); } }, [address, chain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance]);
@@ -274,7 +289,7 @@ export function WalletProvider({ children }) {
   }, [disconnect]);
 
   return (
-    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, connectWallet, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance }}>
+    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, hiddenBalanceError, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, connectWallet, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance }}>
       {children}
     </WalletContext.Provider>
   );
