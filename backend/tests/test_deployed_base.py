@@ -31,13 +31,19 @@ MANIFEST = REPO_ROOT / "contracts" / "deployed_base.json"
 # addresses (those listed in commit 96e9fb5) are still on-chain but have
 # been superseded; the backend is intentionally pointed ONLY at the new
 # pool for any active route.
+#
+# P4.4 amount-hide round (2026-07-06): added native_swap_wrapper (Core
+# Private Swap endpoint) and confidential_swap_wrapper (amount-hidden
+# variant — emits bytes32 commitment instead of plaintext usdcOut).
 EXPECTED_BASE = {
     "privacy_pool":     "0x3F0b23Aca0624981a503e8f042db2F3884D0C89C",  # P4.1 multi-denom
     "privacy_verifier": "0x838b7c20b1a97cAA6379542d03983b4571275679",  # P4.1
-    "privacy_relayer":  "0x69DA62568CAbc0940a0Bb6Bc7017e3EB8BD7c175",  # P4.1
+    "privacy_relayer":  "0xCea5b3dD22c5306dEF78767b27Ec9E276c5e1C42",  # P2.9.7 atomic relayer (registry wired + hot-wallet relayer slot)
     "stealth_registry": "0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1",  # P4.1
     "uniswap_wrapper":  "0x9C30cdCd73347BF18A5bD424C37E5714e2606362",  # P4.1
     "aerodrome_wrapper": "0xe896e6f51af137c32db7eb4e3b2de795d392a646", # P4.2 hotfix (Route struct now includes factory)
+    "native_swap_wrapper":     "0x582c57a7ba6e7758e75dc5334a5e8ff096515d09", # P4.3 NativePrivateSwap in-house ETH->USDC vault
+    "confidential_swap_wrapper": "0x66f71263436da696ec3ffdff925b101585d04e0f", # P4.4 amount-hide variant
     "deployer":         "0x3f44A6451439673D95082A1337045a25ec275394",  # unchanged
 }
 EXPECTED_CHAIN_ID = 8453

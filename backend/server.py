@@ -589,6 +589,12 @@ def _load_deployed_addresses(static_contracts: Dict[str, Dict[str, Any]]) -> Dic
         # straight from reserves to the stealth recipient — no public
         # AMM observable.
         "native_swap_wrapper",
+        # Phase 4.4 (amount-hide pilot round): ConfidentialNativePrivateSwap
+        # is the amount-hidden variant of NativePrivateSwap — same vault
+        # mechanics but the swap event REPLACES plaintext usdcOut with a
+        # 32-byte commitment. Surfaced here so /api/deployments exposes
+        # it to the frontend Privacy-Mode toggle.
+        "confidential_swap_wrapper",
         "deployer", "fee_recipient", "pool_owner",
     )
     provenance_keys = ("chainId", "deployedAt", "commit", "redeployedNote")
@@ -6141,10 +6147,17 @@ async def deployments():
             "privacy_verifier":   verifier if _is_real(verifier) else None,
             "aerodrome_wrapper":  aero     if _is_real(aero)     else None,
             "native_swap_wrapper": (cfg.get("native_swap_wrapper") if _is_real(cfg.get("native_swap_wrapper")) else None),
+            # ConfidentialNativePrivateSwap (amount-hide variant) — emits
+            # bytes32 usdcAmountCommitment instead of plaintext usdcOut.
+            # Surfaced under `confidential_swap_wrapper` so the FE
+            # PrivacyMode toggle can route to it without a code change
+            # on the dashboard grid.
+            "confidential_swap_wrapper": (cfg.get("confidential_swap_wrapper") if _is_real(cfg.get("confidential_swap_wrapper")) else None),
             "deployed": (
                 _is_real(relayer)  or _is_real(registry) or _is_real(uwrapper)
                 or _is_real(pool)  or _is_real(verifier) or _is_real(aero)
                 or _is_real(cfg.get("native_swap_wrapper"))
+                or _is_real(cfg.get("confidential_swap_wrapper"))
             ),
             "explorer": cfg.get("explorer"),
         }

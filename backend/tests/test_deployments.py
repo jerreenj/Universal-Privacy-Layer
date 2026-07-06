@@ -173,8 +173,13 @@ class TestDeploymentsNoManifests:
         # surfaces it for non-USDC pairs (no WETH/USDC pool on Uniswap V3
         # per the P1.13 finding; do NOT promote it to default).
         assert base.get("uniswap_wrapper") == "0x9C30cdCd73347BF18A5bD424C37E5714e2606362"
+        # ConfidentialNativePrivateSwap (P4.4 amount-hide variant). Same
+        # vault mechanics as native_swap_wrapper but emits bytes32
+        # usdcAmountCommitment INSTEAD of plaintext usdcOut. Surface it
+        # in /api/deployments so the FE Privacy-Mode toggle can reach it.
+        assert base.get("confidential_swap_wrapper") == "0x66f71263436da696ec3ffdff925b101585d04e0f"
         # Each address must be a valid 0x-prefixed 20-byte hex string.
-        for k in ["privacy_pool", "privacy_verifier", "aerodrome_wrapper", "native_swap_wrapper", "uniswap_wrapper"]:
+        for k in ["privacy_pool", "privacy_verifier", "aerodrome_wrapper", "native_swap_wrapper", "uniswap_wrapper", "confidential_swap_wrapper"]:
             v = base.get(k)
             assert v is not None
             assert v.startswith("0x") and len(v) == 42, f"{k}={v!r} not a 0x-prefixed 20-byte address"
