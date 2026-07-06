@@ -2329,29 +2329,82 @@ class ZKPoolDepositRequest(BaseModel):
 
 
 @api_router.post("/zk-pool/deposit")
-async def zk_pool_deposit(req: ZKPoolDepositRequest):
-    """
-    Record a deposit into the PrivacyPool.
-    The frontend (or relayer) calls this after a successful on-chain deposit tx.
-    The backend stores the commitment + its denomination so it can later
-    serve Merkle paths scoped per tree.
+async def zk_pool_deposit(
+    # Legacy plaintext shape (P3.4 / P4.0) — kept for any pre-K5 tool.
+    commitment:        Optional[str] = Body(default=None),
+    tx_hash:           Optional[str] = Body(default=None),
+    leaf_index:        Optional[int] = Body(default=None),
+    denomination_wei:  Optional[int] = Body(default=None),
+    # K5 sealed-envelope shape — same AES-256-GCM key as K2/K4.
+    ciphertext:        Optional[str] = Body(default=None),
+    iv:                Optional[str] = Body(default=None),
+    salt:              Optional[str] = Body(default=None),
+    addr:              Optional[str] = Body(default=None),
+):
+    """Record a deposit into the PrivacyPool.
+
+    Accepts two body shapes:
+      Plaintext (legacy): {commitment, tx_hash?, leaf_index?,
+        denomination_wei?} — the server stores the row as-is so any
+        pre-K5 tool remains functional.
+
+      Ciphertext envelope (preferred, K5+): {ciphertext, iv, salt,
+        addr}. Inner JSON is the same payload as the plaintext
+        shape — encrypted with the wallet-derived seal key so the
+        server cannot read (commitment, leaf_index, tx_hash,
+        denomination_wei) without the user's wallet signature.
+
+    In both cases the row is later used to serve Merkle paths via
+    /api/zk-pool/path. The sealed envelope variant keeps that
+    metadata server-blind; the deposit's privacy on-chain is real
+    regardless of this row (Deposit event is public on Base), but
+    the side-channel DB leak from this row is closed.
     """
     try:
-        LEGACY_DENOM = 10**17  # 0.1 ETH (P3.4 default)
-        d = req.denomination_wei if req.denomination_wei is not None and req.denomination_wei > 0 else LEGACY_DENOM
+        if ciphertext and iv and salt and addr:
+            import hashlib
+            envelope_id = "sha256:" + hashlib.sha256(
+                f"zkdeposit|{addr}|{ciphertext}|{salt}".encode("utf-8")
+            ).hexdigest()
+            doc = {
+                "id": envelope_id,
+                "addr": addr,
+                "ciphertext": ciphertext,
+                "iv": iv,
+                "salt": salt,
+                "encrypted": True,
+                "created_at": datetime.now(timezone.utc),
+            }
+            await db.pool_deposits.insert_one(doc)
+            return {
+                "status": "recorded",
+                "envelope_id": envelope_id,
+                "encrypted": True,
+            }
+        # Legacy plaintext row (back-compat).
+        if not commitment:
+            raise HTTPException(
+                status_code=400,
+                detail="Body must be either a plaintext commitment record or "
+                       "the sealed envelope (ciphertext/iv/salt/addr).",
+            )
+        LEGACY_DENOM = 10**17
+        d = denomination_wei if denomination_wei is not None and denomination_wei > 0 else LEGACY_DENOM
         doc = {
-            "commitment": req.commitment,
-            "leaf_index": req.leaf_index,
-            "tx_hash": req.tx_hash,
+            "commitment": commitment,
+            "leaf_index": leaf_index,
+            "tx_hash": tx_hash,
             "denomination_wei": str(d),
             "created_at": datetime.now(timezone.utc),
         }
         await db.pool_deposits.insert_one(doc)
         return {
             "status": "recorded",
-            "commitment": req.commitment,
+            "commitment": commitment,
             "denomination_wei": str(d),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"zk-pool/deposit error: {e}")
         raise HTTPException(status_code=500, detail="Failed to record deposit")
