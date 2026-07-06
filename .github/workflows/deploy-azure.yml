@@ -78,19 +78,6 @@ jobs:
             --name ${{ vars.ACA_APP_NAME }} \
             --image ${{ vars.ACR_NAME }}.azurecr.io/privacycloak:${{ env.IMAGE_TAG }}
 
-      # ─── 6a. Sync the PrivacyRelayer hot-wallet key into the Container App
-      #         so the relayed send path can sign with the dedicated
-      #         hot-wallet address 0x2d82E56f... (NOT the deployer EOA).
-      #         Idempotent: az containerapp secret set + update are both
-      #         no-ops when the secret is already current. The GH repo
-      #         secret being set is required; if cleared, the step
-      #         silently no-ops so the deploy still succeeds.
-      - name: Sync RELAYER_PRIVATE_KEY secret
-        if: ${{ secrets.RELAYER_PRIVATE_KEY != '' }}
-        env:
-          RP: ${{ secrets.RELAYER_PRIVATE_KEY }}
-        run: scripts/sync_relayer_secret.sh ${{ vars.ACA_RESOURCE_GROUP }} ${{ vars.ACA_APP_NAME }} "$RP"
-
       # ─── 7. Smoke-test the health endpoint ─────────────────────────────────
       - name: Health check
         run: |
