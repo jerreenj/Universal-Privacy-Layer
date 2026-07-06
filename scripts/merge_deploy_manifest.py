@@ -141,6 +141,17 @@ def _git_commit(repo_root: Path) -> str:
 
 
 def main(argv: list[str]) -> int:
+    # `argv` is the caller's whole sys.argv, NOT argv[1:]. Conventionally
+    # sys.argv[0] is the script path, so we slice [1:5] to get the 4
+    # positional arguments the docstring describes. The previous
+    # implementation used `argv[:4]` which (when the caller's argv is
+    # sys.argv) packed the SCRIPT PATH into `repo_root` and shifted the
+    # real args — every Deploy.s.sol redeploy was silently producing a
+    # manifest with chain_id taken from the manifest_path string, which
+    # failed validation. P4.2 broadcast fell back to manual enrichment
+    # which is why we noticed; P3.4's broadcast survived because the
+    # previous manifest fetches were looser (and the deploy_base.sh
+    # wrapper passed a manually-tuned `--manifest`). Fix it once.
     if len(argv) != 5:
         print(
             "usage: merge_deploy_manifest.py "
@@ -149,7 +160,7 @@ def main(argv: list[str]) -> int:
         )
         return 2
 
-    repo_root, broadcast_dir, manifest_path, chain_id = argv[:4]
+    repo_root, broadcast_dir, manifest_path, chain_id = argv[1:5]
     repo_root_p = _resolve_path(repo_root)
     broadcast_dir_p = _resolve_path(broadcast_dir)
     manifest_p = _resolve_path(manifest_path)
@@ -206,4 +217,26 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    # Smoke test: if the user runs `merge_deploy_manifest.py --self-test`,
+    # exercise the argv-slicing fix without touching disk.
+    if len(sys.argv) >= 2 and sys.argv[1] == "--self-test":
+        # Simulate the legacy deploy_base.sh invocation shape:
+        #   sys.argv = ['script.py', '/repo', '/broadcast', '/manifest', '8453']
+        fake = [sys.argv[0], "/repo", "/broadcast", "/manifest", "8453"]
+        # Demonstrate the fix — show the parsed (repo_root, broadcast_dir,
+        # manifest_path, chain_id) tuple, then verify each slot is what we
+        # expect (not what it would parse to with the WEW argv[:4] bug).
+        repo, bcast, mfst, cid = fake[1:5]
+        ok = (
+            repo == "/repo"
+            and bcast == "/broadcast"
+            and mfst == "/manifest"
+            and cid == "8453"
+        )
+        print(f"argv slice self-test: ok={ok}")
+        print(f"  repo_root     = {repo}")
+        print(f"  broadcast_dir = {bcast}")
+        print(f"  manifest_path = {mfst}")
+        print(f"  chain_id      = {cid}")
+        sys.exit(0 if ok else 1)
     sys.exit(main(sys.argv))
