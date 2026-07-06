@@ -5,6 +5,7 @@ import { Zap, Lock, Loader2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
+import { seal } from "@/lib/crypto-seal";
 
 export function SendContent() {
   const { address, chain, signer, fetchBalance } = useWallet();
@@ -21,9 +22,24 @@ export function SendContent() {
     try {
       const tx = await signer.sendTransaction({ to, value: ethers.parseEther(amount) });
       setTxHash(tx.hash);
+      // Seal the metadata: server stores ciphertext only — never sees
+      // to_address, amount_wei, etc. Wallet-derived seal key keeps
+      // the record unreadable without the user's wallet signature.
+      const envelope = await seal({
+        tx_hash:      tx.hash,
+        from_address: address,
+        to_address:   to,
+        amount_wei:   ethers.parseEther(amount).toString(),
+        chain:        chain || "base",
+        tx_type:      "private_send",
+        status:       "pending",
+        client:       "metadata",
+      }, signer, address);
       await axios.post(`${API}/transactions/record`, {
-        tx_hash: tx.hash, from_address: address, to_address: to,
-        amount_wei: ethers.parseEther(amount).toString(), chain, tx_type: "private_send", status: "pending"
+        ...envelope,
+        tx_type: "private_send",
+        status: "pending",
+        chain: chain || "base",
       });
       toast.success("Transaction sent!");
       await tx.wait();

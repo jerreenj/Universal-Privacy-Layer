@@ -35,6 +35,7 @@ import { Shield, TrendingUp, RefreshCw, Loader2, ExternalLink } from "lucide-rea
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
+import { seal } from "@/lib/crypto-seal";
 
 // AerodromePrivacyWrapper — the ABI of the on-chain contract we call.
 // P4.2 hotfix: Route is now 4 fields (from, to, stable, factory).
@@ -249,8 +250,10 @@ export function AerodromePrivateSwap() {
       // surface anywhere else in the UI — per the "history section
       // only" rule for customer-visible swap data. Fire-and-forget:
       // a backend hiccup must not roll back the user's on-chain swap
-      // confirmation.
-      axios.post(`${API}/transactions/record`, {
+      // confirmation. Sealed record: server stores ciphertext only —
+      // wallet-derived seal key keeps the row unreadable without the
+      // user's signature. The /transactions/history tile unseals locally.
+      seal({
         tx_hash:     tx.hash,
         from_address: address,
         to_address:  stealthRecipient,
@@ -258,7 +261,15 @@ export function AerodromePrivateSwap() {
         chain:       "base",
         tx_type:     "private_swap",
         status:      "confirmed",
-      }).catch(() => {});
+        client:      "metadata",
+      }, activeSigner, address).then((envelope) => {
+        axios.post(`${API}/transactions/record`, {
+          ...envelope,
+          chain:   "base",
+          tx_type: "private_swap",
+          status:  "confirmed",
+        }).catch(() => {});
+      }).catch(() => { /* non-fatal */ });
       setQuote(null); setAmount("");
     } catch (e) {
       toast.error(e.message?.slice(0, 80) || "Swap failed");

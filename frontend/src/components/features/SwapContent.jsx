@@ -34,6 +34,7 @@ import { RefreshCw, Loader2, ExternalLink, Check, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
+import { seal } from "@/lib/crypto-seal";
 
 // AerodromePrivacyWrapper ABI — only the calls the customer surface makes
 // (quote + swap + read stable/volatile factory so the Route struct can be
@@ -219,7 +220,10 @@ export function SwapContent() {
       // Record the swap so it shows up in the Transaction History tile
       // (the /transactions/history/{address} endpoint is consumed ONLY
       // by TransactionHistory.jsx, so this never surfaces anywhere else).
-      axios.post(`${API}/transactions/record`, {
+      // Sealed record: server stores ciphertext only — wallet-derived
+      // seal key keeps the row unreadable without the user's wallet
+      // signature. The /transactions/history tile unseals locally.
+      seal({
         tx_hash:      tx.hash,
         from_address: address,
         to_address:   stealthRecipient,
@@ -227,7 +231,15 @@ export function SwapContent() {
         chain:        "base",
         tx_type:      "private_swap",
         status:       "confirmed",
-      }).catch(() => {});
+        client:       "metadata",
+      }, activeSigner, address).then((envelope) => {
+        axios.post(`${API}/transactions/record`, {
+          ...envelope,
+          chain:  "base",
+          tx_type: "private_swap",
+          status:  "confirmed",
+        }).catch(() => {});
+      }).catch(() => { /* non-fatal */ });
       fetchBalance && fetchBalance();
       setQuote(null); setAmount("");
     } catch (e) {

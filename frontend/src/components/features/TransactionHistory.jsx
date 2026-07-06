@@ -1,23 +1,57 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { ethers } from "ethers";
 import { ArrowUpRight, ArrowDownLeft, History, Loader2 } from "lucide-react";
 import { API } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
+import { unsealMany } from "@/lib/crypto-seal";
 
 export function TransactionHistory() {
-  const { address } = useWallet();
+  const { address, signer } = useWallet();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (address) {
-      axios.get(`${API}/transactions/history/${address}`)
-        .then(res => setTransactions(res.data.transactions || []))
-        .catch(() => {})
-        .finally(() => setLoading(false));
+  const refresh = useCallback(async () => {
+    if (!address || !signer) {
+      setLoading(false);
+      return;
     }
-  }, [address]);
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API}/transactions/history/${address}`);
+      const raw = res.data.transactions || [];
+
+      // Each row may be a legacy plaintext record (pre-K2) or a
+      // sealed envelope (K2+). Plaintext rows are used as-is;
+      // envelopes are unsealed locally with the wallet-derived seal
+      // key so the server never had to read the row contents.
+      const sealed = raw.filter((r) => r && r.encrypted === true);
+      const plaintext = raw.filter((r) => r && r.encrypted !== true);
+      const unsealed = await unsealMany(sealed, signer);
+
+      // Re-merge and sort by created_at desc. Direction inference
+      // happens here for sealed rows (server can't see contents); for
+      // plaintext rows the backend already set tx.direction.
+      const myAddr = (address || "").toLowerCase();
+      const merged = [...plaintext, ...unsealed]
+        .filter((r) => r && !r.__sealFailed)
+        .map((r) => {
+          if (r.direction) return r;
+          // First-time inference for unsealed rows: out if user paid, in if user received.
+          if (!r.from_address) return r;
+          r.direction = String(r.from_address).toLowerCase() === myAddr ? "out" : "in";
+          return r;
+        })
+        .sort((a, b) => (b?.created_at || "").localeCompare(a?.created_at || ""));
+      setTransactions(merged);
+    } catch {
+      setTransactions([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [address, signer]);
+
+  useEffect(() => { refresh(); }, [refresh]);
 
   if (loading) return (
     <div className="text-center py-8">
