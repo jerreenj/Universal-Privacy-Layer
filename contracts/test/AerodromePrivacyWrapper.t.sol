@@ -9,6 +9,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         swapExactTokensForETH / swapExactTokensForTokens with a
 ///         1-to-1 mapping for any route in tests (real swaps go through
 ///         Aerodrome's actual pool factory — that's outside this contract).
+///         Mirrors Aerodrome V2's 4-field Route struct (from, to,
+///         stable, factory).
 contract MockAerodromeRouter {
     bool public failNext = false;
     uint256 public nextAmountOut = 0;
@@ -155,6 +157,13 @@ contract AerodromePrivacyWrapperTest is Test {
     MockERC20 internal usdc; // 6-decimal USDC clone
     address internal feeRecipient = address(0xFEED);
 
+    // Aerodrome V2 uses ONE PoolFactory for both stable + volatile pools
+    // — match AERODROME_VOLATILE_FACTORY and AERODROME_STABLE_FACTORY in
+    // the wrapper constructor. Use the canonical Base Mainnet address
+    // for tests to mirror what deployments/wrapper config expects.
+    address internal poolFactoryV = 0x420DD381b31aEf6683db6B902084cB0FFECe40Da;
+    address internal poolFactoryS = 0x420DD381b31aEf6683db6B902084cB0FFECe40Da;
+
     address internal user = address(0xBEEF);
     address internal recipientStealth = address(0xC0FFEE);
 
@@ -165,7 +174,8 @@ contract AerodromePrivacyWrapperTest is Test {
         mockRouter = new MockAerodromeRouter();
         weth = new MockWETH9();
         usdc = new MockERC20("USDC");
-        wrapper = new AerodromePrivacyWrapper(address(mockRouter), address(weth), feeRecipient);
+        wrapper =
+            new AerodromePrivacyWrapper(address(mockRouter), address(weth), feeRecipient, poolFactoryV, poolFactoryS);
         mockRouter.setNextAmountOut(AMOUNT_OUT_USDC);
         vm.label(feeRecipient, "feeRecipient");
 
@@ -178,18 +188,64 @@ contract AerodromePrivacyWrapperTest is Test {
         vm.deal(user, 100 ether);
     }
 
-    /// @notice Constructor enforces non-zero addresses.
+    /// @notice Helper — builds a single-hop Route with the canonical
+    ///         Aerodrome PoolFactory — mirrors what the wrapper's
+    ///         `route()` helper emits.
+    function _routeVolatile() internal view returns (IAerodromeRouter.Route[] memory r) {
+        r = new IAerodromeRouter.Route[](1);
+        r[0] = IAerodromeRouter.Route(address(weth), address(usdc), false, poolFactoryV);
+    }
+
+    /// @notice Constructor enforces non-zero addresses on every arg.
     function testRevert_ConstructorZeroAddress() public {
         vm.expectRevert(AerodromePrivacyWrapper.InvalidRecipient.selector);
-        new AerodromePrivacyWrapper(address(0), address(weth), feeRecipient);
+        new AerodromePrivacyWrapper(address(0), address(weth), feeRecipient, poolFactoryV, poolFactoryS);
+        vm.expectRevert(AerodromePrivacyWrapper.InvalidRecipient.selector);
+        new AerodromePrivacyWrapper(address(mockRouter), address(0), feeRecipient, poolFactoryV, poolFactoryS);
+        vm.expectRevert(AerodromePrivacyWrapper.InvalidRecipient.selector);
+        new AerodromePrivacyWrapper(address(mockRouter), address(weth), address(0), poolFactoryV, poolFactoryS);
+        vm.expectRevert(AerodromePrivacyWrapper.InvalidRecipient.selector);
+        new AerodromePrivacyWrapper(address(mockRouter), address(weth), feeRecipient, address(0), poolFactoryS);
+        vm.expectRevert(AerodromePrivacyWrapper.InvalidRecipient.selector);
+        new AerodromePrivacyWrapper(address(mockRouter), address(weth), feeRecipient, poolFactoryV, address(0));
+    }
+
+    /// @notice Immutable address set is what we passed at deploy.
+    function test_Immutables() public {
+        assertEq(wrapper.aerodromeRouter(), address(mockRouter));
+        assertEq(wrapper.WETH(), address(weth));
+        assertEq(wrapper.volatileFactory(), poolFactoryV);
+        assertEq(wrapper.stableFactory(), poolFactoryS);
+    }
+
+    /// @notice `route(from, to, stable)` returns a struct with the
+    ///         correct factory for the stable flag — this is the
+    ///         helper the frontend uses to build Route arrays.
+    function test_Route() public {
+        IAerodromeRouter.Route memory r = wrapper.route(address(weth), address(usdc), true);
+        assertEq(r.from, address(weth));
+        assertEq(r.to, address(usdc));
+        assertTrue(r.stable);
+        assertEq(r.factory, poolFactoryS);
+
+        IAerodromeRouter.Route memory r2 = wrapper.route(address(usdc), address(weth), false);
+        assertEq(r2.from, address(usdc));
+        assertEq(r2.to, address(weth));
+        assertFalse(r2.stable);
+        assertEq(r2.factory, poolFactoryV);
+    }
+
+    /// @notice factoryFor(stable) toggles between volatile/stable immutables.
+    function test_FactoryFor() public {
+        assertEq(wrapper.factoryFor(false), poolFactoryV);
+        assertEq(wrapper.factoryFor(true), poolFactoryS);
     }
 
     /// @notice ETH -> USDC private swap succeeds; output lands at stealth
     ///         recipient, fee lands at feeRecipient, msg.sender pays exactly
     ///         msg.value and gets nothing back.
     function test_PrivateSwapETHForTokenPaysOut() public {
-        IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
-        routes[0] = IAerodromeRouter.Route(address(weth), address(usdc), false);
+        IAerodromeRouter.Route[] memory routes = _routeVolatile();
 
         uint256 feeBefore = feeRecipient.balance;
 
@@ -207,8 +263,7 @@ contract AerodromePrivacyWrapperTest is Test {
     ///         MUST NOT also call WETH.deposit. Sanity: the wrapper
     ///         shouldn't hold any WETH after the swap.
     function test_PrivateSwapETHForTokenDoesNotHoldWETH() public {
-        IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
-        routes[0] = IAerodromeRouter.Route(address(weth), address(usdc), false);
+        IAerodromeRouter.Route[] memory routes = _routeVolatile();
         vm.prank(user);
         wrapper.privateSwapETHForToken{value: AMOUNT_IN}(
             address(usdc), routes, 0, recipientStealth, block.timestamp + 1 hours
@@ -219,8 +274,7 @@ contract AerodromePrivacyWrapperTest is Test {
 
     /// @notice Reverts when msg.value is zero.
     function testRevert_NoETHSent() public {
-        IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
-        routes[0] = IAerodromeRouter.Route(address(weth), address(usdc), false);
+        IAerodromeRouter.Route[] memory routes = _routeVolatile();
         vm.prank(user);
         vm.expectRevert(AerodromePrivacyWrapper.NoETHSent.selector);
         wrapper.privateSwapETHForToken(address(usdc), routes, 0, recipientStealth, block.timestamp + 1);
@@ -228,8 +282,7 @@ contract AerodromePrivacyWrapperTest is Test {
 
     /// @notice Reverts when recipient is zero.
     function testRevert_InvalidRecipient() public {
-        IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
-        routes[0] = IAerodromeRouter.Route(address(weth), address(usdc), false);
+        IAerodromeRouter.Route[] memory routes = _routeVolatile();
         vm.prank(user);
         vm.expectRevert(AerodromePrivacyWrapper.InvalidRecipient.selector);
         wrapper.privateSwapETHForToken{value: AMOUNT_IN}(address(usdc), routes, 0, address(0), block.timestamp + 1);
@@ -249,8 +302,7 @@ contract AerodromePrivacyWrapperTest is Test {
     /// @notice view-quote path returns the amountOut from the router without
     ///         performing a swap.
     function test_Quote() public {
-        IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
-        routes[0] = IAerodromeRouter.Route(address(weth), address(usdc), false);
+        IAerodromeRouter.Route[] memory routes = _routeVolatile();
         uint256 quoted = wrapper.quote(AMOUNT_IN, routes);
         assertEq(quoted, AMOUNT_OUT_USDC, "quote should match the router's getAmountsOut tail");
     }
@@ -267,8 +319,7 @@ contract AerodromePrivacyWrapperTest is Test {
         address newRecipient = address(0xCAFE);
         wrapper.setFeeRecipient(newRecipient);
         // Run an ETH->USDC swap; fee should land at newRecipient now.
-        IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
-        routes[0] = IAerodromeRouter.Route(address(weth), address(usdc), false);
+        IAerodromeRouter.Route[] memory routes = _routeVolatile();
         uint256 feeBefore = newRecipient.balance;
         vm.prank(user);
         wrapper.privateSwapETHForToken{value: AMOUNT_IN}(

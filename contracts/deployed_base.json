@@ -1,15 +1,15 @@
 {
   "base": {
     "chainId": 8453,
-    "deployedAt": "2026-07-06T04:13:00Z",
-    "commit": "P4.1-multidenom-broadcast",
+    "deployedAt": "2026-07-06T05:42:00Z",
+    "commit": "P4.2-aerodrome-route-hotfix",
     "deployer": "0x3f44A6451439673D95082A1337045a25ec275394",
     "fee_recipient": "0x3f44A6451439673D95082A1337045a25ec275394",
     "pool_owner": "0x3f44A6451439673D95082A1337045a25ec275394",
     "privacy_relayer": "0x69DA62568CAbc0940a0Bb6Bc7017e3EB8BD7c175",
     "stealth_registry": "0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1",
     "uniswap_wrapper": "0x9C30cdCd73347BF18A5bD424C37E5714e2606362",
-    "aerodrome_wrapper": "0x009681CdF5441D23738EC6597e586eBB06215e3D",
+    "aerodrome_wrapper": "0xe896e6f51af137c32db7eb4e3b2de795d392a646",
     "privacy_verifier": "0x838b7c20b1a97cAA6379542d03983b4571275679",
     "privacy_pool": "0x3F0b23Aca0624981a503e8f042db2F3884D0C89C",
     "pool_kind": "multi-denom",
@@ -20,7 +20,8 @@
       "uniswap_wrapper":    "0x6bb8f1f4aea69bd9",
       "privacy_verifier":   "0x65f01d828d9596d7",
       "privacy_pool":       "0x1fcac57d5d3e43b4",
-      "aerodrome_wrapper":  "0x79adb01b670ce838"
+      "aerodrome_wrapper_v1": "0x79adb01b670ce838",
+      "aerodrome_wrapper":  "0x7d4c99536dffa1e6"
     },
     "basescan": {
       "stealth_registry":   "https://basescan.org/address/0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1",
@@ -28,8 +29,9 @@
       "uniswap_wrapper":    "https://basescan.org/address/0x9C30cdCd73347BF18A5bD424C37E5714e2606362",
       "privacy_verifier":   "https://basescan.org/address/0x838b7c20b1a97cAA6379542d03983b4571275679",
       "privacy_pool":       "https://basescan.org/address/0x3F0b23Aca0624981a503e8f042db2F3884D0C89C",
-      "aerodrome_wrapper":  "https://basescan.org/address/0x009681CdF5441D23738EC6597e586eBB06215e3D"
+      "aerodrome_wrapper_v1":  "https://basescan.org/address/0x009681CdF5441D23738EC6597e586eBB06215e3D",
+    "aerodrome_wrapper":  "https://basescan.org/address/0xe896e6f51af137c32db7eb4e3b2de795d392a646"
     },
-    "redeployNote": "P4.1 + P4.2 BROADCAST (2026-07-06). P4.1: PrivacyPool rewritten to per-denom Poseidon trees + global spent set; constructor (address verifier, uint256[] initialDenominations). Single-denom back-compat achieved by seeding [100000000000000000] (0.1 ETH) - pool owner may call addDenomination(d) post-deploy to enable other face values. P4.2: NEW AerodromePrivacyWrapper deployed via one-off script/DeployAerodrome.s.sol (broadcast-only-no-redeploy-all) for Base's primary DEX. The prior P3.4 single-denom pool at 0x3A7DA29bfd9853A0449c8c51F7007B7f5126C455 remains on-chain but is no longer the canonical pool. costs: P4.1 ~0.000033 ETH (5 contracts); P4.2 ~0.000004 ETH (1 contract). Forge vm.writeJson quirk persists only chainId; this manifest was hand-enriched post-broadcast from contracts/broadcast/{Deploy,DeployAerodrome}.s.sol/8453/run-latest.json."
+    "redeployNote": "P4.1 + P4.2 BROADCAST (2026-07-06). P4.1: PrivacyPool rewritten to per-denom Poseidon trees + global spent set; constructor (address verifier, uint256[] initialDenominations). Single-denom back-compat achieved by seeding [100000000000000000] (0.1 ETH) - pool owner may call addDenomination(d) post-deploy to enable other face values. P4.2: NEW AerodromePrivacyWrapper deployed via one-off script/DeployAerodrome.s.sol (broadcast-only-no-redeploy-all) for Base's primary DEX; the first broadcast used a 3-field Route struct (missing factory) which mis-aligned ABI encoding against Aerodrome's actual 4-field Route struct, causing every real swap to revert inside Aerodrome Router with empty error data. P4.2 hotfix: redeployed with 5-arg constructor that takes Aerodrome PoolFactory (volatile + stable) as immutables and adds a public route(from, to, stable) helper. Previous wrapper at 0x009681CdF5441D23738EC6597e586eBB06215e3D remains on-chain but is no longer the canonical address (superseded). costs: P4.1 ~0.000033 ETH (5 contracts); P4.2 v1 ~0.000004 ETH; P4.2 v2 (hotfix) ~0.000012 ETH. Forge vm.writeJson quirk persists only chainId; this manifest was hand-enriched post-broadcast from contracts/broadcast/{Deploy,DeployAerodrome}.s.sol/8453/run-latest.json."
   }
 }

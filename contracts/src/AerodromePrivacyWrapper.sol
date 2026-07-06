@@ -17,9 +17,20 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  *
  *      Aerodrome Router: 0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43 (Base).
  *      The router's swap API differs from Uniswap V3's — it takes a
- *      `Route[]` array (from, to, stable) instead of a pool `fee`. Stable
- *      pools have lower slippage on like-kind pairs (USDC/USDT); volatile
- *      pools are used for non-correlated pairs (WETH/USDC).
+ *      `Route[]` array (from, to, stable, factory) instead of a pool `fee`.
+ *      Stable pools have lower slippage on like-kind pairs (USDC/USDT);
+ *      volatile pools are used for non-correlated pairs (WETH/USDC).
+ *
+ * P4.2 hotfix (2026-07-06):
+ *   The first broadcast used a 3-field Route (from, to, stable) which
+ *   mis-aligned Solidity ABI encoding against Aerodrome's actual 4-field
+ *   Route struct, causing all real swap calls to revert with empty
+ *   error data inside the Router. This redeploy adds the missing
+ *   `factory` field and exposes the canonical Base volatile + stable
+ *   factory addresses as immutables, with a `route(from, to, stable)`
+ *   helper that returns a fully-populated Route struct. The previous
+ *   wrapper at 0x009681CdF5441D23738EC6597e586eBB06215e3D remains
+ *   on-chain but is now superseded.
  */
 
 /* ──────────────────────── Aerodrome Router interfaces ────────────────────── */
@@ -29,7 +40,11 @@ interface IAerodromeRouter {
         address from;
         address to;
         bool stable;
+        address factory;
     }
+
+    function defaultFactory() external view returns (address);
+    function factoryRegistry() external view returns (address);
 
     function getAmountsOut(uint256 amountIn, Route[] calldata routes) external view returns (uint256[] memory amounts);
 
@@ -74,6 +89,14 @@ contract AerodromePrivacyWrapper is ReentrancyGuard {
     // ─── Immutable address set (locked at deploy) ─────────────────────────
     address public immutable aerodromeRouter;
     address public immutable WETH;
+    /// @notice Aerodrome's volatile PoolFactory on Base (used for any
+    ///         standard-volatile route such as WETH/USDC).
+    address public immutable volatileFactory;
+    /// @notice Aerodrome's stable PoolFactory on Base (used for stable
+    ///         pair routes such as USDC/USDT). Independent immutable
+    ///         so we don't need to query the factoryRegistry at quote
+    ///         time (the wrapper is fully self-contained).
+    address public immutable stableFactory;
 
     // ─── Fee configuration — same shape as UniswapPrivacyWrapper ────────
     uint256 public feeRate = 5; // 0.05 % = 5 bps
@@ -89,12 +112,23 @@ contract AerodromePrivacyWrapper is ReentrancyGuard {
     error ETHTransferFailed();
     error RouteEmpty();
 
-    constructor(address _aerodromeRouter, address _weth, address _feeRecipient) {
-        if (_aerodromeRouter == address(0) || _weth == address(0) || _feeRecipient == address(0)) {
+    constructor(
+        address _aerodromeRouter,
+        address _weth,
+        address _feeRecipient,
+        address _volatileFactory,
+        address _stableFactory
+    ) {
+        if (
+            _aerodromeRouter == address(0) || _weth == address(0) || _feeRecipient == address(0)
+                || _volatileFactory == address(0) || _stableFactory == address(0)
+        ) {
             revert InvalidRecipient();
         }
         aerodromeRouter = _aerodromeRouter;
         WETH = _weth;
+        volatileFactory = _volatileFactory;
+        stableFactory = _stableFactory;
         feeRecipient = _feeRecipient;
     }
 
@@ -108,6 +142,28 @@ contract AerodromePrivacyWrapper is ReentrancyGuard {
         // interface minimal. Owner-gating can be added in P5 if needed.
         require(newFeeRecipient != address(0), "zero");
         feeRecipient = newFeeRecipient;
+    }
+
+    // ─── Route helper ────────────────────────────────────────────────────
+    /// @notice Returns a fully-populated Aerodrome Route struct for a
+    ///         (from, to, stable) triple. The factory field is filled
+    ///         from the wrapper's stored factroy addresses so the caller
+    ///         (frontend, forge script, smoke-test) doesn't have to know
+    ///         the per-pair factory address. This is the EXACT struct
+    ///         Aerodrome Router expects — passing it through any of our
+    ///         swap methods will no longer revert with empty error data.
+    function route(address from, address to, bool stable) external view returns (IAerodromeRouter.Route memory) {
+        return
+            IAerodromeRouter.Route({
+                from: from, to: to, stable: stable, factory: stable ? stableFactory : volatileFactory
+            });
+    }
+
+    /// @notice Returns the factory address the wrapper uses for the
+    ///         given (stable) flag. Useful from the frontend quote path
+    ///         when constructing Route arrays directly.
+    function factoryFor(bool stable) external view returns (address) {
+        return stable ? stableFactory : volatileFactory;
     }
 
     // ─── ETH -> Token ────────────────────────────────────────────────────

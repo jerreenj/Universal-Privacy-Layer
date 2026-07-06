@@ -76,6 +76,18 @@ contract DeployScript is Script {
     /// across wrappers, so the user can swap WETH<->USDC through either
     /// DEX without redeploying.
     address constant DEFAULT_AERODROME_ROUTER = 0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43;
+    /// @dev Aerodrome V2 PoolFactory on Base — used for both stable and
+    ///      volatile pool creations. Verified live by reading Aerodrome
+    ///      Router.defaultFactory() = 0x420DD381b31aEf6683db6B902084cB0FFECe40Da
+    ///      on Base mainnet (the Router treats this as the default —
+    ///      Aerodrome's PoolFactory.sol stores pools in
+    ///      mapping(tokenA=>mapping(tokenB=>mapping(bool stable=>address)))),
+    ///      so a single factory handles both pool kinds. The wrapper
+    ///      takes both addresses as constructor args; if Aerodrome ever
+    ///      splits them we can override AERODROME_STABLE_FACTORY at deploy
+    ///      time.
+    address constant DEFAULT_AERODROME_VOLATILE_FACTORY = 0x420DD381b31aEf6683db6B902084cB0FFECe40Da;
+    address constant DEFAULT_AERODROME_STABLE_FACTORY = 0x420DD381b31aEf6683db6B902084cB0FFECe40Da;
 
     /// @dev Default privacy-pool denomination seed: 0.1 ETH (1e17 wei). Fixed
     ///      denominations are what make deposits unlinkable — every 0.1 ETH
@@ -145,7 +157,11 @@ contract DeployScript is Script {
         //     WETH/USDC pool on Base per the P1.13 finding). The frontend
         //     dispatches per selected chain / per preferred DEX.
         address aerodromeRouter = vm.envOr("AERODROME_ROUTER", DEFAULT_AERODROME_ROUTER);
-        AerodromePrivacyWrapper aeroWrapper = new AerodromePrivacyWrapper(aerodromeRouter, weth, feeRecipient);
+        address aerodromeVolatileFactory = vm.envOr("AERODROME_VOLATILE_FACTORY", DEFAULT_AERODROME_VOLATILE_FACTORY);
+        address aerodromeStableFactory = vm.envOr("AERODROME_STABLE_FACTORY", DEFAULT_AERODROME_STABLE_FACTORY);
+        AerodromePrivacyWrapper aeroWrapper = new AerodromePrivacyWrapper(
+            aerodromeRouter, weth, feeRecipient, aerodromeVolatileFactory, aerodromeStableFactory
+        );
         console2.log("AerodromePrivacyWrapper deployed:", address(aeroWrapper));
         console2.log("  aerodromeRouter:", aeroWrapper.aerodromeRouter());
         console2.log("  WETH:", aeroWrapper.WETH());
