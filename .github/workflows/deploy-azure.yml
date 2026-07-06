@@ -82,25 +82,14 @@ jobs:
       #         so the relayed send path can sign with the dedicated
       #         hot-wallet address 0x2d82E56f... (NOT the deployer EOA).
       #         Idempotent: az containerapp secret set + update are both
-      #         no-ops when the secret is already current. Step is gated by
-      #         the GH repo secret being set; if it is not (e.g. someone
-      #         accidentally cleared it), the step is a no-op and we log
-      #         a warning instead of leaving the Container App half-set.
-      - name: Sync RELAYER_PRIVATE_KEY into Container App
+      #         no-ops when the secret is already current. The GH repo
+      #         secret being set is required; if cleared, the step
+      #         silently no-ops so the deploy still succeeds.
+      - name: Sync RELAYER_PRIVATE_KEY secret
         if: ${{ secrets.RELAYER_PRIVATE_KEY != '' }}
         env:
-          RELAYER_PK: ${{ secrets.RELAYER_PRIVATE_KEY }}
-        run: |
-          echo Setting RELAYER_PRIVATE_KEY secret on Container App
-          az containerapp secret set \
-            --resource-group "${{ vars.ACA_RESOURCE_GROUP }}" \
-            --name "${{ vars.ACA_APP_NAME }}" \
-            --secrets "relayer-private-key=$RELAYER_PK"
-          az containerapp update \
-            --resource-group "${{ vars.ACA_RESOURCE_GROUP }}" \
-            --name "${{ vars.ACA_APP_NAME }}" \
-            --set-env-vars "RELAYER_PRIVATE_KEY=secretref:relayer-private-key"
-          echo RELAYER_PRIVATE_KEY set; backend /api/relayer/submit can now sign
+          RP: ${{ secrets.RELAYER_PRIVATE_KEY }}
+        run: scripts/sync_relayer_secret.sh ${{ vars.ACA_RESOURCE_GROUP }} ${{ vars.ACA_APP_NAME }} "$RP"
 
       # ─── 7. Smoke-test the health endpoint ─────────────────────────────────
       - name: Health check
