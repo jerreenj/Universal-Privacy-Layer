@@ -1261,16 +1261,70 @@ async def get_transactions(address: str, chain: str = "ethereum_sepolia"):
 
 @api_router.post("/transactions/record")
 async def record_transaction(
-    tx_hash: str = Body(...),
-    from_address: str = Body(...),
-    to_address: str = Body(...),
-    amount_wei: str = Body(...),
-    chain: str = Body(...),
-    tx_type: str = Body(default="private_send"),
-    status: str = Body(default="pending")
+    # The plaintext historical shape (kept for back-compat with any
+    # pre-K2 script that posts the legacy 7-field body).
+    tx_hash: Optional[str] = Body(default=None),
+    from_address: Optional[str] = Body(default=None),
+    to_address: Optional[str] = Body(default=None),
+    amount_wei: Optional[str] = Body(default=None),
+    chain: Optional[str] = Body(default=None),
+    tx_type: Optional[str] = Body(default="private_send"),
+    status: Optional[str] = Body(default="pending"),
+    # The K2+ encrypted-envelope shape. All four fields together =
+    # ciphertext; server stores blob + iv + salt + EOA key, never reads
+    # plaintext. The frontend derives the AES-256-GCM key in-browser
+    # from a wallet personal_sign of a fixed domain separator, so the
+    # server literally cannot derive the seal key.
+    ciphertext: Optional[str] = Body(default=None),
+    iv:         Optional[str] = Body(default=None),
+    salt:       Optional[str] = Body(default=None),
+    addr:       Optional[str] = Body(default=None),
 ):
-    """Record a private transaction"""
+    """Record a private transaction.
+
+    Two body shapes are accepted:
+      Plaintext (legacy): the original 7 fields, stored as before. Kept
+      for any pre-K2 tool that posts in the legacy shape; do NOT use
+      from the pilot UI anymore — PrivacyCloak 2026-07-06+ ships the
+      encrypted path.
+
+      Ciphertext (preferred, K2+): {ciphertext, iv, salt, addr}.
+      Server stores the blob with EOA-as-lookup-key, server cannot
+      decrypt without the user's wallet signature.
+    """
     try:
+        now = datetime.now(timezone.utc).isoformat()
+        if ciphertext and iv and salt and addr:
+            # Encrypted envelope — server keeps ciphertext only. The
+            # _id is a deterministic SHA-256 over (addr, ciphertext,
+            # salt) so a re-broadcast of the SAME envelope overwrites
+            # (idempotent), but distinct records still hash distinctly.
+            import hashlib
+            envelope_id = "sha256:" + hashlib.sha256(
+                f"{addr}|{ciphertext}|{salt}".encode("utf-8")
+            ).hexdigest()
+            doc = {
+                "id": envelope_id,
+                "addr": addr,                # indexed by EOA only
+                "ciphertext": ciphertext,
+                "iv": iv,
+                "salt": salt,
+                "encrypted": True,
+                "chain": chain or "base",     # chain tag preserved for grouping
+                "tx_type": tx_type,          # transaction type tag preserved
+                "status": status,
+                "created_at": now,
+            }
+            await db.transactions.insert_one(doc)
+            return {"success": True, "transaction_id": envelope_id, "encrypted": True}
+        # Legacy plaintext shape (kept for back-compat).
+        if not all([tx_hash, from_address, to_address, amount_wei, chain]):
+            raise HTTPException(
+                status_code=400,
+                detail="Body must be either the full plaintext record "
+                       "(tx_hash/from_address/to_address/amount_wei/chain) or the "
+                       "encrypted envelope (ciphertext/iv/salt/addr).",
+            )
         doc = {
             "id": str(uuid.uuid4()),
             "tx_hash": tx_hash,
@@ -1280,10 +1334,12 @@ async def record_transaction(
             "chain": chain,
             "tx_type": tx_type,
             "status": status,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": now,
         }
         await db.transactions.insert_one(doc)
         return {"success": True, "transaction_id": doc["id"]}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Transaction record error: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
