@@ -37,7 +37,7 @@ EXPECTED_BASE = {
     "privacy_relayer":  "0x69DA62568CAbc0940a0Bb6Bc7017e3EB8BD7c175",  # P4.1
     "stealth_registry": "0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1",  # P4.1
     "uniswap_wrapper":  "0x9C30cdCd73347BF18A5bD424C37E5714e2606362",  # P4.1
-    "aerodrome_wrapper": "0x009681CdF5441D23738EC6597e586eBB06215e3D", # P4.2 (added later)
+    "aerodrome_wrapper": "0xe896e6f51af137c32db7eb4e3b2de795d392a646", # P4.2 hotfix (Route struct now includes factory)
     "deployer":         "0x3f44A6451439673D95082A1337045a25ec275394",  # unchanged
 }
 EXPECTED_CHAIN_ID = 8453

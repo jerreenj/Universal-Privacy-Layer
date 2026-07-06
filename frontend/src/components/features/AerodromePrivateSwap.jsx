@@ -1,7 +1,10 @@
 /**
  * AerodromePrivateSwap — Privacy-routed token swap via Aerodrome V2
- * Base mainnet. The on-chain wrapper is the soon-to-be-deployed
- * 0x009681CdF5441D23738EC6597e586eBB06215e3D (P4.2 router).
+ * Base mainnet. The on-chain wrapper is the freshly-broadcast P4.2
+ * wrapper at the address returned by /api/deployments (with a
+ * hard-coded fallback). The address is allowed to change when the
+ * wrapper is redeployed (e.g. the P4.2 hotfix for the missing factory
+ * field in the Route struct).
  *
  * Why Aerodrome: Uniswap V3 has no WETH/USDC pool on Base (P1.13
  * finding); Aerodrome is Base's primary DEX. The frontend wires the
@@ -13,7 +16,12 @@
  *   2. We fetch the wrapper address from /api/deployments.
  *   3. Generate a stealth recipient via /api/stealth/generate.
  *   4. Construct the Aerodrome `Route[]`: [{from: WETH, to: USDC,
- *      stable: false}] for the volatile WETH/USDC pool.
+ *      stable: false, factory: 0x420…0fDa}] — Aerodrome V2's Route
+ *      struct has 4 fields; the factory field is REQUIRED (the prior
+ *      deploy used 3 fields, causing every real swap to revert inside
+ *      the Router with empty error data). We pull the factory address
+ *      from the wrapper's exposed volatileFactory/stableFactory
+ *      immutables so callers don't have to hardcode it.
  *   5. Call AerodromePrivacyWrapper.privateSwapETHForToken(tokenOut,
  *      routes, amountOutMin, recipient, deadline) directly. The
  *      contract takes ETH, the workflow splits off the protocol fee
@@ -29,21 +37,22 @@ import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 
 // AerodromePrivacyWrapper — the ABI of the on-chain contract we call.
-// Kept inline here because the contract is the only caller; we DON'T
-// import the swap wrapper from @/components to avoid pulling the larger
-// Solidity ABI through the client bundle.
+// P4.2 hotfix: Route is now 4 fields (from, to, stable, factory).
 const AERODROME_WRAPPER_ABI = [
-  "function privateSwapETHForToken(address tokenOut, tuple(address from, address to, bool stable)[] routes, uint256 amountOutMinimum, address recipient, uint256 deadline) payable returns (uint256 amountOut)",
+  "function privateSwapETHForToken(address tokenOut, tuple(address from, address to, bool stable, address factory)[] routes, uint256 amountOutMinimum, address recipient, uint256 deadline) payable returns (uint256 amountOut)",
   "function feeRate() view returns (uint256)",
   "function WETH() view returns (address)",
   "function aerodromeRouter() view returns (address)",
+  "function volatileFactory() view returns (address)",
+  "function stableFactory() view returns (address)",
+  "function factoryFor(bool stable) view returns (address)",
 ];
 
 // Aerodrome V2 Router signatures we call INDIRECTLY via the wrapper —
 // only used as type-docstrings the wrapper handles routing for us. Kept
 // for documentation; no direct router calls happen from the frontend.
 const AERODROME_ROUTER_ABI = [
-  "function getAmountsOut(uint256 amountIn, tuple(address from, address to, bool stable)[] routes) view returns (uint256[] memory)",
+  "function getAmountsOut(uint256 amountIn, tuple(address from, address to, bool stable, address factory)[] routes) view returns (uint256[] memory)",
 ];
 
 // Canonical Base mainstream tokens (USDC native, USDT, etc). Mirror
@@ -55,6 +64,14 @@ const BASE_TOKENS = [
   { symbol: "USDT", address: "0xfde4C96cAd36929608d35fFBd6A11dD60b3EA633", decimals: 6, stable: true },
   { symbol: "WETH", address: "0x4200000000000000000000000000000000000006", decimals: 18, stable: false },
 ];
+
+// Hard-coded fallback wrapper address (the freshly-broadcast P4.2
+// hotfix wrapper at 0xe896e6f51af137c32db7eb4e3b2de795d392a646 with
+// the corrected 4-field Route struct that includes `factory`). The
+// previous wrapper at 0x009681CdF5441D23738EC6597e586eBB06215e3D is
+// superseded — see /api/deployments for the live address, the constant
+// below only matters before the backend restart propagates.
+const FALLBACK_WRAPPER = "0xe896e6f51af137c32db7eb4e3b2de795d392a646";
 
 export function AerodromePrivateSwap() {
   const { address, signer } = useWallet();
@@ -68,6 +85,11 @@ export function AerodromePrivateSwap() {
   const [txHash, setTxHash] = useState(null);
   const [wrapperAddr, setWrapperAddr] = useState(null);
   const [wrapperMeta, setWrapperMeta] = useState(null);
+  // volatileFactory / stableFactory are read once after the wrapper
+  // resolves; route() helper builds populate the Route's factory field
+  // for us. Default to Aerodrome's known PoolFactory for the volatile
+  // path so quote still works if the wrapper read fails.
+  const [poolFactory, setPoolFactory] = useState("0x420DD381b31aEf6683db6B902084cB0FFECe40Da");
 
   // Resolve the live wrapper address from /api/deployments (P4.2).
   useEffect(() => {
@@ -79,19 +101,49 @@ export function AerodromePrivateSwap() {
         if (!cancelled && base.aerodrome_wrapper) {
           setWrapperAddr(base.aerodrome_wrapper);
           setWrapperMeta(base.aerodrome_wrapper_meta || { network: "base" });
+        } else if (!cancelled) {
+          setWrapperAddr(FALLBACK_WRAPPER);
+          setWrapperMeta({ network: "base", fallback: true });
         }
       } catch {
         // /api/deployments may not have aerodrome_wrapper if the backend
-        // hasn't restarted with the new manifest yet. Fall back to the
-        // hard-coded P4.2 broadcast address.
+        // hasn't restarted with the new manifest yet. Fall back to a
+        // hardcoded placeholder — the swap will be rejected with "not
+        // connected" until the backend is restarted (intentional).
         if (!cancelled) {
-          setWrapperAddr("0x009681CdF5441D23738EC6597e586eBB06215e3D");
+          setWrapperAddr(FALLBACK_WRAPPER);
           setWrapperMeta({ network: "base", fallback: true });
         }
       }
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // After the wrapper address resolves, fetch its volatileFactory so
+  // quote route-building has the right factory address. The
+  // P4.2-pre-fix wrapper has no `volatileFactory()` getter — try/catch
+  // keeps the fallback at Aerodrome's published PoolFactory.
+  useEffect(() => {
+    if (!wrapperAddr || wrapperAddr === FALLBACK_WRAPPER) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const provider = signer?.provider || (typeof window !== "undefined" && window.ethereum
+          ? new ethers.BrowserProvider(window.ethereum) : null);
+        if (!provider) return;
+        const w = new ethers.Contract(wrapperAddr, AERODROME_WRAPPER_ABI, provider);
+        const vf = await w.volatileFactory();
+        const sf = await w.stableFactory();
+        if (!cancelled) {
+          const tok = (tokenOut && BASE_TOKENS.find(t => t.symbol === tokenOut)) || BASE_TOKENS[0];
+          setPoolFactory(tok.stable ? sf : vf);
+        }
+      } catch {
+        // Wrapper predates P4.2 hotfix — keep the published PoolFactory.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [wrapperAddr, signer, tokenOut]);
 
   const autoGenStealth = async () => {
     if (!address) return toast.error("Connect wallet first");
@@ -125,8 +177,16 @@ export function AerodromePrivateSwap() {
       const amountInWei = ethers.parseEther(amount);
       // Volatile pool (stable:false) is the standard WETH/USDC Aerodrome
       // pool. Stable pool (stable:true) is the USDC/USDT pool, doesn't
-      // pair with WETH.
-      const routes = [{ from: WETH, to: out.address, stable: false }];
+      // pair with WETH — caller picks the stable flag based on token.
+      // The factory field is REQUIRED by Aerodrome V2's Route struct
+      // (a 4-field tuple). Pool address is read from the wrapper's
+      // public immutables; falls back to Aerodrome's published PoolFactory.
+      const routes = [{
+        from: WETH,
+        to: out.address,
+        stable: !!out.stable,
+        factory: poolFactory,
+      }];
       // Caller runs Aerodrome Router getAmountsOut directly for UI
       // preview — this is read-only, no gas. The contract performs the
       // ACTUAL swap (the wrapper also exposes a quote() view at no gas
