@@ -22,6 +22,11 @@ import {
     deriveDefaultViewTag,
     quoteConfidentialUsdcOut,
 } from "@/lib/confidential-amount";
+import {
+    getOrCreateProxyWallet,
+    checkProxyBalance,
+    fundProxyWallet,
+} from "@/lib/stealth-proxy";
 
 const FORWARD_ABI = [
   "function swapUSDCViaCommitment(address recipient, bytes32 amountCommit, bytes1 viewTagByte, uint256 minUsdcOut) payable",
@@ -61,6 +66,9 @@ export function SwapContent() {
   const [reserve, setReserve] = useState(null);
   const [rate, setRate] = useState(null);
   const [viewTagHex, setViewTagHex] = useState(null);
+  const [proxy, setProxy] = useState(null);
+  const [proxyBal, setProxyBal] = useState(null);
+  const [proxyBusy, setProxyBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,6 +116,49 @@ export function SwapContent() {
     })();
     return () => { cancelled = true; };
   }, [signer]);
+
+  // Derive the proxy wallet once per main-wallet session. Same
+  // wallet → same proxy every time. Cached in localStorage.
+  useEffect(() => {
+    if (!signer) { setProxy(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await getOrCreateProxyWallet(signer);
+        if (!cancelled) setProxy(p);
+      } catch { /* customer may reject */ }
+    })();
+    return () => { cancelled = true; };
+  }, [signer]);
+
+  // Check proxy balance whenever proxy changes.
+  useEffect(() => {
+    if (!proxy || !signer?.provider) { setProxyBal(null); return; }
+    let cancelled = false;
+    (async () => {
+      const provider = signer.provider || (typeof window !== "undefined" && window.ethereum
+        ? new ethers.BrowserProvider(window.ethereum) : null);
+      if (!provider) return;
+      try {
+        const bal = await checkProxyBalance(proxy.address, provider, USDC.address);
+        if (!cancelled) setProxyBal(bal);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [proxy, signer]);
+
+  const fundProxy = async (ethAmount) => {
+    if (!signer || !proxy) return;
+    setProxyBusy(true);
+    try {
+      await fundProxyWallet(signer, proxy.address, ethAmount);
+      const provider = signer.provider || new ethers.BrowserProvider(window.ethereum);
+      const bal = await checkProxyBalance(proxy.address, provider, USDC.address);
+      setProxyBal(bal);
+      toast.success(`Proxy funded with ${ethAmount} ETH`);
+    } catch (e) { toast.error("Funding failed: " + (e.message || "").slice(0, 60)); }
+    setProxyBusy(false);
+  };
 
   const autoGenStealth = async () => {
     if (!address) return toast.error("Connect wallet first");
@@ -173,9 +224,20 @@ export function SwapContent() {
       const activeSigner = signer || await provider.getSigner();
 
       if (direction === "eth2usdc") {
-        // FORWARD: customer calls vault directly, ETH in.
+        // FORWARD: proxy wallet sends ETH → vault, gets USDC.
+        // The customer's MAIN wallet never appears on this swap.
+        // Only the proxy wallet is visible — and it's unlinkable
+        // to the main wallet except via the one-time funding tx.
         if (!viewTagHex) { toast.error("View tag not ready"); setSwapping(false); return; }
+        if (!proxy) { toast.error("Proxy wallet not ready"); setSwapping(false); return; }
         const amountInWei = ethers.parseEther(amount);
+        // Check proxy has enough ETH.
+        const provider2 = signer?.provider || new ethers.BrowserProvider(window.ethereum);
+        const proxyEthBal = await provider2.getBalance(proxy.address);
+        if (proxyEthBal < amountInWei) {
+          toast.error("Proxy needs funding. Tap 'Fund proxy' below.");
+          setSwapping(false); return;
+        }
         const rate6dec = ethers.parseUnits(rate || "0", USDC.decimals);
         const args = buildConfidentialSwapArgs({
           ethInWei: amountInWei,
@@ -184,7 +246,8 @@ export function SwapContent() {
           recipientStealth: stealthRecipient,
           minUsdcOut: BigInt(quote.amountOutMinimum),
         });
-        const vault = new ethers.Contract(activeVault, FORWARD_ABI, activeSigner);
+        // Sign the swap tx with the PROXY wallet, not the main wallet.
+        const vault = new ethers.Contract(activeVault, FORWARD_ABI, proxy.wallet);
         const tx = await vault.swapUSDCViaCommitment(
           args.recipient, args.amountCommit, args.viewTagByte, args.minUsdcOut,
           { value: amountInWei }
@@ -194,56 +257,59 @@ export function SwapContent() {
         await tx.wait();
         toast.success("Confirmed");
       } else {
-        // REVERSE: customer signs EIP-712, relayer submits.
-        // The approve leak is fixed: ONE-TIME max approval on the
-        // first ever reverse swap (cached in localStorage). All
-        // future swaps are signature-only — no on-chain tx from
-        // the customer's wallet per-swap.
+        // REVERSE: proxy wallet signs EIP-712, proxy's USDC is
+        // used. The customer's MAIN wallet never appears. The
+        // USDC Transfer(from=vault, to=proxy, ...) event shows
+        // the proxy address — unlinkable to main wallet except
+        // via the one-time funding tx.
+        if (!viewTagHex) { toast.error("View tag not ready"); setSwapping(false); return; }
+        if (!proxy) { toast.error("Proxy wallet not ready"); setSwapping(false); return; }
         const usdcIn = ethers.parseUnits(amount, USDC.decimals);
         const ethOut = BigInt(quote.expectedOut);
         const minEthOut = BigInt(quote.amountOutMinimum);
+        // Check proxy has enough USDC.
+        const usdcRead2 = new ethers.Contract(USDC.address,
+          ["function balanceOf(address) view returns (uint256)"], provider);
+        const proxyUsdcBal = await usdcRead2.balanceOf(proxy.address);
+        if (proxyUsdcBal < usdcIn) {
+          toast.error("Proxy needs USDC. Send USDC to your proxy address first.");
+          setSwapping(false); return;
+        }
+
         // Build commitment: keccak256(keccak256(ethOut||viewTagByte) || 0x43)
         const inner = ethers.solidityPackedKeccak256(["uint256","bytes1"], [ethOut, viewTagHex]);
         const amountCommit = ethers.solidityPackedKeccak256(["bytes32","uint8"], [inner, 0x43]);
-        // Read nonce from the vault.
+        // Read nonce from the vault — use PROXY address as the customer.
         const vaultRead = new ethers.Contract(activeVault, REVERSE_ABI, provider);
-        const nonce = await vaultRead.nextNonce(address);
+        const nonce = await vaultRead.nextNonce(proxy.address);
         const deadline = Math.floor(Date.now() / 1000) + 600;
         const digest = await vaultRead.hashSwapRequest(
           stealthRecipient, amountCommit, viewTagHex,
           minEthOut, usdcIn, deadline, nonce
         );
-        // Sign the EIP-712 digest.
-        const sig = await activeSigner.signMessage(ethers.getBytes(digest));
 
-        // ONE-TIME max approval check. If we already approved this
-        // vault for unlimited USDC, skip the on-chain tx entirely.
-        // This is the fix: the approve tx is visible on BaseScan
-        // and leaks the customer's address — but it only happens
-        // ONCE per wallet, not per swap.
-        const cacheKey = `upl:usdc-approve:${address.toLowerCase()}:${activeVault.toLowerCase()}`;
+        // PROXY wallet signs the EIP-712 digest — not main wallet.
+        const sig = await proxy.wallet.signMessage(ethers.getBytes(digest));
+
+        // PROXY wallet approves USDC for the vault (one-time max).
+        const cacheKey = `upl:usdc-approve:${proxy.address.toLowerCase()}:${activeVault.toLowerCase()}`;
         let alreadyApproved = false;
-        try {
-          alreadyApproved = localStorage.getItem(cacheKey) === "1";
-        } catch {}
-
+        try { alreadyApproved = localStorage.getItem(cacheKey) === "1"; } catch {}
         if (!alreadyApproved) {
-          // Check on-chain allowance to be sure.
-          const usdcRead = new ethers.Contract(USDC.address,
+          const usdcAllowance = new ethers.Contract(USDC.address,
             ["function allowance(address,address) view returns (uint256)"], provider);
-          const currentAllowance = await usdcRead.allowance(address, activeVault);
+          const currentAllowance = await usdcAllowance.allowance(proxy.address, activeVault);
           if (currentAllowance < usdcIn) {
             const usdcContract = new ethers.Contract(USDC.address,
-              ["function approve(address,uint256) returns (bool)"], activeSigner);
-            // Max approval so this never runs again.
+              ["function approve(address,uint256) returns (bool)"], proxy.wallet);
             const approveTx = await usdcContract.approve(activeVault, ethers.MaxUint256);
             await approveTx.wait();
-            toast.success("USDC approved — one-time setup, won't repeat");
+            toast.success("Proxy USDC approved — one-time setup");
           }
           try { localStorage.setItem(cacheKey, "1"); } catch {}
         }
 
-        // Post to relayer.
+        // Post to relayer. Customer field = proxy address.
         const resp = await axios.post(`${API}/swap/reverse/relay`, {
           recipient: stealthRecipient,
           amount_commit: amountCommit,
@@ -253,7 +319,7 @@ export function SwapContent() {
           deadline,
           nonce: nonce.toString(),
           sig,
-          customer: address,
+          customer: proxy.address,
         });
         setTxHash(resp.data.tx_hash);
         toast.success("Swap broadcast via relayer");
@@ -277,6 +343,34 @@ export function SwapContent() {
       <div className="flex items-center gap-2 text-xs text-blue-300 bg-blue-500/10 border border-blue-500/30 p-2">
         <Lock className="w-3 h-3" /> Private swap on Base.
       </div>
+
+      {/* Proxy wallet funding banner. Customer funds the proxy ONCE.
+          After that, all swaps route through it — main wallet invisible. */}
+      {proxy && proxyBal && (
+        <div className="border border-white/10 bg-white/5 p-3 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-white/40">Proxy wallet</span>
+            <span className="font-mono text-white/50">{proxy.address.slice(0, 8)}…{proxy.address.slice(-6)}</span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-white/40">ETH balance</span>
+            <span className="font-mono text-white/70">{parseFloat(proxyBal.eth).toFixed(5)}</span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-white/40">USDC balance</span>
+            <span className="font-mono text-white/70">{parseFloat(proxyBal.usdc).toFixed(2)}</span>
+          </div>
+          {parseFloat(proxyBal.eth) < 0.001 && (
+            <button
+              onClick={() => fundProxy("0.005")}
+              disabled={proxyBusy}
+              className="w-full py-2 border border-blue-400/40 text-blue-300 text-xs hover:bg-blue-500/10 disabled:opacity-50"
+            >
+              {proxyBusy ? "Funding…" : "Fund proxy (0.005 ETH)"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Direction toggle: ETH → USDC  or  USDC → ETH */}
       <div className="flex items-center gap-1 text-xs">
