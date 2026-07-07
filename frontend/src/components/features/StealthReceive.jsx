@@ -1,26 +1,33 @@
 /**
- * StealthReceive — Scan all announcements and find payments meant for you
- * Uses view key only (spend key stays private)
+ * StealthReceive — Scan announcements to find payments meant for you.
+ *
+ * Customer flow: ONE click ("Derive From Wallet") → wallet signs once
+ * → scanner finds inbound payments. No spend/view key paste. No
+ * disagreement with the customer's mental model that "I just want
+ * my receive address to work across any chain".
+ *
+ * Optionally the customer can paste a saved stealth-keys.json file
+ * (e.g. exported in a prior session) instead of re-deriving from
+ * the wallet. The Manual-key-input mode was removed so the customer
+ * never has to think about spend/view/anything else.
  */
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { ScanLine, Eye, EyeOff, Loader2, ArrowDownLeft, ExternalLink, Key, Zap } from "lucide-react";
+import { ScanLine, Eye, Loader2, ArrowDownLeft, ExternalLink, Key, Zap, Upload } from "lucide-react";
 import { toast } from "sonner";
-import { scanAnnouncements, computeStealthPrivKey, parseMetaAddress } from "../../utils/stealth";
-import { API, CHAINS } from "../../config/chains";
-import axios from "axios";
+import { scanAnnouncements, computeStealthPrivKey } from "../../utils/stealth";
+import { CHAINS } from "@/config/chains";
 import { fetchAnnouncements as fetchAnnouncementsDirect } from "@/lib/direct-rpc-scanner";
 import { deriveMetaAddress } from "@/lib/wallet-stealth";
 import { useWallet } from "@/context/WalletContext";
 
-const CHAIN_LIST = ["all", "base", "arbitrum", "polygon", "optimism", "bnb", "avalanche", "hyperliquid"];
 const EXPLORERS = {
   base: "https://basescan.org",
   arbitrum: "https://arbiscan.io",
   polygon: "https://polygonscan.com",
-  optimism: "https://optimistic.etherscan.io",
+  optimism: "https://optimistic.etherscan.com",
   bnb: "https://bscscan.com",
-  avalanche: "https://snowtrace.io",
+  avalanche: "https://snowtrace.com",
   hyperliquid: "https://purrsec.com",
 };
 const RPC = {
@@ -38,7 +45,7 @@ function fmtEth(wei) {
   return parseFloat(ethers.formatEther(wei)).toFixed(6);
 }
 
-function MatchCard({ match, onSweep }) {
+function MatchCard({ match, onSweep, sweepReady }) {
   const [sweeping, setSweeping] = useState(false);
   const [balance, setBalance] = useState(match.balance || null);
   const exp = EXPLORERS[match.chain] || "";
@@ -95,7 +102,8 @@ function MatchCard({ match, onSweep }) {
       <button
         data-testid="sweep-btn"
         onClick={() => onSweep(match)}
-        disabled={sweeping || balance === "0"}
+        disabled={sweeping || balance === "0" || !sweepReady}
+        title={!sweepReady ? "Derive From Wallet (or load key file) to enable sweep" : ""}
         className="w-full py-2 bg-green-400 text-black font-bold text-xs hover:bg-green-300 disabled:opacity-30 transition-colors flex items-center justify-center gap-2"
       >
         <Zap className="w-3 h-3" />
@@ -107,24 +115,16 @@ function MatchCard({ match, onSweep }) {
 
 export function StealthReceive({ address, chain: chainProp }) {
   const { signer } = useWallet();
-  // When wired from the umbrella ScannerSVM.jsx the parent passes a SPECIFIC
-  // chain (e.g. "base"), so the internal chain selector is irrelevant — we
-  // pin `selectedChain` to whatever the parent chose and hide the selector
-  // (set `showChainPicker = false`). When called standalone (from
-  // StealthContent.jsx's "Scan & Receive" tab) `chainProp` is undefined and
-  // the user gets the full "all / base / arbitrum / ..." picker.
-  const initialChain = (chainProp && chainProp !== "all") ? chainProp : "all";
+  const initialChain = (chainProp && chainProp !== "all") ? chainProp : "base";
   const showChainPicker = !chainProp || chainProp === "all";
 
   const [viewPriv, setViewPriv] = useState("");
   const [spendPub, setSpendPub] = useState("");
-  const [spendPriv, setSpendPriv] = useState(""); // only for sweep
+  const [spendPriv, setSpendPriv] = useState("");
   const [selectedChain, setSelectedChain] = useState(initialChain);
   const [matches, setMatches] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [scanned, setScanned] = useState(false);
-  const [showKeys, setShowKeys] = useState(false);
-  const [useFile, setUseFile] = useState(false);
 
   const loadFromFile = (e) => {
     const file = e.target.files[0];
@@ -142,45 +142,42 @@ export function StealthReceive({ address, chain: chainProp }) {
     reader.readAsText(file);
   };
 
-  // Derive meta-address from the customer's wallet signature. This
-  // is the symmetric path to SwapContent/AerodromePrivateSwap etc.,
-  // which already use `deriveMetaAddress` from `@/lib/wallet-stealth`.
-  // When the customer clicks this, MetaMask/web3 wallet pops a
-  // single `personal_sign` request; the HKDF produces the same
-  // (spend_priv, view_priv) as the Send side, so the customer
-  // does NOT need to paste keys OR upload a keystore file —
-  // they just click sign and the scanner can find payments.
+  // ONE button. Wallet pops a single personal_sign; we use HKDF on
+  // the signature to derive view_priv + spend_pub + spend_priv. The
+  // scanner reads the first two; sweep uses all three.
   const deriveFromWallet = useCallback(async () => {
     if (!signer) return toast.error("Connect wallet first");
     try {
-      const chainId = chainProp && chainProp !== "all" ? await signer.provider.getNetwork().then(n => Number(n.chainId)) : 8453;
-      const meta = await deriveMetaAddress(signer, BigInt(chainId));
+      const chainIdNum = chainProp && chainProp !== "all"
+        ? await signer.provider.getNetwork().then(n => Number(n.chainId))
+        : 8453;
+      const meta = await deriveMetaAddress(signer, BigInt(chainIdNum));
       setViewPriv(meta.viewPriv);
       setSpendPub(meta.spendPub);
-      // spendPriv is intentionally NOT set here — the scanner path
-      // only needs view_priv + spend_pub to filter announcements.
-      // (The sweep button keeps demanding spend_priv; the customer
-      // can paste their saved keystore later.)
       setSpendPriv(meta.spendPriv || "");
-      // Optionally cache spend_priv on disk for later sweeps —
-      // user-confirm toast: "Spend key cached locally for sweeps".
       toast.success(meta.spendPriv
-        ? "Meta derived from wallet; spend key cached locally for sweeps"
-        : "Meta derived from wallet (view-only; paste spend key later to sweep)");
-    } catch (e) { toast.error("Derive failed: " + (e.message || e).slice(0, 80)); }
+        ? "Ready. Tap Scan for your payments."
+        : "View-only. Sweep disabled until spend key is provided.");
+    } catch (e) {
+      // The HKDF subtle.importKey path threw 'HMAC key data must not be
+      // empty' if the salt was zero-bytes — already fixed in
+      // wallet-stealth.js. Surface a short, friendly message here so
+      // a user who hits a regressed build still sees a useful hint.
+      const msg = (e?.message || String(e)).slice(0, 80);
+      toast.error("Derive failed: " + msg);
+    }
   }, [signer, chainProp]);
 
+  const chainOptions = chainProp === "all"
+    ? ["all", ...Object.keys(CHAINS).filter(c => CHAINS[c].vm === "evm")]
+    : ["all", chainProp];
+
   const scan = useCallback(async () => {
-    if (!viewPriv || !spendPub) return;
+    if (!viewPriv || !spendPub) return toast.error("Derive from wallet first");
     setScanning(true);
     setScanned(false);
     setMatches([]);
     try {
-      // Direct RPC scanner — reads StealthAnnouncement events straight
-      // from the Base StealthAddressRegistry via eth_getLogs. The
-      // customer's wallet provider is used when available (preferred
-      // because it has indexed logs); otherwise falls back to the
-      // chain's public RPC endpoint. NO backend round-trip.
       const provider = (typeof window !== "undefined" && window.ethereum)
         ? new ethers.BrowserProvider(window.ethereum)
         : null;
@@ -188,7 +185,7 @@ export function StealthReceive({ address, chain: chainProp }) {
       const announcements = await fetchAnnouncementsDirect({
         chain: chainKey,
         provider: provider || undefined,
-        fromBlock: -5000n, // signed; let RPC pick a sensible recent window
+        fromBlock: -5000n,
         toBlock: "latest",
       });
       const found = scanAnnouncements(announcements, viewPriv, spendPub);
@@ -204,23 +201,18 @@ export function StealthReceive({ address, chain: chainProp }) {
   }, [viewPriv, spendPub, selectedChain]);
 
   const sweep = async (match) => {
-    if (!spendPriv) { toast.error("Spend private key required to sweep"); return; }
+    if (!spendPriv) { toast.error("Spend key required to sweep"); return; }
     try {
       const stealthPrivKey = computeStealthPrivKey(spendPriv, viewPriv, match.ephemeral_pub);
       const rpc = RPC[match.chain];
       const ethProvider = new ethers.JsonRpcProvider(rpc);
       const stealthWallet = new ethers.Wallet(stealthPrivKey, ethProvider);
-
-      // Get balance
       const balance = await ethProvider.getBalance(match.derivedStealth);
       if (balance === 0n) { toast.error("Stealth address is empty"); return; }
-
-      // Estimate gas
       const gasPrice = (await ethProvider.getFeeData()).gasPrice;
       const gasCost = gasPrice * 21000n;
       const sendAmount = balance - gasCost;
       if (sendAmount <= 0n) { toast.error("Balance too low to cover gas"); return; }
-
       const tx = await stealthWallet.sendTransaction({
         to: address,
         value: sendAmount,
@@ -231,119 +223,64 @@ export function StealthReceive({ address, chain: chainProp }) {
     }
   };
 
+  const sweepReady = Boolean(spendPriv);
+
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3">
         <ArrowDownLeft className="w-5 h-5 text-blue-400" />
         <div>
           <h3 className="font-semibold text-white">Scan & Receive</h3>
-          <p className="text-xs text-white/40">Find private payments sent to your stealth addresses</p>
+          <p className="text-xs text-white/40">Find private payments sent to your receive link</p>
         </div>
       </div>
 
-      {/* Key input */}
+      {/* Two paths to derive. ONE click is the default; Load Key File
+          is for the power user who exported from another device. */}
       <div className="space-y-3">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setUseFile(false)}
-            className={`text-xs px-3 py-1.5 border transition-colors ${!useFile ? "border-white text-white" : "border-white/20 text-white/40"}`}
-          >
-            Manual
-          </button>
-          <button
-            onClick={() => setUseFile(true)}
-            className={`text-xs px-3 py-1.5 border transition-colors ${useFile ? "border-white text-white" : "border-white/20 text-white/40"}`}
-          >
-            Load Key File
-          </button>
-        </div>
-
-        {/* Third option: derive meta from wallet signature. Wallet pops
-            one `personal_sign`, HKDF produces view_priv + spend_pub;
-            no paste, no file upload. The button below sits OUTSIDE the
-            {useFile ? ... file loader : ... manual} toggle so a customer
-            can always one-click derive. */}
         <button
           data-testid="derive-from-wallet-btn"
           onClick={deriveFromWallet}
-          className="w-full flex items-center justify-center gap-2 border border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/15 py-2 text-xs text-blue-300 transition-colors"
+          className="w-full flex items-center justify-center gap-2 border border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/15 py-3 text-sm text-blue-300 transition-colors"
         >
-          <Key className="w-3 h-3" /> Derive From Wallet (one signature, no paste)
+          <Key className="w-4 h-4" /> Derive from wallet (one signature)
         </button>
 
-        {useFile ? (
-          <label className="flex items-center justify-center gap-2 border border-dashed border-white/20 py-4 cursor-pointer hover:border-white/40 transition-colors text-sm text-white/40">
-            <Key className="w-4 h-4" />
+        <details className="border border-white/10 bg-white/5">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs text-white/40 hover:text-white/70 flex items-center gap-2">
+            <Upload className="w-3 h-3" /> Have a key file from another device?
+          </summary>
+          <label className="flex items-center justify-center gap-2 border-t border-white/10 py-4 cursor-pointer text-sm text-white/40 hover:text-white/70">
             Click to load stealth-keys.json
             <input type="file" accept=".json" onChange={loadFromFile} className="hidden" />
           </label>
-        ) : (
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <label className="text-xs text-white/40 uppercase tracking-wider flex items-center gap-1">
-                <Eye className="w-3 h-3" /> View Private Key
-              </label>
-              <input
-                data-testid="view-priv-input"
-                type={showKeys ? "text" : "password"}
-                value={viewPriv}
-                onChange={e => setViewPriv(e.target.value)}
-                placeholder="0x..."
-                className="w-full bg-transparent border border-white/20 px-3 py-2.5 text-xs text-white placeholder-white/20 focus:outline-none focus:border-white/50 font-mono"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs text-white/40 uppercase tracking-wider flex items-center gap-1">
-                <Key className="w-3 h-3" /> Spend Public Key
-              </label>
-              <input
-                data-testid="spend-pub-input"
-                type={showKeys ? "text" : "password"}
-                value={spendPub}
-                onChange={e => setSpendPub(e.target.value)}
-                placeholder="0x..."
-                className="w-full bg-transparent border border-white/20 px-3 py-2.5 text-xs text-white placeholder-white/20 focus:outline-none focus:border-white/50 font-mono"
-              />
-            </div>
-            <button
-              onClick={() => setShowKeys(!showKeys)}
-              className="text-xs text-white/30 hover:text-white/60 flex items-center gap-1 transition-colors"
-            >
-              {showKeys ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-              {showKeys ? "Hide" : "Show"} keys
-            </button>
-          </div>
-        )}
-
-        {/* Chain filter — hidden when an umbrella component (ScannerSVM) has
-            already pinned the chain (avoids a duplicate UI). Standalone
-            (StealthContent tab) callers still see the picker. */}
-        {showChainPicker && (
-          <div className="flex flex-wrap gap-2">
-            {CHAIN_LIST.map(c => (
-              <button
-                key={c}
-                onClick={() => setSelectedChain(c)}
-                className={`text-xs px-3 py-1 border capitalize transition-colors ${selectedChain === c ? "border-blue-400 text-blue-400 bg-blue-400/10" : "border-white/20 text-white/40 hover:border-white/40"}`}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <button
-          data-testid="scan-btn"
-          onClick={scan}
-          disabled={scanning || !viewPriv || !spendPub}
-          className="w-full py-3 bg-white text-black font-semibold text-sm hover:bg-white/90 disabled:opacity-40 transition-colors flex items-center justify-center gap-2"
-        >
-          {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
-          {scanning ? "Scanning announcements…" : "Scan for Payments"}
-        </button>
+        </details>
       </div>
 
-      {/* Results */}
+      {showChainPicker && chainOptions.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {chainOptions.map(c => (
+            <button
+              key={c}
+              onClick={() => setSelectedChain(c)}
+              className={`text-xs px-3 py-1 border capitalize transition-colors ${selectedChain === c ? "border-blue-400 text-blue-400 bg-blue-400/10" : "border-white/20 text-white/40 hover:border-white/40"}`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <button
+        data-testid="scan-btn"
+        onClick={scan}
+        disabled={scanning || !viewPriv || !spendPub}
+        className="w-full py-3 bg-white text-black font-semibold text-sm hover:bg-white/90 disabled:opacity-40 transition-colors flex items-center justify-center gap-2"
+      >
+        {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
+        {scanning ? "Scanning announcements…" : "Scan for Payments"}
+      </button>
+
       {scanned && (
         <div className="space-y-3">
           <p className="text-xs text-white/40 uppercase tracking-wider">
@@ -353,27 +290,17 @@ export function StealthReceive({ address, chain: chainProp }) {
             <div className="border border-white/10 p-4 text-center">
               <ScanLine className="w-6 h-6 text-white/20 mx-auto mb-2" />
               <p className="text-sm text-white/30">No payments detected</p>
-              <p className="text-xs text-white/20 mt-1">Ask someone to send to your meta-address and announce</p>
+              <p className="text-xs text-white/20 mt-1">Ask someone to send to your receive link</p>
             </div>
           ) : (
             <div className="space-y-3">
               {matches.map((m, i) => (
-                <MatchCard key={i} match={m} onSweep={sweep} />
+                <MatchCard key={i} match={m} onSweep={sweep} sweepReady={sweepReady} />
               ))}
-              {!spendPriv && (
-                <div className="space-y-1.5 border-t border-white/10 pt-3">
-                  <label className="text-xs text-white/40 uppercase tracking-wider">
-                    Spend Private Key (required to sweep)
-                  </label>
-                  <input
-                    type="password"
-                    value={spendPriv}
-                    onChange={e => setSpendPriv(e.target.value)}
-                    placeholder="0x..."
-                    className="w-full bg-transparent border border-red-400/30 px-3 py-2 text-xs text-white placeholder-white/20 focus:outline-none focus:border-red-400/60 font-mono"
-                  />
-                  <p className="text-xs text-red-400/60">Your spend private key is used locally to sign the sweep tx and is never sent to any server.</p>
-                </div>
+              {!sweepReady && (
+                <p className="text-xs text-yellow-400/70 border-t border-white/10 pt-3">
+                  Sweep disabled — your wallet didn't expose a spend key this session. Re-derive from wallet or load a key file to sweep.
+                </p>
               )}
             </div>
           )}

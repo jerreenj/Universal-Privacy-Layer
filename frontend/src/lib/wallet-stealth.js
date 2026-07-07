@@ -73,8 +73,11 @@ export async function hkdfFromSignature(signatureBytes, info, length = 32) {
   // ethers' sha256 doesn't include HMAC; roll our own using subtle.
   const sigBytes = ethers.getBytes(signatureBytes);
   const ikm = sigBytes; // (could pad to longer; 65 bytes is fine for HKDF)
-  // HKDF-Extract: PRK = HMAC-SHA-256(salt=0, ikm)
-  const prk = await hmacSha256(new Uint8Array(0), ikm);
+  // HKDF-Extract per RFC 5869: PRK = HMAC-SHA-256(salt=HashLen zeros, ikm).
+  // IMPORTANT: subtle.importKey rejects EMPTY keys with
+  // 'HMAC key data must not be empty', so we feed 32 zero bytes — the
+  // mathematical equivalent of "salt is empty" per the spec.
+  const prk = await hmacSha256(new Uint8Array(32), ikm);
   // HKDF-Expand: derive `length` bytes via iterative HMAC.
   const out = new Uint8Array(length);
   let prev = new Uint8Array(0);
