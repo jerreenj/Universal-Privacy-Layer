@@ -5,7 +5,6 @@ import { Shield, TrendingUp, RefreshCw, Loader2, ExternalLink } from "lucide-rea
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
-import { QrScanner } from "@/components/common/QrScanner";
 
 export function UniswapPrivateSwap() {
   const { address, chain, signer, fetchBalance } = useWallet();
@@ -18,7 +17,6 @@ export function UniswapPrivateSwap() {
   const [loading, setLoading] = useState(false);
   const [swapping, setSwapping] = useState(false);
   const [txHash, setTxHash] = useState(null);
-  const [showQr, setShowQr] = useState(false);
 
   const supportedChains = ["base", "arbitrum", "polygon", "optimism"];
   const isSupported = supportedChains.includes(chain);
@@ -94,31 +92,10 @@ export function UniswapPrivateSwap() {
           <div className="flex items-center gap-2">
             <button onClick={autoGenStealth} className="text-xs text-blue-400 hover:text-blue-300">Auto</button>
             <button onClick={autoGenStealth} className="text-xs text-blue-400 hover:text-blue-300" title="Generate a fresh stealth address — same as Auto, callable as many times as you want">New</button>
-            <button
-              data-testid="uniswap-scan-qr-btn"
-              onClick={() => setShowQr(s => !s)}
-              title="Scan a recipient QR with your camera"
-              className={`text-xs ${showQr ? 'text-blue-300 underline' : 'text-blue-400 hover:text-blue-300'}`}
-            >
-              📷 QR
-            </button>
           </div>
         </div>
         <input data-testid="uniswap-stealth-input" value={stealthRecipient} onChange={e => setStealthRecipient(e.target.value)} placeholder="0x... (stealth address)"
           className="w-full bg-white/5 border border-white/20 p-3 font-mono text-xs outline-none focus:border-white" />
-        {showQr && (
-          <div className="mt-2">
-            <QrScanner
-              onResult={(value) => {
-                setStealthRecipient(value);
-                setShowQr(false);
-                toast.success("Recipient filled from QR");
-              }}
-              onClose={() => setShowQr(false)}
-              label="Scan a recipient's stealth QR"
-            />
-          </div>
-        )}
       </div>
       <div className="flex items-center gap-3">
         <div className="flex-1">

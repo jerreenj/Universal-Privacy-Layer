@@ -49,7 +49,6 @@ import {
     deriveDefaultViewTag,
     quoteConfidentialUsdcOut,
 } from "@/lib/confidential-amount";
-import { QrScanner } from "@/components/common/QrScanner";
 
 // NativePrivateSwap ABI — only the calls the customer surface makes.
 const NATIVE_SWAP_ABI = [
@@ -117,7 +116,6 @@ export function SwapContent() {
   // emits a 32-byte commitment instead of plaintext usdcOut.
   const [mode, setMode] = useState("native");
   const [viewTagHex, setViewTagHex] = useState(null);
-  const [showQr, setShowQr] = useState(false);
 
   // Resolve the live vault address(es) from /api/deployments.
   // NativePrivateSwap → 'native_swap_wrapper' (existing flow).
@@ -537,28 +535,7 @@ export function SwapContent() {
           >
             New
           </button>
-          <button
-            data-testid="swap-scan-qr-btn"
-            title="Scan a recipient QR with your camera"
-            onClick={() => setShowQr(s => !s)}
-            className={`px-3 border ${showQr ? 'border-blue-400 bg-blue-400/10 text-blue-300' : 'border-white/20 hover:bg-white/10 text-xs'} flex items-center gap-1`}
-          >
-            📷 QR
-          </button>
         </div>
-        {showQr && (
-          <div className="mt-3">
-            <QrScanner
-              onResult={(value) => {
-                setStealthRecipient(value);
-                setShowQr(false);
-                toast.success("Recipient filled from QR");
-              }}
-              onClose={() => setShowQr(false)}
-              label="Scan a recipient's stealth QR"
-            />
-          </div>
-        )}
       </div>
 
       {quote && (
