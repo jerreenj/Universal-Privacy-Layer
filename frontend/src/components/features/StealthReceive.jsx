@@ -13,7 +13,7 @@
  */
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { ScanLine, Eye, Loader2, ArrowDownLeft, ExternalLink, Key, Zap, Upload } from "lucide-react";
+import { ScanLine, Eye, EyeOff, Loader2, ArrowDownLeft, ExternalLink, Key, Zap, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { scanAnnouncements, computeStealthPrivKey } from "../../utils/stealth";
 import { CHAINS } from "@/config/chains";
@@ -125,6 +125,8 @@ export function StealthReceive({ address, chain: chainProp }) {
   const [matches, setMatches] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [scanned, setScanned] = useState(false);
+  const [showKeys, setShowKeys] = useState(false);
+  const [inputMode, setInputMode] = useState("derive"); // derive | manual | file
 
   const loadFromFile = (e) => {
     const file = e.target.files[0];
@@ -159,10 +161,6 @@ export function StealthReceive({ address, chain: chainProp }) {
         ? "Ready. Tap Scan for your payments."
         : "View-only. Sweep disabled until spend key is provided.");
     } catch (e) {
-      // The HKDF subtle.importKey path threw 'HMAC key data must not be
-      // empty' if the salt was zero-bytes — already fixed in
-      // wallet-stealth.js. Surface a short, friendly message here so
-      // a user who hits a regressed build still sees a useful hint.
       const msg = (e?.message || String(e)).slice(0, 80);
       toast.error("Derive failed: " + msg);
     }
@@ -235,26 +233,84 @@ export function StealthReceive({ address, chain: chainProp }) {
         </div>
       </div>
 
-      {/* Two paths to derive. ONE click is the default; Load Key File
-          is for the power user who exported from another device. */}
-      <div className="space-y-3">
+      {/* Three input modes — Customer can pick whichever applies. */}
+      <div className="flex items-center gap-3">
         <button
-          data-testid="derive-from-wallet-btn"
-          onClick={deriveFromWallet}
-          className="w-full flex items-center justify-center gap-2 border border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/15 py-3 text-sm text-blue-300 transition-colors"
+          onClick={() => setInputMode("derive")}
+          className={`text-xs px-3 py-1.5 border transition-colors ${inputMode === "derive" ? "border-white text-white" : "border-white/20 text-white/40"}`}
         >
-          <Key className="w-4 h-4" /> Derive from wallet (one signature)
+          Derive
         </button>
+        <button
+          onClick={() => setInputMode("manual")}
+          className={`text-xs px-3 py-1.5 border transition-colors ${inputMode === "manual" ? "border-white text-white" : "border-white/20 text-white/40"}`}
+        >
+          Manual
+        </button>
+        <button
+          onClick={() => setInputMode("file")}
+          className={`text-xs px-3 py-1.5 border transition-colors ${inputMode === "file" ? "border-white text-white" : "border-white/20 text-white/40"}`}
+        >
+          Key File
+        </button>
+      </div>
 
-        <details className="border border-white/10 bg-white/5">
-          <summary className="cursor-pointer select-none px-3 py-2 text-xs text-white/40 hover:text-white/70 flex items-center gap-2">
-            <Upload className="w-3 h-3" /> Have a key file from another device?
-          </summary>
-          <label className="flex items-center justify-center gap-2 border-t border-white/10 py-4 cursor-pointer text-sm text-white/40 hover:text-white/70">
+      <div className="space-y-3">
+        {inputMode === "derive" && (
+          <button
+            data-testid="derive-from-wallet-btn"
+            onClick={deriveFromWallet}
+            className="w-full flex items-center justify-center gap-2 border border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/15 py-3 text-sm text-blue-300 transition-colors"
+          >
+            <Key className="w-4 h-4" /> Derive from wallet (one signature)
+          </button>
+        )}
+
+        {inputMode === "manual" && (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-xs text-white/40 uppercase tracking-wider flex items-center gap-1">
+                <Eye className="w-3 h-3" /> View Private Key
+              </label>
+              <input
+                data-testid="view-priv-input"
+                type={showKeys ? "text" : "password"}
+                value={viewPriv}
+                onChange={e => setViewPriv(e.target.value)}
+                placeholder="0x..."
+                className="w-full bg-transparent border border-white/20 px-3 py-2.5 text-xs text-white placeholder-white/20 focus:outline-none focus:border-white/50 font-mono"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs text-white/40 uppercase tracking-wider flex items-center gap-1">
+                <Key className="w-3 h-3" /> Spend Public Key
+              </label>
+              <input
+                data-testid="spend-pub-input"
+                type={showKeys ? "text" : "password"}
+                value={spendPub}
+                onChange={e => setSpendPub(e.target.value)}
+                placeholder="0x..."
+                className="w-full bg-transparent border border-white/20 px-3 py-2.5 text-xs text-white placeholder-white/20 focus:outline-none focus:border-white/50 font-mono"
+              />
+            </div>
+            <button
+              onClick={() => setShowKeys(!showKeys)}
+              className="text-xs text-white/30 hover:text-white/60 flex items-center gap-1 transition-colors"
+            >
+              {showKeys ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              {showKeys ? "Hide" : "Show"} keys
+            </button>
+          </div>
+        )}
+
+        {inputMode === "file" && (
+          <label className="flex items-center justify-center gap-2 border border-dashed border-white/20 py-4 cursor-pointer hover:border-white/40 transition-colors text-sm text-white/40">
+            <Upload className="w-4 h-4" />
             Click to load stealth-keys.json
             <input type="file" accept=".json" onChange={loadFromFile} className="hidden" />
           </label>
-        </details>
+        )}
       </div>
 
       {showChainPicker && chainOptions.length > 1 && (
