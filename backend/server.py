@@ -595,6 +595,7 @@ def _load_deployed_addresses(static_contracts: Dict[str, Dict[str, Any]]) -> Dic
         # 32-byte commitment. Surfaced here so /api/deployments exposes
         # it to the frontend Privacy-Mode toggle.
         "confidential_swap_wrapper",
+        "confidential_reverse_swap",
         "deployer", "fee_recipient", "pool_owner",
     )
     provenance_keys = ("chainId", "deployedAt", "commit", "redeployedNote")
@@ -6110,6 +6111,97 @@ async def sol_receipts(owner: str):
 # deployed across EVM + Sui, so the UI can surface real addresses and flip
 # Sui from "coming soon" to live without a code change.
 
+# ── Reverse Swap Relay ────────────────────────────────────────────────────
+# POST /swap/reverse/relay — customer signs an EIP-712 SwapRequest
+# off-chain + USDC.approve's the vault; the relayer hot wallet calls
+# vault.swapFor(...). Customer's EOA never appears as msg.sender.
+class ReverseSwapRelayRequest(BaseModel):
+    recipient: str
+    amount_commit: str
+    view_tag_byte: str
+    min_eth_out: str
+    usdc_in: str
+    deadline: int
+    nonce: int
+    sig: str
+    customer: str
+
+@api_router.post("/swap/reverse/relay")
+async def swap_reverse_relay(request: ReverseSwapRelayRequest):
+    """Relayer submits a customer-signed USDC→ETH swap. The hot
+    wallet is the on-chain msg.sender; the customer's wallet is
+    recovered from the EIP-712 sig inside the contract."""
+    try:
+        vault_addr = UPL_CONTRACTS.get("base", {}).get("confidential_reverse_swap")
+        if not vault_addr or vault_addr == "0x0":
+            raise HTTPException(status_code=503, detail="Reverse swap vault not deployed")
+
+        relayer_key = (
+            os.environ.get("RELAYER_PRIVATE_KEY")
+            or _read_hot_wallet_keyfile()
+        )
+        if not relayer_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Relayer wallet not configured. Set RELAYER_PRIVATE_KEY or drop scripts/.relayer-hot-wallet.txt.",
+            )
+
+        rpc = CHAIN_CONFIG.get("base", {}).get("rpc_url", "https://mainnet.base.org")
+        w3 = Web3(Web3.HTTPProvider(rpc))
+        if not w3.is_connected():
+            raise HTTPException(status_code=503, detail="Base RPC unreachable")
+
+        acct = Account.from_key(relayer_key)
+
+        # ABI-encoded call to vault.swapFor(...)
+        # function swapFor(address,bytes32,bytes1,uint256,uint256,uint256,uint256,bytes)
+        swap_selector = Web3.keccak(text="swapFor(address,bytes32,bytes1,uint256,uint256,uint256,uint256,bytes)")[:4].hex()
+        view_tag_byte = int(request.view_tag_byte, 16) if isinstance(request.view_tag_byte, str) else int(request.view_tag_byte)
+        # Build calldata manually — 8 args, dynamic bytes at the end.
+        # ABI: address,bytes32,bytes1(uint8 padded to 32),5x uint256, dynamic bytes
+        # offset for dynamic `bytes sig` = 8*32 = 256
+        args_encoded = (
+            int(request.recipient, 16).to_bytes(32, "big")  # address padded
+            + bytes.fromhex(request.amount_commit[2:].zfill(64))  # bytes32
+            + view_tag_byte.to_bytes(32, "big")  # bytes1 padded
+            + int(request.min_eth_out).to_bytes(32, "big")
+            + int(request.usdc_in).to_bytes(32, "big")
+            + int(request.deadline).to_bytes(32, "big")
+            + int(request.nonce).to_bytes(32, "big")
+            + (256).to_bytes(32, "big")  # offset to dynamic bytes data
+        )
+        sig_bytes = bytes.fromhex(request.sig[2:] if request.sig.startswith("0x") else request.sig)
+        sig_len = len(sig_bytes)
+        sig_data = sig_len.to_bytes(32, "big") + sig_bytes + b"\x00" * ((32 - sig_len % 32) % 32)
+        calldata = "0x" + swap_selector + args_encoded.hex() + sig_data.hex()
+
+        # Estimate gas + send.
+        nonce = w3.eth.get_transaction_count(acct.address)
+        gas_price = w3.eth.gas_price
+        tx = {
+            "to": Web3.to_checksum_address(vault_addr),
+            "data": calldata,
+            "from": acct.address,
+            "nonce": nonce,
+            "gasPrice": gas_price,
+            "chainId": 8453,
+        }
+        try:
+            gas = w3.eth.estimate_gas(tx)
+        except Exception as ge:
+            raise HTTPException(status_code=400, detail=f"Estimation failed: {ge}")
+        tx["gas"] = gas + 10000
+        signed = acct.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+        logger.info(f"reverse-swap relayed: {tx_hash} customer={request.customer}")
+        return {"tx_hash": tx_hash, "relayer": acct.address}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"reverse-swap relay error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.get("/deployments")
 async def deployments():
     """Return the deployment status of all UPL contracts across EVM chains and
@@ -6153,11 +6245,13 @@ async def deployments():
             # PrivacyMode toggle can route to it without a code change
             # on the dashboard grid.
             "confidential_swap_wrapper": (cfg.get("confidential_swap_wrapper") if _is_real(cfg.get("confidential_swap_wrapper")) else None),
+            "confidential_reverse_swap": (cfg.get("confidential_reverse_swap") if _is_real(cfg.get("confidential_reverse_swap")) else None),
             "deployed": (
                 _is_real(relayer)  or _is_real(registry) or _is_real(uwrapper)
                 or _is_real(pool)  or _is_real(verifier) or _is_real(aero)
                 or _is_real(cfg.get("native_swap_wrapper"))
                 or _is_real(cfg.get("confidential_swap_wrapper"))
+                or _is_real(cfg.get("confidential_reverse_swap"))
             ),
             "explorer": cfg.get("explorer"),
         }
