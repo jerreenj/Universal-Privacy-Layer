@@ -40,27 +40,26 @@
 
 import { ethers } from "ethers";
 
-// Fixed domain separator — same across all browsers, locks the
-// signature to UPL use only. The chainId path prevents replay
-// across Base / Arbitrum / etc. if we ever add more chains.
+// Domain separator for the meta-derivation personal_sign. We use a
+// PLAIN-STRING message directly (no solidityPacked encoding) to
+// avoid the BytesLike conversion edge-case where some ethers
+// versions return a Number from solidityPackedKeccak256 under
+// heavy load and then choke on getBytes("2817..."). Plain string
+// → signMessage accepts it directly → no decode path.
 function domainFor(chainId) {
-  const id = typeof chainId === "bigint" ? chainId : BigInt(chainId);
-  return ethers.solidityPackedKeccak256(
-    ["string", "uint256"],
-    ["UPL-Stealth-Meta\n", id]
-  );
+  const id = typeof chainId === "bigint" ? chainId.toString() : String(chainId);
+  return "UPL-Stealth-Meta\nchain=" + id;
 }
 
 /**
  * signMetaDomain(signer, chainId) — produces a deterministic
- * personal_sign over the UPL stealth domain separator. Returns
- * the 65-byte signature (r||s||v).
+ * personal_sign over a fixed plain-text domain separator. Returns
+ * the 65-byte signature (r||s||v). Passes the message as a plain
+ * string to signMessage so the wallet wraps it with EIP-191 and
+ * avoids any BytesLike decode edge-case.
  */
 export async function signMetaDomain(signer, chainId) {
-  const domain = domainFor(chainId);
-  // signMessage adds the EIP-191 prefix internally, which is fine —
-  // the wallet signature wraps whatever we pass it.
-  return await signer.signMessage(ethers.getBytes(domain));
+  return await signer.signMessage(domainFor(chainId));
 }
 
 /**
