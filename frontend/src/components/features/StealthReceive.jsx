@@ -207,14 +207,52 @@ export function StealthReceive({ address, chain: chainProp }) {
   // One click: wallet signs once, HKDF produces view_priv + spend_pub +
   // spend_priv + meta_address. Customer sees a QR of the meta so they
   // can hand it to a payer. The view_priv/spend_pub are NOT displayed.
+  //
+  // Each async step has a hard timeout so the loading state cannot
+  // stick at 'Deriving…' indefinitely if the wallet popup never
+  // appears (browser popup blocker, dead wallet extension, signed
+  // out / reconnected mid-call, etc.). The user gets a clear toast
+  // telling them what to do instead of staring at a half-loaded button.
+  const withTimeout = (promise, ms, label) => Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+
   const deriveFromWallet = useCallback(async () => {
-    if (!signer) return toast.error("Connect wallet first");
+    if (!signer) {
+      toast.error("Connect your wallet first");
+      return;
+    }
     setLoading(true);
     try {
-      const chainIdNum = chainProp && chainProp !== "all"
-        ? await signer.provider.getNetwork().then(n => Number(n.chainId))
-        : 8453;
-      const meta = await deriveMetaAddress(signer, BigInt(chainIdNum));
+      let chainIdNum = 8453;
+      if (chainProp && chainProp !== "all" && signer.provider) {
+        try {
+          const net = await withTimeout(signer.provider.getNetwork(), 5000, "wallet network");
+          chainIdNum = Number(net.chainId) || 8453;
+        } catch {
+          chainIdNum = 8453;
+        }
+      }
+      let meta;
+      try {
+        meta = await withTimeout(
+          deriveMetaAddress(signer, BigInt(chainIdNum)),
+          25000,
+          "Wallet sign"
+        );
+      } catch (signErr) {
+        // Specific cause: wallet popup didn't appear or user denied.
+        const cause = (signErr?.message || "").toLowerCase().includes("denied") || (signErr?.message || "").toLowerCase().includes("reject")
+          ? "You rejected the signature in your wallet. Try again and click Sign."
+          : (signErr?.message || "").toLowerCase().includes("timed out")
+          ? "Your wallet didn't respond. Open your wallet extension and try again."
+          : "Unable to sign with your wallet. Open the wallet extension and ensure it's connected to this page.";
+        toast.error("Derive failed: " + cause, { duration: 6000 });
+        return;
+      }
       setViewPriv(meta.viewPriv);
       setSpendPub(meta.spendPub);
       setSpendPriv(meta.spendPriv || "");
@@ -228,7 +266,7 @@ export function StealthReceive({ address, chain: chainProp }) {
           spend_priv: meta.spendPriv,
         }));
       } catch {}
-      toast.success("Ready. Tap Scan for incoming payments.");
+      toast.success("Done. Scroll down to see your QR code.", { duration: 5000 });
     } catch (e) {
       toast.error("Derive failed: " + ((e?.message || String(e)).slice(0, 80)));
     } finally {
