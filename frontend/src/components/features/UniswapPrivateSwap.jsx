@@ -89,7 +89,10 @@ export function UniswapPrivateSwap() {
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="text-xs text-gray-500 uppercase">Stealth Recipient</label>
-          <button onClick={autoGenStealth} className="text-xs text-blue-400 hover:text-blue-300">Auto-generate</button>
+          <div className="flex items-center gap-2">
+            <button onClick={autoGenStealth} className="text-xs text-blue-400 hover:text-blue-300">Auto</button>
+            <button onClick={autoGenStealth} className="text-xs text-blue-400 hover:text-blue-300" title="Generate a fresh stealth address — same as Auto, callable as many times as you want">New</button>
+          </div>
         </div>
         <input data-testid="uniswap-stealth-input" value={stealthRecipient} onChange={e => setStealthRecipient(e.target.value)} placeholder="0x... (stealth address)"
           className="w-full bg-white/5 border border-white/20 p-3 font-mono text-xs outline-none focus:border-white" />

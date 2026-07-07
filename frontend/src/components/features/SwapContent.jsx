@@ -527,6 +527,14 @@ export function SwapContent() {
           >
             Auto
           </button>
+          <button
+            data-testid="swap-new-stealth-btn"
+            onClick={autoGenStealth}
+            title="Generate a fresh stealth address — same as Auto, callable as many times as you want"
+            className="px-3 border border-white/20 hover:bg-white/10 text-xs"
+          >
+            New
+          </button>
         </div>
       </div>
 
