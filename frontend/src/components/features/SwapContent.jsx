@@ -194,17 +194,18 @@ export function SwapContent() {
         await tx.wait();
         toast.success("Confirmed");
       } else {
-        // REVERSE: customer signs EIP-712, USDC.approve(vault),
-        // then posts to /api/swap/reverse/relay. The relayer
-        // hot wallet calls vault.swapFor(...). The customer's
-        // EOA never appears as msg.sender on-chain.
+        // REVERSE: customer signs EIP-712, relayer submits.
+        // The approve leak is fixed: ONE-TIME max approval on the
+        // first ever reverse swap (cached in localStorage). All
+        // future swaps are signature-only — no on-chain tx from
+        // the customer's wallet per-swap.
         const usdcIn = ethers.parseUnits(amount, USDC.decimals);
         const ethOut = BigInt(quote.expectedOut);
         const minEthOut = BigInt(quote.amountOutMinimum);
         // Build commitment: keccak256(keccak256(ethOut||viewTagByte) || 0x43)
         const inner = ethers.solidityPackedKeccak256(["uint256","bytes1"], [ethOut, viewTagHex]);
         const amountCommit = ethers.solidityPackedKeccak256(["bytes32","uint8"], [inner, 0x43]);
-        // Read nonce + domain separator from the vault.
+        // Read nonce from the vault.
         const vaultRead = new ethers.Contract(activeVault, REVERSE_ABI, provider);
         const nonce = await vaultRead.nextNonce(address);
         const deadline = Math.floor(Date.now() / 1000) + 600;
@@ -214,11 +215,34 @@ export function SwapContent() {
         );
         // Sign the EIP-712 digest.
         const sig = await activeSigner.signMessage(ethers.getBytes(digest));
-        // Approve USDC for the vault to pull.
-        const usdcContract = new ethers.Contract(USDC.address,
-          ["function approve(address,uint256) returns (bool)"], activeSigner);
-        const approveTx = await usdcContract.approve(activeVault, usdcIn);
-        await approveTx.wait();
+
+        // ONE-TIME max approval check. If we already approved this
+        // vault for unlimited USDC, skip the on-chain tx entirely.
+        // This is the fix: the approve tx is visible on BaseScan
+        // and leaks the customer's address — but it only happens
+        // ONCE per wallet, not per swap.
+        const cacheKey = `upl:usdc-approve:${address.toLowerCase()}:${activeVault.toLowerCase()}`;
+        let alreadyApproved = false;
+        try {
+          alreadyApproved = localStorage.getItem(cacheKey) === "1";
+        } catch {}
+
+        if (!alreadyApproved) {
+          // Check on-chain allowance to be sure.
+          const usdcRead = new ethers.Contract(USDC.address,
+            ["function allowance(address,address) view returns (uint256)"], provider);
+          const currentAllowance = await usdcRead.allowance(address, activeVault);
+          if (currentAllowance < usdcIn) {
+            const usdcContract = new ethers.Contract(USDC.address,
+              ["function approve(address,uint256) returns (bool)"], activeSigner);
+            // Max approval so this never runs again.
+            const approveTx = await usdcContract.approve(activeVault, ethers.MaxUint256);
+            await approveTx.wait();
+            toast.success("USDC approved — one-time setup, won't repeat");
+          }
+          try { localStorage.setItem(cacheKey, "1"); } catch {}
+        }
+
         // Post to relayer.
         const resp = await axios.post(`${API}/swap/reverse/relay`, {
           recipient: stealthRecipient,
