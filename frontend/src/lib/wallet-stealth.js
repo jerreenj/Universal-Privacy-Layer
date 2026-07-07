@@ -188,6 +188,43 @@ export async function deriveMetaAddress(signer, chainId) {
 }
 
 /**
+ * deriveStealthEOA(signer) → { address, privateKey }
+ * The customer's SINGLE private receive address. Derived once per
+ * connected wallet — chain-independent (the same address works on
+ * Base, Arbitrum, Optimism, etc.). Used in the consumer-grade
+ * StealthMeta.jsx UI; non-cryptographer customers do NOT see
+ * spend/view=true. THIS is "your stealth address" — you give it out
+ * once, anyone sends to it.
+ *
+ * Same signature flow as the meta-derivative above, but the
+ * HKDF info string is "upl-stealth:wallet-2" so the output is
+ * chain-agnostic (the OLD meta-derivation was per-chainId via
+ * domainFor(chainId)). The customer sees ONE address they share
+ * across multiple chains — different from their main wallet EOA.
+ *
+ * NOTE: The private key still lives in browser storage (encrypted
+ * with personal_sign-wallet-derived seal) so the FE can sign sweep
+ * transactions; the customer never has to interact with it
+ * manually. Auto-sweep on inbound payment.
+ */
+export async function deriveStealthEOA(signer) {
+    // Chain-independent signature. The customer seeds this once and
+    // reuses across every chain — matches their mental model of
+    // 'one address per wallet for life'.
+    const sig = await signer.signMessage("UPL-Stealth-Wallet-2");
+    const bytes = await hkdfFromSignature(sig, "upl-stealth:wallet-2", 32);
+    const n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
+    const pkSecp = BigInt("0x" + bytesToHex(bytes)) % n;
+    if (pkSecp === 0n) throw new Error("zero stealth key — re-attempt");
+    const sk = new ethers.SigningKey(pkSecp);
+    const address = ethers.computeAddress("0x" + sk.publicKey.slice(4));
+    return {
+        address,
+        privateKey: pkSecp.toString(16).padStart(64, "0"),
+    };
+}
+
+/**
  * generateStealthAddress(metaAddress) → { stealthAddress, ephemeralPublicKey, viewTag }
  * The customer makes an ephemeral keypair, derives an ECDH shared
  * secret against the recipient's meta view-pub, computes the stealth
