@@ -123,25 +123,54 @@ export function StealthMeta({ address }) {
         <div className="space-y-4">
           <div className="bg-green-400/5 border border-green-400/20 p-4 space-y-3">
             <p className="text-xs text-green-400 font-semibold uppercase tracking-wider">Active Meta-Address</p>
+            {/* What is st:eth:?  : ERC-5564 format. st=scheme, eth=chain. The
+                actual data is (spend_pub || view_pub). Other ERC-5564 wallets
+                recognise this exact text. */}
             <div className="flex items-start gap-2">
-              <p className="text-xs font-mono text-white/70 break-all flex-1" data-testid="meta-address-display">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(existing.meta_address);
+                  toast.success("Meta-address copied");
+                }}
+                data-testid="meta-address-display"
+                className="text-xs font-mono text-white/70 break-all text-left flex-1 hover:text-white cursor-pointer"
+                title="Click to copy"
+              >
                 {existing.meta_address}
-              </p>
+              </button>
               <CopyBtn text={existing.meta_address} label="Meta-address" />
             </div>
+            <p className="text-[10px] text-white/40">
+              <strong>What this is:</strong> ERC-5564 stealth meta-address. Format = <span className="font-mono">{"st:<chain>:<spend_pub><view_pub>"}</span>. Share this publicly; anyone who knows it can pay you privately.
+            </p>
           </div>
+
           <div className="grid grid-cols-2 gap-3 text-xs">
-            <div className="bg-white/5 border border-white/10 p-3">
+            <button
+              data-testid="view-pub-copy-btn"
+              onClick={() => { navigator.clipboard.writeText(existing.view_pub); toast.success("View public key copied"); }}
+              className="bg-white/5 border border-white/10 p-3 text-left hover:bg-white/10 cursor-pointer"
+            >
               <p className="text-white/40 mb-1 flex items-center gap-1"><Eye className="w-3 h-3" /> View Public Key</p>
               <p className="font-mono text-white/60 break-all">{existing.view_pub}</p>
-            </div>
-            <div className="bg-white/5 border border-white/10 p-3">
+              <p className="text-[9px] text-white/30 mt-1">
+                Senders multiply this against an ephemeral key to derive the shared secret that points at your stealth address.
+              </p>
+            </button>
+            <button
+              data-testid="spend-pub-copy-btn"
+              onClick={() => { navigator.clipboard.writeText(existing.spend_pub); toast.success("Spend public key copied"); }}
+              className="bg-white/5 border border-white/10 p-3 text-left hover:bg-white/10 cursor-pointer"
+            >
               <p className="text-white/40 mb-1 flex items-center gap-1"><Key className="w-3 h-3" /> Spend Public Key</p>
               <p className="font-mono text-white/60 break-all">{existing.spend_pub}</p>
-            </div>
+              <p className="text-[9px] text-white/30 mt-1">
+                The base point the shared secret gets added to. Together with the shared secret, it produces your one-time stealth destination.
+              </p>
+            </button>
           </div>
           <p className="text-xs text-white/30">
-            Share your meta-address publicly. Anyone can derive a unique stealth address from it to pay you privately.
+            Share your meta-address publicly. Anyone can derive a unique stealth address from it to pay you privately. Both public keys are PUBLIC — safe to share.
           </p>
         </div>
       )}
@@ -177,9 +206,18 @@ export function StealthMeta({ address }) {
           <div className="space-y-2">
             <p className="text-xs text-white/40 uppercase tracking-wider">Your Meta-Address (share publicly)</p>
             <div className="flex items-start gap-2 bg-white/5 border border-white/10 p-3">
-              <p className="text-xs font-mono text-white/70 break-all flex-1">{meta.metaAddress}</p>
+              <button
+                onClick={() => { navigator.clipboard.writeText(meta.metaAddress); toast.success("Meta-address copied"); }}
+                className="text-xs font-mono text-white/70 break-all flex-1 text-left hover:text-white cursor-pointer"
+                title="Click to copy"
+              >
+                {meta.metaAddress}
+              </button>
               <CopyBtn text={meta.metaAddress} label="Meta-address" />
             </div>
+            <p className="text-[10px] text-white/40">
+              <strong>What this is:</strong> ERC-5564 stealth meta-address. Format = <span className="font-mono">{"st:<chain>:<spend_pub><view_pub>"}</span>. Share this publicly; anyone who knows it can pay you privately.
+            </p>
           </div>
 
           <button
@@ -192,14 +230,22 @@ export function StealthMeta({ address }) {
 
           {showPrivate && keys && (
             <div className="space-y-2 bg-red-400/5 border border-red-400/20 p-3">
-              <div className="space-y-1">
-                <p className="text-xs text-red-400/70">Spend Private Key (NEVER share)</p>
+              <button
+                data-testid="spend-priv-copy-btn"
+                onClick={() => { navigator.clipboard.writeText(keys.spendPriv); toast.success("Spend private key copied"); }}
+                className="space-y-1 text-left w-full hover:bg-white/5 cursor-pointer p-1"
+              >
+                <p className="text-xs text-red-400/70 flex items-center gap-1"><Key className="w-3 h-3" /> Spend Private Key (NEVER share — claims funds)</p>
                 <p className="text-xs font-mono text-white/50 break-all">{keys.spendPriv}</p>
-              </div>
-              <div className="space-y-1 pt-2 border-t border-white/10">
-                <p className="text-xs text-yellow-400/70">View Private Key (share only with trusted scanner)</p>
+              </button>
+              <button
+                data-testid="view-priv-copy-btn"
+                onClick={() => { navigator.clipboard.writeText(keys.viewPriv); toast.success("View private key copied"); }}
+                className="space-y-1 pt-2 border-t border-white/10 text-left w-full hover:bg-white/5 cursor-pointer p-1"
+              >
+                <p className="text-xs text-yellow-400/70 flex items-center gap-1"><Eye className="w-3 h-3" /> View Private Key (NEVER share — scans for your payments)</p>
                 <p className="text-xs font-mono text-white/50 break-all">{keys.viewPriv}</p>
-              </div>
+              </button>
             </div>
           )}
 
