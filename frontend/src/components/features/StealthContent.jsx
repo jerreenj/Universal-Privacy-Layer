@@ -1,15 +1,13 @@
 import { useState } from "react";
 import { useWallet } from "@/context/WalletContext";
 import { StealthMeta } from "@/components/features/StealthMeta";
-import { StealthSend } from "@/components/features/StealthSend";
 import { StealthReceive } from "@/components/features/StealthReceive";
 
 export function StealthContent() {
-  const { address, chain, signer } = useWallet();
+  const { address, signer } = useWallet();
   const [tab, setTab] = useState("meta");
   const tabs = [
     { id: "meta",    label: "My Identity" },
-    { id: "send",    label: "Send Privately" },
     { id: "receive", label: "Scan & Receive" },
   ];
 
@@ -27,8 +25,7 @@ export function StealthContent() {
           </button>
         ))}
       </div>
-      {tab === "meta"    && <StealthMeta address={address} />}
-      {tab === "send"    && <StealthSend address={address} chain={chain} signer={signer} />}
+      {tab === "meta"    && <StealthMeta address={address} signer={signer} />}
       {tab === "receive" && <StealthReceive address={address} signer={signer} />}
     </div>
   );
