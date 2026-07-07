@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
-import { Copy, Check, Download, Shield, Eye, Key, AlertTriangle } from "lucide-react";
+import { Copy, Check, Download, Shield, Eye, Lock, AlertTriangle, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { API } from "../../config/chains";
 import axios from "axios";
@@ -14,7 +14,7 @@ function CopyBtn({ text, label }) {
     setTimeout(() => setCopied(false), 2000);
   };
   return (
-    <button onClick={copy} className="flex items-center gap-1 px-2 py-1 text-xs border border-white/20 hover:border-white/60 transition-colors">
+    <button onClick={copy} className="flex items-center gap-1 px-3 py-1.5 text-xs border border-white/20 hover:border-white/60 transition-colors">
       {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
       {copied ? "Copied" : "Copy"}
     </button>
@@ -24,9 +24,8 @@ function CopyBtn({ text, label }) {
 export function StealthMeta({ address }) {
   const [meta, setMeta] = useState(null);
   const [keys, setKeys] = useState(null);
-  const [showPrivate, setShowPrivate] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [registered, setRegistered] = useState(false);
   const [existing, setExisting] = useState(null);
   const [step, setStep] = useState("check");
 
@@ -51,27 +50,24 @@ export function StealthMeta({ address }) {
 
   const downloadKeys = () => {
     if (!meta || !keys) return;
-    const data = JSON.stringify({
-      warning: "KEEP THIS FILE PRIVATE.",
-      wallet_address: address,
-      meta_address: meta.metaAddress,
+    const blob = new Blob([JSON.stringify({
+      link: meta.metaAddress,
       spend_pub: keys.spendPub,
       view_pub: keys.viewPub,
       spend_priv: keys.spendPriv,
       view_priv: keys.viewPriv,
       generated_at: new Date().toISOString(),
-    }, null, 2);
-    const blob = new Blob([data], { type: "application/json" });
+    }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `stealth-keys-${address.slice(0, 8)}.json`;
+    a.href = url; a.download = `receive-link-${address.slice(0, 8)}.json`;
     a.click(); URL.revokeObjectURL(url);
-    toast.success("File saved");
+    toast.success("Saved");
   };
 
   const register = async () => {
-    if (!address) { toast.error("Connect your wallet first"); return; }
-    if (!keys || !meta) { toast.error("Click 'Generate' first"); return; }
+    if (!address) return toast.error("Connect your wallet first");
+    if (!keys || !meta) return toast.error("Click 'Make My Link' first");
     setLoading(true);
     try {
       await axios.post(`${API}/stealth/meta/register`, {
@@ -81,13 +77,11 @@ export function StealthMeta({ address }) {
         meta_address: meta.metaAddress,
         chain: "all",
       });
-      setRegistered(true);
       setExisting({ ...keys, meta_address: meta.metaAddress });
       setStep("done");
       toast.success("Saved");
     } catch (e) {
-      const msg = e.response?.data?.detail || e.message || "Unknown error";
-      toast.error(`Could not save: ${msg}`);
+      toast.error(`Could not save: ${e.response?.data?.detail || e.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }
@@ -101,32 +95,24 @@ export function StealthMeta({ address }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Shield className="w-5 h-5 text-green-400" />
-        <div>
-          <h3 className="font-semibold text-white">Your Private Receive Link</h3>
-          <p className="text-xs text-white/40">One link to get paid. Nobody can link it to your wallet.</p>
-        </div>
+      <div>
+        <h3 className="font-semibold text-white">Your Private Receive Link</h3>
+        <p className="text-xs text-white/40">One link. Nobody knows it's yours.</p>
       </div>
 
       {step === "done" && existing && (
         <div className="space-y-4">
-          {/* Your Private Receive Link */}
+          {/* ONE link. ONE copy button. ONE line of explanation. */}
           <div className="bg-green-400/5 border border-green-400/20 p-4 space-y-3">
             <p className="text-xs text-green-400 font-semibold uppercase tracking-wider">Your Link</p>
             <p className="text-[11px] text-white/50 leading-snug">
-              This is the link people send money to.<br />
-              Don't send it to anyone. Keep it for yourself so the system can find your payments.
+              Share this with anyone who wants to pay you. Each payment gets its own fresh secret address — payments can't be tied back to you.
             </p>
             <div className="flex items-start gap-2">
               <button
-                onClick={() => {
-                  navigator.clipboard.writeText(existing.meta_address);
-                  toast.success("Link copied");
-                }}
+                onClick={() => { navigator.clipboard.writeText(existing.meta_address); toast.success("Link copied"); }}
                 data-testid="meta-address-display"
-                className="text-xs font-mono text-white/70 break-all text-left flex-1 hover:text-white cursor-pointer bg-white/5 p-2 border border-white/10"
-                title="Click to copy"
+                className="text-xs font-mono text-white/70 break-all text-left flex-1 hover:text-white cursor-pointer bg-black/30 p-3 border border-white/10"
               >
                 {existing.meta_address}
               </button>
@@ -134,53 +120,48 @@ export function StealthMeta({ address }) {
             </div>
           </div>
 
-          {/* Section: How a Payment Reaches You — what each part does */}
-          <div className="space-y-3">
-            <p className="text-xs text-white/40 uppercase tracking-wider">How a Payment Reaches You</p>
-
-            <div className="bg-white/5 border border-white/10 p-3 space-y-1">
-              <p className="text-xs text-white/60 flex items-center gap-1">
-                <Eye className="w-3 h-3" /> Public Numbers for Receiving
+          <p className="text-xs text-white/30">
+            Done. Anyone with your link can pay you — nobody can tell the payment came to you.
+          </p>
+          <button
+            onClick={() => setShowSecret(!showSecret)}
+            className="text-xs text-white/40 hover:text-white flex items-center gap-1"
+          >
+            <Eye className="w-3 h-3" />
+            {showSecret ? "Hide" : "Show"} my secret key
+            <ChevronRight className={`w-3 h-3 transition-transform ${showSecret ? 'rotate-90' : ''}`} />
+          </button>
+          {showSecret && (
+            <div className="bg-red-400/5 border border-red-400/20 p-4 space-y-2">
+              <p className="text-xs text-red-400/80">
+                One secret. Use it to spend payments anyone sends to your link.
               </p>
-              <p className="text-[11px] text-white/40 leading-snug">
-                Two public numbers anyone can see. Together they make your link above.
-              </p>
-              <div className="grid grid-cols-2 gap-2 mt-2">
+              <div className="flex items-start gap-2">
                 <button
-                  data-testid="view-pub-copy-btn"
-                  onClick={() => { navigator.clipboard.writeText(existing.view_pub); toast.success("Copied"); }}
-                  className="text-left bg-black/30 hover:bg-black/60 p-2 cursor-pointer"
+                  onClick={() => { navigator.clipboard.writeText(`spend:${existing.spend_priv}\nview:${existing.view_priv}`); toast.success("Secret key copied"); }}
+                  className="text-xs font-mono text-white/50 break-all text-left flex-1 hover:text-white cursor-pointer bg-black/30 p-3 border border-red-400/20"
                 >
-                  <p className="text-[10px] text-white/30">Finder code</p>
-                  <p className="font-mono text-[10px] text-white/60 break-all">{existing.view_pub}</p>
+                  <div>spend: {existing.spend_priv?.slice(0, 30)}…</div>
+                  <div>view:&nbsp; {existing.view_priv?.slice(0, 30)}…</div>
                 </button>
-                <button
-                  data-testid="spend-pub-copy-btn"
-                  onClick={() => { navigator.clipboard.writeText(existing.spend_pub); toast.success("Copied"); }}
-                  className="text-left bg-black/30 hover:bg-black/60 p-2 cursor-pointer"
-                >
-                  <p className="text-[10px] text-white/30">Address key</p>
-                  <p className="font-mono text-[10px] text-white/60 break-all">{existing.spend_pub}</p>
-                </button>
+                <CopyBtn
+                  text={`spend:${existing.spend_priv}\nview:${existing.view_priv}`}
+                  label="Secret"
+                />
               </div>
-              <p className="text-[10px] text-white/30 mt-2">
-                Safe to share. They only let people find your payments.
+              <p className="text-[11px] text-white/40 leading-snug">
+                Two halves of one secret. Both kept private. One moves money, one finds it. Save it somewhere safe.
               </p>
             </div>
-          </div>
-
-          <p className="text-xs text-white/30">
-            Done. Anyone with your link can pay you — and no one can tell the payment came to you.
-          </p>
+          )}
         </div>
       )}
 
       {step === "generate" && (
         <div className="space-y-4">
-          <div className="bg-blue-400/5 border border-blue-400/20 p-4 space-y-2">
-            <p className="text-sm font-semibold text-white">No link yet</p>
-            <p className="text-xs text-white/50 leading-snug">
-              Click the button. We'll make one that only you can spend from.
+          <div className="bg-blue-400/5 border border-blue-400/20 p-4">
+            <p className="text-xs text-white/60 leading-snug">
+              No link yet. Click below. We'll create one nobody else controls.
             </p>
           </div>
           <button
@@ -198,24 +179,21 @@ export function StealthMeta({ address }) {
         <div className="space-y-4">
           <div className="bg-yellow-400/5 border border-yellow-400/30 p-4 flex gap-3">
             <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
-            <div className="text-xs text-yellow-200/80 leading-snug">
-              <strong>Save the next step before continuing.</strong><br />
-              We can't recover these if you lose them.
-            </div>
+            <p className="text-xs text-yellow-200/80 leading-snug">
+              Save your secret key below. We can't recover it if you lose it.
+            </p>
           </div>
 
-          {/* Your Private Receive Link */}
+          {/* ONE link in this panel too. */}
           <div className="space-y-2">
-            <p className="text-xs text-white/40 uppercase tracking-wider">Your Private Receive Link</p>
+            <p className="text-xs text-white/40 uppercase tracking-wider">Your Link</p>
             <p className="text-[11px] text-white/50 leading-snug">
-              Share this with people who want to pay you.<br />
-              Each payment creates a fresh address. Nobody can link them.
+              People use this to send you money. Each payment gets a fresh hidden address.
             </p>
             <div className="flex items-start gap-2 bg-white/5 border border-white/10 p-3">
               <button
                 onClick={() => { navigator.clipboard.writeText(meta.metaAddress); toast.success("Link copied"); }}
                 className="text-xs font-mono text-white/70 break-all flex-1 text-left hover:text-white cursor-pointer"
-                title="Click to copy"
               >
                 {meta.metaAddress}
               </button>
@@ -223,39 +201,33 @@ export function StealthMeta({ address }) {
             </div>
           </div>
 
+          {/* ONE secret in this panel. Save it. */}
           <button
-            onClick={() => setShowPrivate(!showPrivate)}
-            className="text-xs text-white/40 hover:text-white/70 flex items-center gap-1 transition-colors"
+            onClick={() => setShowSecret(!showSecret)}
+            className="text-xs text-white/40 hover:text-white flex items-center gap-1"
           >
             <Eye className="w-3 h-3" />
-            {showPrivate ? "Hide" : "Show"} secret numbers
+            {showSecret ? "Hide" : "Show"} my secret key
+            <ChevronRight className={`w-3 h-3 transition-transform ${showSecret ? 'rotate-90' : ''}`} />
           </button>
-
-          {showPrivate && keys && (
-            <div className="space-y-2 bg-red-400/5 border border-red-400/20 p-3">
-              <p className="text-[11px] text-white/50 leading-snug">
-                <strong>Two secret numbers.</strong> Only you should see these. Anyone with them can spend your money.
+          {showSecret && keys && (
+            <div className="bg-red-400/5 border border-red-400/20 p-4 space-y-2">
+              <p className="text-xs text-red-400/80">
+                Your secret. Two halves: one moves your money, one finds it.
               </p>
-              <button
-                data-testid="spend-priv-copy-btn"
-                onClick={() => { navigator.clipboard.writeText(keys.spendPriv); toast.success("Copied"); }}
-                className="text-left w-full hover:bg-white/5 cursor-pointer p-2"
-              >
-                <p className="text-xs text-red-400/70 flex items-center gap-1">
-                  <Key className="w-3 h-3" /> Key to spend your money (PIN-style)
-                </p>
-                <p className="text-xs font-mono text-white/50 break-all">{keys.spendPriv}</p>
-              </button>
-              <button
-                data-testid="view-priv-copy-btn"
-                onClick={() => { navigator.clipboard.writeText(keys.viewPriv); toast.success("Copied"); }}
-                className="text-left w-full hover:bg-white/5 cursor-pointer p-2 mt-2 border-t border-white/10 pt-3"
-              >
-                <p className="text-xs text-yellow-400/70 flex items-center gap-1">
-                  <Eye className="w-3 h-3" /> Key to find your payments (looker-style)
-                </p>
-                <p className="text-xs font-mono text-white/50 break-all">{keys.viewPriv}</p>
-              </button>
+              <div className="flex items-start gap-2">
+                <button
+                  onClick={() => { navigator.clipboard.writeText(`spend:${keys.spendPriv}\nview:${keys.viewPriv}`); toast.success("Secret key copied"); }}
+                  className="text-xs font-mono text-white/50 break-all text-left flex-1 hover:text-white cursor-pointer bg-black/30 p-3 border border-red-400/20"
+                >
+                  <div>spend: {keys.spendPriv?.slice(0, 30)}…</div>
+                  <div>view:&nbsp; {keys.viewPriv?.slice(0, 30)}…</div>
+                </button>
+                <CopyBtn
+                  text={`spend:${keys.spendPriv}\nview:${keys.viewPriv}`}
+                  label="Secret"
+                />
+              </div>
             </div>
           )}
 
