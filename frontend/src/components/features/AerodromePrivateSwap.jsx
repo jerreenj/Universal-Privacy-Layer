@@ -40,6 +40,7 @@ import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { seal } from "@/lib/crypto-seal";
 import { deriveMetaAddress, generateStealthAddress } from "@/lib/wallet-stealth";
+import { QrScanner } from "@/components/common/QrScanner";
 
 // AerodromePrivacyWrapper — the ABI of the on-chain contract we call.
 // P4.2 hotfix: Route is now 4 fields (from, to, stable, factory).
@@ -86,6 +87,7 @@ export function AerodromePrivateSwap() {
   const [stealthRecipient, setStealthRecipient] = useState("");
   const [quote, setQuote] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [showQr, setShowQr] = useState(false);
   const [swapping, setSwapping] = useState(false);
   const [txHash, setTxHash] = useState(null);
   const [wrapperAddr, setWrapperAddr] = useState(null);
@@ -402,7 +404,28 @@ export function AerodromePrivateSwap() {
             className="px-3 border border-white/20 hover:bg-white/10 text-xs">
             New
           </button>
+          <button
+            data-testid="aerodrome-scan-qr-btn"
+            title="Scan a recipient QR with your camera"
+            onClick={() => setShowQr(s => !s)}
+            className={`px-3 border ${showQr ? 'border-blue-400 bg-blue-400/10 text-blue-300' : 'border-white/20 hover:bg-white/10 text-xs'} flex items-center gap-1`}
+          >
+            📷 QR
+          </button>
         </div>
+        {showQr && (
+          <div className="mt-3">
+            <QrScanner
+              onResult={(value) => {
+                setStealthRecipient(value);
+                setShowQr(false);
+                toast.success("Recipient filled from QR");
+              }}
+              onClose={() => setShowQr(false)}
+              label="Scan a recipient's stealth QR"
+            />
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2">
