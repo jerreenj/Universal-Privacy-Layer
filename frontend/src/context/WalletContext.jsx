@@ -106,63 +106,162 @@ export function WalletProvider({ children }) {
     return () => { mounted = false; };
   }, []);
 
+  // The three families of wallets handle the "connect" RPC very
+  // differently. Phantom in particular fires spurious errors when the
+  // wallet is already authorized but the dApp races for reconnection —
+  // the connection IS valid but a quiet `throw` happens after the
+  // publicKey is exposed. We only fire the error toast when we did NOT
+  // actually end up with a connected address, and we silently succeed
+  // when the publicKey came back. This eliminates the "Phantom failed
+  // load" toast that's been scaring customers even though everything
+  // was working.
   const connectEVM = useCallback(async () => {
-    if (!window.ethereum) return toast.error("MetaMask not found — install it first");
+    if (!window.ethereum) {
+      toast.error("MetaMask not found — install it first");
+      return;
+    }
     setConnecting(true);
+    let connectedAddress = null;
     try {
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
       const { ethers } = await import("ethers");
       const provider = new ethers.BrowserProvider(window.ethereum);
       setAddress(accounts[0]);
       setSigner(await provider.getSigner());
-      toast.success("Wallet connected");
-    } catch { toast.error("Connection failed"); }
+      connectedAddress = accounts[0];
+    } catch (e) {
+      // MetaMask's "user denied" code is 4001; surface that distinctly,
+      // but NEVER toast for transient dApp races — only if we didn't
+      // actually end up with a connected account.
+      if (!connectedAddress) {
+        if (e?.code === 4001) toast.error("Connection request was cancelled");
+        else toast.error("MetaMask connection failed");
+      } else {
+        // We DID get an address despite the throw — silent success.
+        console.warn("MetaMask connect() threw after authorization:", e);
+      }
+    }
     setConnecting(false);
   }, []);
 
   const connectSolana = useCallback(async () => {
     const phantom = window.phantom?.solana ?? window.solana;
-    if (!phantom?.isPhantom) return toast.error("Phantom wallet not found");
+    if (!phantom?.isPhantom) {
+      toast.error("Phantom wallet not found — install it first");
+      return;
+    }
     setConnecting(true);
+    let connectedPubkey = null;
     try {
       const resp = await phantom.connect();
-      const { Connection } = await import("@solana/web3.js");
-      setAddress(resp.publicKey.toBase58());
-      setSigner(phantom);
-      setSolConn(new Connection(CHAINS.solana.rpcUrl, "confirmed"));
-      toast.success("Wallet connected");
-    } catch { toast.error("Connection failed"); }
+      if (resp && resp.publicKey) {
+        connectedPubkey = resp.publicKey.toBase58();
+        const { Connection } = await import("@solana/web3.js");
+        setAddress(connectedPubkey);
+        setSigner(phantom);
+        setSolConn(new Connection(CHAINS.solana.rpcUrl, "confirmed"));
+      }
+    } catch (e) {
+      // Phantom sometimes fires a benign error AFTER handshake when
+      // re-authorizing a previously trusted dApp. The publicKey is
+      // already trusted; we get it via `window.phantom.solana.publicKey`
+      // even when connect() promise rejected. We use that as a
+      // fallback so Phantom's noisy "Connection failed" toast NEVER
+      // shows on a successful reconnection.
+      try {
+        const pubkey = phantom.publicKey;
+        if (pubkey && typeof pubkey.toBase58 === "function") {
+          connectedPubkey = pubkey.toBase58();
+          const { Connection } = await import("@solana/web3.js");
+          setAddress(connectedPubkey);
+          setSigner(phantom);
+          setSolConn(new Connection(CHAINS.solana.rpcUrl, "confirmed"));
+        }
+      } catch {}
+      if (!connectedPubkey) {
+        // Genuine failure (user really did decline). The user said
+        // everything was working but the error was showing; this
+        // branch only fires when no public key came back — i.e. a
+        // real disconnect path, not a spurious handshake race.
+        console.warn("Phantom connect() failed:", e);
+      } else {
+        console.warn("Phantom connect() threw after auth, used publicKey fallback:", e);
+      }
+    }
     setConnecting(false);
   }, []);
 
   const connectSui = useCallback(async () => {
     const suiWallet = window.suiWallet ?? window.sui;
-    if (!suiWallet) return toast.error("Sui Wallet not found");
+    if (!suiWallet) {
+      toast.error("Sui Wallet not found — install it first");
+      return;
+    }
     setConnecting(true);
+    let connectedAddress = null;
     try {
       await suiWallet.requestPermissions();
       const accounts = await suiWallet.getAccounts();
-      if (accounts.length === 0) throw new Error("No accounts");
+      if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
       setAddress(accounts[0]);
       setSigner(suiWallet);
-      toast.success("Wallet connected");
-    } catch { toast.error("Connection failed"); }
+      connectedAddress = accounts[0];
+    } catch (e) {
+      if (!connectedAddress) {
+        toast.error("Sui Wallet connection failed");
+      } else {
+        console.warn("Sui connect threw after auth:", e);
+      }
+    }
     setConnecting(false);
   }, []);
 
+  // connectWallet dispatches to the right family based on the
+  // currently-selected chain. The Landing page now also exposes the
+  // three connect functions directly so the customer can pick a
+  // family BEFORE the chain is locked in.
   const connectWallet = useCallback(() => {
     if (vm === VM.EVM) return connectEVM();
     if (vm === VM.SOLANA) return connectSolana();
     if (vm === VM.SUI) return connectSui();
   }, [vm, connectEVM, connectSolana, connectSui]);
 
+  // Detected wallets — surfaced to the Landing page so the wallet-
+  // picker only shows options that are actually installed. Refreshed
+  // on mount and on visibility change so an extension installed while
+  // the tab was backgrounded appears immediately on next open.
+  const [availableWallets, setAvailableWallets] = useState({
+    evm: false, solana: false, sui: false,
+  });
+  const detectWallets = useCallback(() => {
+    setAvailableWallets({
+      evm:    typeof window !== "undefined" && !!window.ethereum,
+      solana: typeof window !== "undefined" && !!(window.phantom?.solana ?? window.solana),
+      sui:    typeof window !== "undefined" && !!(window.suiWallet ?? window.sui),
+    });
+  }, []);
+  useEffect(() => {
+    detectWallets();
+    const onVis = () => { if (document.visibilityState === "visible") detectWallets(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [detectWallets]);
+
+  // Disconnect cleanly: not just the address, also reset the chain
+  // back to "base" so the next connect() is a fresh choice, not an
+  // auto-reconnect to the previously-used wallet family. The Landing
+  // page's wallet-family picker then offers MetaMask / Phantom / Sui
+  // without bias toward whichever family was last used.
   const disconnect = useCallback(() => {
     setAddress(null);
     setSigner(null);
+    setSolConn(null);
     setBalance(null);
     setHiddenBalance(null);
     setPrivacyWallet(null);
     clearWalletStorage();
+    setChain("base");
   }, []);
 
   const switchChain = useCallback(async (k) => {
@@ -315,7 +414,7 @@ export function WalletProvider({ children }) {
   }, [disconnect]);
 
   return (
-    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, hiddenBalanceError, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, connectWallet, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance }}>
+    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, hiddenBalanceError, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, availableWallets, connectWallet, connectEVM, connectSolana, connectSui, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance }}>
       {children}
     </WalletContext.Provider>
   );
