@@ -123,6 +123,16 @@ export function WalletProvider({ children }) {
   // provider tagged isRabby. This way clicking "Rabby" in the
   // picker routes the eth_requestAccounts prompt to Rabby, not
   // MetaMask.
+  //
+  // ORDERING MATTERS: the Sui wallet detector + the EVM provider
+  // helper MUST be declared ABOVE the connect functions that
+  // reference them in their `useCallback(..., [dep])` dependency
+  // arrays. React evaluates the deps array synchronously during
+  // render — if the dep is in the Temporal Dead Zone, render
+  // throws a ReferenceError and the whole app shows a black screen.
+  // (This was the actual cause of the pilot's "black screen"
+  // report: detectAnySuiWallet was declared below connectSui, and
+  // connectSui's deps array crashed the React tree on first mount.)
   const pickEvmProvider = useCallback((preferTag) => {
     if (typeof window === "undefined" || !window.ethereum) return null;
     const e = window.ethereum;
@@ -137,6 +147,76 @@ export function WalletProvider({ children }) {
     // the array — never the array itself.
     const pp = e.providers.find(p => p && p[preferTag]);
     return pp || null;
+  }, []);
+
+  // ──────────────────────────────────────────────────────────────────
+  // Generous Sui-wallet detection — any of the major wallet extensions
+  // the Sui dApp Kit and Wallet Standard recognize. We probe a list
+  // of injection points the wallets use to publish themselves on
+  // window. The first one that's a real object with at least one
+  // connection method is our wallet.
+  //
+  // Each candidate is a known property name on window. Older wallets
+  // used a single property (window.suiWallet, window.suiet); newer
+  // ones follow the Wallet Standard and don't inject anything —
+  // announcing themselves via events. We handle both by checking the
+  // legacy injections here. If your wallet isn't on this list, an
+  // extension PR is one line away.
+  const SUI_WALLET_PROBES = [
+    // Mysten Labs' official Sui Wallet (the canonical web wallet).
+    "suiWallet",
+    // Suiet — popular Chinese-developed Sui extension.
+    "suiet",
+    // Martian — early Sui wallet, still installed by some users.
+    "martian",
+    // Ethos (alternate name history).
+    "ethos",
+    "ethosWallet",
+    // Nightly — multi-chain wallet with Sui support.
+    "nightly",
+    // Surf — Sui-native DEX wallet.
+    "surfWallet",
+    // Fewcha — early Sui extension, still around.
+    "fewcha",
+    // Glass — Bware Labs' Sui extension.
+    "glassWallet",
+    // Trust (Bifrost) — multi-chain wallet with Sui support.
+    "trustWallet",
+    "bistowWallet",
+    // ABC Wallet / Slush (rebrand) — newer Sui-first wallets.
+    "abcWallet",
+    "slushWallet",
+    // Legacy single injection — Mysten Labs pre-Wallet-Standard.
+    "sui",
+  ];
+
+  /**
+   * detectAnySuiWallet() →
+   *   { key, api } | null
+   *
+   * Returns the first viable Sui wallet from the probe list. `key`
+   * is the property name so the toast can name it ("Suiet detected",
+   * "Phantom-like: Sui Wallet", etc.). `api` is the window property
+   * itself — the object whose methods we call to authenticate.
+   */
+  const detectAnySuiWallet = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    for (const key of SUI_WALLET_PROBES) {
+      const api = window[key];
+      if (!api) continue;
+      // The object might be injected but not yet fully loaded (rare
+      // race during extension boot). We check for at least one of the
+      // known connection methods so a stub doesn't sneak through.
+      if (
+        typeof api === "object" &&
+        (typeof api.requestPermissions === "function" ||
+          typeof api.connect === "function" ||
+          typeof api.hasPermissions === "function")
+      ) {
+        return { key, api };
+      }
+    }
+    return null;
   }, []);
 
   const connectEVM = useCallback(async () => {
@@ -367,76 +447,6 @@ export function WalletProvider({ children }) {
   // the chain-switch + balance-reset prologue.
   const connectRabby = connectRabbyFn;
 
-  // ──────────────────────────────────────────────────────────────────
-  // Generous Sui-wallet detection — any of the major wallet extensions
-  // the Sui dApp Kit and Wallet Standard recognize. We probe a list
-  // of injection points the wallets use to publish themselves on
-  // window. The first one that's a real object with a connection
-  // method is our wallet.
-  //
-  // Each candidate is a known property name on window. Older wallets
-  // used a single property (window.suiWallet, window.suiet); newer
-  // ones follow the Wallet Standard and don't inject anything —
-  // announcing themselves via events. We handle both by checking the
-  // legacy injections here. If your wallet isn't on this list, an
-  // extension PR is one line away.
-  const SUI_WALLET_PROBES = [
-    // Mysten Labs' official Sui Wallet (the canonical web wallet).
-    "suiWallet",
-    // Suiet — popular Chinese-developed Sui extension.
-    "suiet",
-    // Martian — early Sui wallet, still installed by some users.
-    "martian",
-    // Ethos (alternate name history).
-    "ethos",
-    "ethosWallet",
-    // Nightly — multi-chain wallet with Sui support.
-    "nightly",
-    // Surf — Sui-native DEX wallet.
-    "surfWallet",
-    // Fewcha — early Sui extension, still around.
-    "fewcha",
-    // Glass — Bware Labs' Sui extension.
-    "glassWallet",
-    // Trust (Bifrost) — multi-chain wallet with Sui support.
-    "trustWallet",
-    "bistowWallet",
-    // ABC Wallet / Slush (rebrand) — newer Sui-first wallets.
-    "abcWallet",
-    "slushWallet",
-    // Legacy single injection — Mysten Labs pre-Wallet-Standard.
-    "sui",
-  ];
-
-  /**
-   * detectAnySuiWallet() →
-   *   { key, api } | null
-   *
-   * Returns the first viable Sui wallet from the probe list. `key`
-   * is the property name so the toast can name it ("Suiet detected",
-   * "Phantom-like: Sui Wallet", etc.). `api` is the window property
-   * itself — the object whose methods we call to authenticate.
-   */
-  const detectAnySuiWallet = useCallback(() => {
-    if (typeof window === "undefined") return null;
-    for (const key of SUI_WALLET_PROBES) {
-      const api = window[key];
-      if (!api) continue;
-      // The object might be injected but not yet fully loaded (rare
-      // race during extension boot). We check for at least one of the
-      // known connection methods so a stub doesn't sneak through.
-      if (
-        typeof api === "object" &&
-        (typeof api.requestPermissions === "function" ||
-          typeof api.connect === "function" ||
-          typeof api.hasPermissions === "function")
-      ) {
-        return { key, api };
-      }
-    }
-    return null;
-  }, []);
-
   /**
    * Detected wallets — surfaced to the Landing page so the wallet-
    * picker only shows options that are actually installed. Refreshed
@@ -450,6 +460,11 @@ export function WalletProvider({ children }) {
    * any of ~12 known Sui wallet injections flips the picker to
    * "Detected", since the user just wants to sign in with whatever
    * wallet they happen to have installed.
+   *
+   * detectAnySuiWallet + SUI_WALLET_PROBES live in the function
+   * scope ABOVE the connect functions so the useCallback(..., [dep])
+   * arrays below don't hit a TDZ ReferenceError on first render.
+   * (That crash was the cause of the pilot's black-screen report.)
    */
   const [availableWallets, setAvailableWallets] = useState({
     metamask: false, phantom: false, sui: false, suiName: null, rabby: false,
