@@ -680,41 +680,34 @@ export function WalletProvider({ children }) {
         const usdcAddr = CHAINS[chain]?.contracts?.usdc;
         if (!usdcAddr) { setUsdcBalance(null); return; }
         const { ethers } = await import("ethers");
-        // Prefer the connected wallet's RPC (chain-aware). Fallback
-        // to public RPC. The two-pronged read covers the case where
-        // MetaMask is on Ethereum mainnet but our local chain state
-        // is 'base' — the wallet RPC returns the right chain's
-        // USDC balance (whatever that is).
-        let provider = null;
-        try { provider = await getEvmReadProvider(); } catch {}
-        if (!provider) {
-          provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
-        }
+        // Use the PUBLIC RPC directly for reads — it's faster and
+        // more reliable than routing through MetaMask's BrowserProvider
+        // (which adds a round-trip to the wallet extension + can hang
+        // if the wallet is on the wrong chain). The public RPC always
+        // reads from the correct chain.
+        const provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
         const erc20 = new ethers.Contract(usdcAddr,
           ["function balanceOf(address) view returns (uint256)",
            "function decimals() view returns (uint8)"],
           provider);
+        // Hardcode decimals = 6 for USDC (the common case on Base,
+        // Arbitrum, Polygon, Optimism, Avalanche). Only BNB uses 18.
+        // This saves one RPC round-trip (decimals() call) which was
+        // the main source of latency showing "…" on the dashboard.
+        let decimals = (chain === "bnb") ? 18 : 6;
         let raw;
-        let decimals = 6;
         try {
-          decimals = Number(await erc20.decimals());
           raw = await erc20.balanceOf(address);
         } catch {
-          // Wallet RPC didn't return a clean answer — try the
-          // chain's public RPC as a last resort.
+          // If the public RPC fails, try the wallet provider as
+          // a last resort.
           try {
-            const fallback = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
+            const walletProvider = await getEvmReadProvider();
             const erc20b = new ethers.Contract(usdcAddr,
-              ["function balanceOf(address) view returns (uint256)",
-               "function decimals() view returns (uint8)"],
-              fallback);
-            decimals = Number(await erc20b.decimals());
+              ["function balanceOf(address) view returns (uint256)"],
+              walletProvider);
             raw = await erc20b.balanceOf(address);
           } catch {
-            // Both failed — surface an honest "0" rather than
-            // pretending we have data. The dashboard's primary
-            // number then renders "0 USDC" with a clear chip below
-            // (or the alt chip) so the customer can tell it tried.
             raw = 0n;
           }
         }
