@@ -140,20 +140,35 @@ export function WalletProvider({ children }) {
   }, []);
 
   const connectEVM = useCallback(async () => {
+    // Switch the active chain to Base BEFORE we sign in. The user
+    // picking MetaMask means they want EVM; if they were on Solana
+    // from a previous session, we clear the stale balances so the
+    // dashboard doesn't read 6.789012 USDC on a wallet that doesn't
+    // have USDC on a non-ETH network.
+    setChain("base");
+    setBalance(null);
+    setUsdcBalance(null);
+    setHiddenBalance(null);
+
     const provider = pickEvmProvider("isMetaMask");
     if (!provider) {
-      toast.error("MetaMask not found — install it first");
+      // Loud and clear — the extension isn't injected. MetaMask
+      // MUST have been clicked from the picker. We do NOT proceed
+      // silently because the customer asked for a popup or a clear
+      // "wallet not detected" message, never a silent dead click.
+      toast.error("MetaMask not detected. Install the MetaMask extension to connect.");
       return;
     }
     setConnecting(true);
     let connectedAddress = null;
     try {
+      // eth_requestAccounts ALWAYS triggers MetaMask's popup if the
+      // dApp isn't already authorized under "connected sites" — the
+      // user explicitly clicks Connect, the wallet shows the popup,
+      // and only after the user signs do we proceed.
       const accounts = await provider.request({ method: "eth_requestAccounts" });
       if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
       const { ethers } = await import("ethers");
-      // Tag the BrowserProvider with the picked EIP-1193 provider
-      // (not window.ethereum) so MetaMask-specific RPCs route
-      // through MetaMask, not whatever else is injected.
       const browserProvider = new ethers.BrowserProvider(provider);
       try { browserProvider.provider = provider; } catch {}
       setAddress(accounts[0]);
@@ -161,7 +176,7 @@ export function WalletProvider({ children }) {
       connectedAddress = accounts[0];
     } catch (e) {
       if (!connectedAddress) {
-        if (e?.code === 4001) toast.error("Connection request was cancelled");
+        if (e?.code === 4001) toast.error("MetaMask connection request was cancelled");
         else toast.error("MetaMask connection failed");
       } else {
         console.warn("MetaMask connect() threw after authorization:", e);
@@ -170,18 +185,59 @@ export function WalletProvider({ children }) {
     setConnecting(false);
   }, [pickEvmProvider]);
 
+  const connectRabbyFn = useCallback(async () => {
+    setChain("base");
+    setBalance(null);
+    setUsdcBalance(null);
+    setHiddenBalance(null);
+
+    const provider = pickEvmProvider("isRabby");
+    if (!provider) {
+      toast.error("Rabby not detected. Install the Rabby extension to connect.");
+      return;
+    }
+    setConnecting(true);
+    let connectedAddress = null;
+    try {
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
+      const { ethers } = await import("ethers");
+      const browserProvider = new ethers.BrowserProvider(provider);
+      try { browserProvider.provider = provider; } catch {}
+      setAddress(accounts[0]);
+      setSigner(await browserProvider.getSigner());
+      connectedAddress = accounts[0];
+    } catch (e) {
+      if (!connectedAddress) {
+        if (e?.code === 4001) toast.error("Rabby connection request was cancelled");
+        else toast.error("Rabby connection failed");
+      } else {
+        console.warn("Rabby connect() threw after authorization:", e);
+      }
+    }
+    setConnecting(false);
+  }, [pickEvmProvider]);
+
   const connectSolana = useCallback(async () => {
+    // Picking Phantom means Solana is the active chain. Clear stale
+    // EVM balances so the dashboard's refresh hits Solana RPC, not
+    // a cached Base state.
+    setChain("solana");
+    setBalance(null);
+    setUsdcBalance(null);
+    setHiddenBalance(null);
+
     const phantom = window.phantom?.solana ?? window.solana;
-    if (!phantom?.isPhantom) {
-      toast.error("Phantom wallet not found — install it first");
+    if (!phantom || !phantom.isPhantom) {
+      toast.error("Phantom not detected. Install the Phantom browser extension to connect.");
       return;
     }
     setConnecting(true);
     let connectedPubkey = null;
-    // Phantom's onlyConnect option forces a fresh prompt each time
-    // connected=true was cached.  This guarantees the user sees
-    // Phantom's connect UI when they explicitly click 'Phantom' in
-    // the picker — not a silent reconnect from auto-authorization.
+    // Phantom's onlyIfTrusted:false forces the connect popup every
+    // time, regardless of whether the dApp was previously trusted.
+    // This is what makes Connect Wallet actually show the signing
+    // UI rather than silently reusing the cached authorization.
     try {
       const resp = await phantom.connect({ onlyIfTrusted: false });
       if (resp && resp.publicKey) {
@@ -195,9 +251,9 @@ export function WalletProvider({ children }) {
       // Phantom sometimes fires a benign error AFTER handshake when
       // re-authorizing a previously trusted dApp. The publicKey is
       // already trusted; we get it via `window.phantom.solana.publicKey`
-      // even when connect() promise rejected. We use that as a
-      // fallback so Phantom's noisy "Connection failed" toast NEVER
-      // shows on a successful reconnection.
+      // even when connect() promise rejected. We silently succeed
+      // in that case so the user doesn't see a "Connection failed"
+      // toast when, in fact, the wallet handed us a public key.
       try {
         const pubkey = phantom.publicKey;
         if (pubkey && typeof pubkey.toBase58 === "function") {
@@ -209,7 +265,14 @@ export function WalletProvider({ children }) {
         }
       } catch {}
       if (!connectedPubkey) {
-        console.warn("Phantom connect() failed:", e);
+        if (e?.code === 4001 || /user rejected|cancelled/i.test(String(e?.message || ""))) {
+          // User explicitly declined the popup — don't toast (no
+          // action needed; the picker stays open for retry).
+        } else {
+          // Real failure (not a benign re-auth race): surface it.
+          toast.error("Phantom connection failed");
+          console.warn("Phantom connect() failed:", e);
+        }
       } else {
         console.warn("Phantom connect() threw after auth, used publicKey fallback:", e);
       }
@@ -218,14 +281,23 @@ export function WalletProvider({ children }) {
   }, []);
 
   const connectSui = useCallback(async () => {
+    setChain("sui");
+    setBalance(null);
+    setUsdcBalance(null);
+    setHiddenBalance(null);
+
     const suiWallet = window.suiWallet ?? window.sui;
     if (!suiWallet) {
-      toast.error("Sui Wallet not found — install it first");
+      toast.error("Sui Wallet not detected. Install the Sui browser extension to connect.");
       return;
     }
     setConnecting(true);
     let connectedAddress = null;
     try {
+      // requestPermissions always triggers the wallet popup if it
+      // hasn't yet authorized this dApp. If it HAS authorized us,
+      // the popup is skipped (cached consent). Either way, the user
+      // had to click Connect in our picker to get here.
       await suiWallet.requestPermissions();
       const accounts = await suiWallet.getAccounts();
       if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
@@ -234,7 +306,12 @@ export function WalletProvider({ children }) {
       connectedAddress = accounts[0];
     } catch (e) {
       if (!connectedAddress) {
-        toast.error("Sui Wallet connection failed");
+        if (e?.code === 4001 || /user rejected|cancelled/i.test(String(e?.message || ""))) {
+          // silent — user dismissed the popup
+        } else {
+          toast.error("Sui Wallet connection failed");
+          console.warn("Sui connect threw:", e);
+        }
       } else {
         console.warn("Sui connect threw after auth:", e);
       }
@@ -252,39 +329,10 @@ export function WalletProvider({ children }) {
     if (vm === VM.SUI) return connectSui();
   }, [vm, connectEVM, connectSolana, connectSui]);
 
-  // Rabby injects as window.ethereum (same EIP-1193 provider as
-  // MetaMask) so the connection RPC is identical. The picker routes
-  // to this function when the user picks Rabby, but the prompt
-  // is fired against the provider tagged isRabby (not the
-  // general window.ethereum) — so a MetaMask+Rabby user clicking
-  // "Rabby" sees Rabby's sign UI, not MetaMask's.
-  const connectRabby = useCallback(async () => {
-    const provider = pickEvmProvider("isRabby");
-    if (!provider) {
-      toast.error("Rabby not found — install it first");
-      return;
-    }
-    setConnecting(true);
-    let connectedAddress = null;
-    try {
-      const accounts = await provider.request({ method: "eth_requestAccounts" });
-      if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
-      const { ethers } = await import("ethers");
-      const browserProvider = new ethers.BrowserProvider(provider);
-      try { browserProvider.provider = provider; } catch {}
-      setAddress(accounts[0]);
-      setSigner(await browserProvider.getSigner());
-      connectedAddress = accounts[0];
-    } catch (e) {
-      if (!connectedAddress) {
-        if (e?.code === 4001) toast.error("Connection request was cancelled");
-        else toast.error("Rabby connection failed");
-      } else {
-        console.warn("Rabby connect() threw after authorization:", e);
-      }
-    }
-    setConnecting(false);
-  }, [pickEvmProvider]);
+  // The named-export alias the picker uses — actual implementation
+  // lives in connectRabbyFn above so all four wallet connects share
+  // the chain-switch + balance-reset prologue.
+  const connectRabby = connectRabbyFn;
 
   // Detected wallets — surfaced to the Landing page so the wallet-
   // picker only shows options that are actually installed. Refreshed
