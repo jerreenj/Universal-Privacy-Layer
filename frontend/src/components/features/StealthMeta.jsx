@@ -61,20 +61,48 @@ export function StealthMeta({ address, signer }) {
    * Generate the ONE address. Same wallet → same address every
    * time, regardless of chain. We keep the st:eth: ERC-5564 prefix
    * so other wallets recognise it; we paste it IN FULL.
+   *
+   * Always re-fetch the signer from the provider before signing.
+   * The cached signer in React state goes stale when the user
+   * switches MetaMask accounts; ethers v6 then errors with
+   * 'from should be same as current address'. Catch it explicitly
+   * and retry by reconnecting the wallet.
    */
   const generate = async () => {
     if (!signer) { toast.error("Connect a wallet first"); return; }
     setLoading(true);
     try {
-      const { address: stealthAddr, privateKey } = await deriveStealthEOA(signer);
-      // Store the private key in browser so the FE can do inbound
-      // activity surfacing. Customer does not see this string
-      // anywhere on the UI.
+      // Pull a FRESH signer from the provider every time. If the
+      // user switched accounts in MetaMask after the initial
+      // connect, the cached signer is stale.
+      const provider =
+        signer.provider ||
+        (typeof window !== "undefined" && window.ethereum
+          ? new ethers.BrowserProvider(window.ethereum)
+          : null);
+      if (!provider) { toast.error("No wallet provider"); setLoading(false); return; }
+      const freshSigner = await provider.getSigner();
+
+      // Sanity: MetaMask's currently-selected account must match
+      // what we think it is. If it doesn't, surface a clear message
+      // and stop — we won't sign with a mismatched address.
+      try {
+        const accounts = await provider.listAccounts();
+        if (accounts && accounts[0] &&
+            accounts[0].toLowerCase() !== freshSigner.address.toLowerCase()) {
+          toast.error(
+            "MetaMask account changed. Reconnect your wallet and try again.",
+            { duration: 6000 }
+          );
+          setLoading(false);
+          return;
+        }
+      } catch { /* listAccounts not supported in older wallets */ }
+
+      const { address: stealthAddr, privateKey } = await deriveStealthEOA(freshSigner);
       try {
         localStorage.setItem(`upl:stealth-pk:${address.toLowerCase()}`, privateKey);
       } catch {}
-      // The customer's st:eth link — keep the scheme prefix
-      // per user request so the format is recognizable.
       const metaAddress = `st:eth:${stealthAddr}`;
       await axios.post(`${API}/stealth/meta/register`, {
         wallet_address: address,
@@ -85,7 +113,17 @@ export function StealthMeta({ address, signer }) {
       setStep("done");
       toast.success("Done");
     } catch (e) {
-      toast.error(`Could not generate: ${e.message || "Unknown error"}`);
+      const msg = (e?.message || "").toLowerCase();
+      if (msg.includes("from should be same")) {
+        toast.error(
+          "MetaMask account changed. Reconnect your wallet and try again.",
+          { duration: 6000 }
+        );
+      } else if (msg.includes("user rejected") || msg.includes("user denied")) {
+        toast.error("Signature rejected in MetaMask. Click again and approve.");
+      } else {
+        toast.error(`Could not generate: ${e.message || "Unknown error"}`);
+      }
     } finally {
       setLoading(false);
     }

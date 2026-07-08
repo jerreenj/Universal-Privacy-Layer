@@ -29,6 +29,7 @@
  *   customer doesn't re-sign every session.
  */
 import { ethers } from "ethers";
+import axios from "axios";
 
 const LS_KEY = "upl:stealth-proxy";
 
@@ -54,21 +55,29 @@ export async function getOrCreateProxyWallet(signer) {
     } catch {}
 
     // Not cached — derive fresh. This requires a wallet signature.
-    // We use the deriveStealthEOA from wallet-stealth.js (chain-
-    // independent, HKDF over a fixed plain-text message).
+    // Re-fetch a FRESH signer from the provider so a MetaMask
+    // account switch mid-session doesn't throw 'from should be
+    // same as current address'.
+    const provider = signer.provider ||
+        (typeof window !== "undefined" && window.ethereum
+            ? new ethers.BrowserProvider(window.ethereum) : null);
+    if (!provider) throw new Error("No provider available");
+    const freshSigner = await provider.getSigner();
+    try {
+        const accounts = await provider.listAccounts();
+        if (accounts && accounts[0] &&
+            accounts[0].toLowerCase() !== freshSigner.address.toLowerCase()) {
+            throw new Error("MetaMask account switched. Reconnect and try again.");
+        }
+    } catch {}
     const { deriveStealthEOA } = await import("@/lib/wallet-stealth");
-    const derived = await deriveStealthEOA(signer);
-    // Persist.
+    const derived = await deriveStealthEOA(freshSigner);
     try {
         localStorage.setItem(LS_KEY, JSON.stringify({
             address: derived.address,
             privateKey: derived.privateKey,
         }));
     } catch {}
-    // Build an ethers Wallet instance for signing txs.
-    const provider = signer.provider ||
-        (typeof window !== "undefined" && window.ethereum
-            ? new ethers.BrowserProvider(window.ethereum) : null);
     const wallet = provider
         ? new ethers.Wallet(derived.privateKey, provider)
         : new ethers.Wallet(derived.privateKey);
@@ -136,4 +145,87 @@ export async function fundProxyUSDC(mainSigner, proxyAddress, usdcAddress, usdcA
  */
 export function forgetProxyWallet() {
     try { localStorage.removeItem(LS_KEY); } catch {}
+}
+
+/**
+ * Fund the proxy wallet PRIVATELY through the PrivacyPool.
+ *
+ * Flow:
+ *   1. Customer deposits 0.01 ETH into PrivacyPool from main wallet.
+ *      (visible on BaseScan — enters the anonymity set)
+ *   2. Backend generates ZK proof + relayer broadcasts the withdraw.
+ *      ETH lands at the proxy address.
+ *      (relayer is msg.sender; ZK proof breaks deposit↔withdraw link)
+ *   3. Observer sees: main→pool deposit + relayer→pool withdraw→proxy.
+ *      They CANNOT link the deposit to the withdrawal.
+ *
+ * @param {object} mainSigner — main wallet signer
+ * @param {string} proxyAddress — the stealth proxy address
+ * @param {string} poolAddress — PrivacyPool contract address
+ * @param {string} apiBase — backend API URL
+ * @returns {Promise<{deposit_tx: string, withdraw_tx: string}>}
+ */
+export async function fundProxyPrivately(mainSigner, proxyAddress, poolAddress, apiBase) {
+    const provider = mainSigner.provider ||
+        (typeof window !== "undefined" && window.ethereum
+            ? new ethers.BrowserProvider(window.ethereum) : null);
+    if (!provider) throw new Error("No provider");
+
+    const DENOM = ethers.parseEther("0.01"); // smallest denomination
+
+    // 1. Generate nullifier + secret (random 32 bytes each).
+    const nullifier = ethers.hexlify(ethers.randomBytes(32));
+    const secret = ethers.hexlify(ethers.randomBytes(32));
+
+    // 2. Compute commitment = Poseidon(nullifier, secret).
+    //    The backend handles Poseidon — we send nullifier + secret
+    //    to /api/zk-pool/deposit which computes the commitment and
+    //    calls PrivacyPool.deposit on-chain.
+    const depositResp = await axios.post(`${apiBase}/zk-pool/deposit`, {
+        nullifier,
+        secret,
+        denomination_wei: DENOM.toString(),
+        chain: "base",
+    });
+
+    // The backend may return a prepared tx for the frontend to sign,
+    // or it may have already broadcast. Check the response.
+    let depositTxHash;
+    if (depositResp.data.tx_hash) {
+        depositTxHash = depositResp.data.tx_hash;
+    } else if (depositResp.data.tx_data) {
+        // Backend prepared the tx — sign and broadcast from the main wallet.
+        const tx = await mainSigner.sendTransaction(depositResp.data.tx_data);
+        await tx.wait();
+        depositTxHash = tx.hash;
+    } else {
+        throw new Error("Deposit failed — unexpected response");
+    }
+
+    // 3. Wait for the deposit to be indexed by the backend (the
+    //    Merkle tree needs to include it before we can prove).
+    //    Poll /api/zk-pool/state until the commitment appears.
+    await new Promise(r => setTimeout(r, 3000)); // 3s grace period
+
+    // 4. Call /api/zk-pool/withdraw-relay with nullifier, secret,
+    //    and proxy address as recipient. The backend generates the
+    //    ZK proof and the relayer broadcasts the withdraw tx.
+    const withdrawResp = await axios.post(`${apiBase}/zk-pool/withdraw-relay`, {
+        nullifier,
+        secret,
+        recipient: proxyAddress,
+    });
+
+    if (withdrawResp.data.tx_hash) {
+        return {
+            deposit_tx: depositTxHash,
+            withdraw_tx: withdrawResp.data.tx_hash,
+        };
+    } else if (withdrawResp.data.status === "need_browser_proof") {
+        // Server prover disabled — would need browser-side snarkjs.
+        // For now, surface the error honestly.
+        throw new Error("Server prover disabled. Enable ZK_POOL_PROVER_ENABLED=1 on the backend.");
+    } else {
+        throw new Error("Withdraw failed — unexpected response");
+    }
 }

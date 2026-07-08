@@ -225,6 +225,41 @@ export function StealthReceive({ address, chain: chainProp }) {
       toast.error("Connect your wallet first");
       return;
     }
+    // Re-fetch a fresh signer from the provider. Cached signers
+    // in React state go stale when the user switches MetaMask
+    // accounts; ethers v6 throws 'from should be same as
+    // current address' in that case. Catching it here is
+    // the whole reason this re-fetch exists.
+    let activeSigner = signer;
+    try {
+      const liveProvider =
+        signer.provider ||
+        (typeof window !== "undefined" && window.ethereum
+          ? new ethers.BrowserProvider(window.ethereum)
+          : null);
+      if (liveProvider) {
+        const fresh = await liveProvider.getSigner();
+        // Sanity: make sure MetaMask's currently-selected account
+        // matches what we think it is. If not, surface the error
+        // and stop before signing.
+        try {
+          const accounts = await liveProvider.listAccounts();
+          if (accounts && accounts[0] &&
+              accounts[0].toLowerCase() !== fresh.address.toLowerCase()) {
+            toast.error(
+              "MetaMask account changed. Reconnect and try again.",
+              { duration: 6000 }
+            );
+            return;
+          }
+        } catch { /* listAccounts unsupported */ }
+        activeSigner = fresh;
+      }
+    } catch (e) {
+      // Fall back to the React-cached signer. If it fails, the
+      // catch block below reports the specific case.
+    }
+
     setLoading(true);
     try {
       let chainIdNum = 8453;
