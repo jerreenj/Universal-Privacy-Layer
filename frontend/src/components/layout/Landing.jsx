@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ChevronDown, Check } from "lucide-react";
 import { CHAINS, VM, VM_GROUPS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -45,6 +45,26 @@ export function Landing() {
     connectEVM, connectRabby, connectSolana, connectSui,
   } = useWallet();
   const [showChains, setShowChains] = useState(false);
+  const [walletMenuOpen, setWalletMenuOpen] = useState(false);
+  const walletMenuRef = useRef(null);
+
+  // Close the wallet picker on outside click + Escape so a stray
+  // background click doesn't leave it stuck over the dashboard.
+  useEffect(() => {
+    if (!walletMenuOpen) return;
+    const onDocClick = (e) => {
+      if (walletMenuRef.current && !walletMenuRef.current.contains(e.target)) {
+        setWalletMenuOpen(false);
+      }
+    };
+    const onEsc = (e) => { if (e.key === "Escape") setWalletMenuOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [walletMenuOpen]);
 
   const vmGroups = Object.entries(VM_GROUPS).map(([vmKey, info]) => ({
     vmKey, ...info,
@@ -107,7 +127,7 @@ export function Landing() {
 
   return (
     <div className="min-h-screen relative bg-black overflow-hidden">
-      <div className="fixed top-0 left-0 right-0 z-50 flex items-start justify-between px-3 sm:px-4 md:px-6 py-3 bg-black/80 backdrop-blur-sm">
+      <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-3 sm:px-4 md:px-6 py-3 bg-black/80 backdrop-blur-sm">
         <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border border-white/20 text-[10px] sm:text-xs cursor-pointer hover:border-white/40 transition-all"
           onClick={() => setShowChains(!showChains)} data-testid="live-chain-badge">
           <div className="w-1.5 sm:w-2 h-1.5 sm:h-2 rounded-full bg-green-400 animate-pulse" />
@@ -115,39 +135,68 @@ export function Landing() {
           <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${showChains ? "rotate-180" : ""}`} />
         </div>
 
-        {/* 4 wallet magnets stacked vertically in the top-right.
-            NO dropdown — every wallet has its own directly-clickable
-            tile, all beautiful magnet particles, none hidden behind
-            a selector. */}
-        <div className="flex flex-col gap-2">
-          {walletOptions.map((opt) => (
-            <div key={opt.key} className="relative">
-              <MagnetizeButton
-                onClick={() => {
-                  if (!opt.installed || connecting) return;
-                  opt.onClick?.();
-                }}
-                disabled={!opt.installed || connecting}
-                particleCount={10}
-                prefix={<opt.Logo size={20} />}
-                data-testid={`connect-${opt.key}`}
-                className={`
-                  px-3 sm:px-4 py-1.5 sm:py-2 text-[10px] sm:text-xs
-                  min-w-[180px] sm:min-w-[210px]
-                  ${opt.installed ? "" : "opacity-40 cursor-not-allowed"}
-                `}
-              >
-                {connecting ? "Connecting…" : opt.label}
-              </MagnetizeButton>
-              <span
-                className={`absolute -bottom-1 right-1.5 text-[8px] sm:text-[9px] uppercase tracking-wider ${
-                  opt.installed ? "text-white/70" : "text-white/30"
-                }`}
-              >
-                {opt.installed ? "Detected" : "Not installed"}
-              </span>
+        {/* Single MagnetizeButton — restores the pre-vertical-stack
+            layout. Click opens the wallet picker dropdown. We
+            measured that the previous 4-tile vertical stack made
+            the top bar too tall and started to cover the globe's
+            top half. Going back to the single-button + dropdown
+            keeps the magnet-particle effect the customer liked
+            (the button is still that gorgeous green magnet) and
+            frees up the top half of the viewport. */}
+        <div className="relative" ref={walletMenuRef}>
+          <MagnetizeButton
+            onClick={() => setWalletMenuOpen((o) => !o)}
+            disabled={connecting}
+            particleCount={14}
+            className="px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm"
+            data-testid="connect-wallet-button"
+          >
+            {connecting ? "Connecting…" : "Connect Wallet"}
+          </MagnetizeButton>
+
+          {walletMenuOpen && (
+            <div
+              role="listbox"
+              data-testid="wallet-family-picker"
+              className="absolute top-full right-0 mt-2 z-50 bg-black/95 backdrop-blur-md border border-white/20 min-w-[280px] sm:min-w-[320px] shadow-2xl"
+            >
+              <div className="px-4 py-3 border-b border-white/10">
+                <div className="text-xs uppercase tracking-wider text-white font-semibold">
+                  Pick the wallet
+                </div>
+              </div>
+              {walletOptions.map((opt) => (
+                <button
+                  key={opt.key}
+                  onClick={() => {
+                    if (!opt.installed || connecting) return;
+                    setWalletMenuOpen(false);
+                    opt.onClick?.();
+                  }}
+                  disabled={!opt.installed || connecting}
+                  data-wallet-key={opt.key}
+                  data-wallet-installed={opt.installed ? "true" : "false"}
+                  className={`w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/10 transition-colors border-b border-white/10 last:border-b-0 ${
+                    !opt.installed ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
+                  }`}
+                >
+                  <opt.Logo size={28} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-white">{opt.label}</div>
+                  </div>
+                  {opt.installed ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-green-400">
+                      <Check className="w-3 h-3" /> Detected
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-white/30">
+                      Not installed
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       </div>
 
