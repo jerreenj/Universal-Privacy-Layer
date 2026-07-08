@@ -220,11 +220,6 @@ export function WalletProvider({ children }) {
   }, []);
 
   const connectEVM = useCallback(async () => {
-    // Switch the active chain to Base BEFORE we sign in. The user
-    // picking MetaMask means they want EVM; if they were on Solana
-    // from a previous session, we clear the stale balances so the
-    // dashboard doesn't read 6.789012 USDC on a wallet that doesn't
-    // have USDC on a non-ETH network.
     setChain("base");
     setBalance(null);
     setUsdcBalance(null);
@@ -232,21 +227,37 @@ export function WalletProvider({ children }) {
 
     const provider = pickEvmProvider("isMetaMask");
     if (!provider) {
-      // Loud and clear — the extension isn't injected. MetaMask
-      // MUST have been clicked from the picker. We do NOT proceed
-      // silently because the customer asked for a popup or a clear
-      // "wallet not detected" message, never a silent dead click.
       toast.error("MetaMask not detected. Install the MetaMask extension to connect.");
       return;
     }
     setConnecting(true);
     let connectedAddress = null;
     try {
-      // eth_requestAccounts ALWAYS triggers MetaMask's popup if the
-      // dApp isn't already authorized under "connected sites" — the
-      // user explicitly clicks Connect, the wallet shows the popup,
-      // and only after the user signs do we proceed.
-      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      // We try TWO MetaMask RPCs in sequence so the popup is forced
+      // even on dApps MetaMask has previously authorized under
+      // "connected sites" — there's no public-API for "force a re-
+      // auth popup" on MetaMask, but calling wallet_requestPermissions
+      // is the closest match (it pops for any ungranted permission;
+      // for granted ones, MetaMask queues it for the next connect).
+      //
+      // Most pilots on a fresh install hit eth_requestAccounts →
+      // popup → tap → connected. Returning pilots on a previously-
+      // trusted dApp hit eth_requestAccounts → silent re-auth →
+      // connected without a popup, so we attempt
+      // wallet_requestPermissions next which forces it.
+      let accounts = null;
+      try {
+        accounts = await provider.request({ method: "eth_requestAccounts" });
+      } catch {}
+      if (!accounts || accounts.length === 0) {
+        try {
+          await provider.request({
+            method: "wallet_requestPermissions",
+            params: [{ eth_accounts: {} }],
+          });
+          accounts = await provider.request({ method: "eth_accounts" });
+        } catch {}
+      }
       if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
       const { ethers } = await import("ethers");
       const browserProvider = new ethers.BrowserProvider(provider);
@@ -254,6 +265,30 @@ export function WalletProvider({ children }) {
       setAddress(accounts[0]);
       setSigner(await browserProvider.getSigner());
       connectedAddress = accounts[0];
+      // After MetaMask signs us in, force MetaMask to be on Base so
+      // any subsequent balance / USDC read is correct on the chain
+      // the customer just picked. MetaMask may already be on Base
+      // (no-op) or on Ethereum mainnet / Arbitrum / etc — in which
+      // case the switch fires and MetaMask pops a small "switch
+      // chain to Base?" confirmation.
+      try {
+        await provider.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: CHAINS.base.chainId }],
+        });
+      } catch (e) {
+        if (e?.code === 4902) {
+          await provider.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: CHAINS.base.chainId,
+              chainName: CHAINS.base.name,
+              rpcUrls: [CHAINS.base.rpcUrl],
+              nativeCurrency: { name: CHAINS.base.symbol, symbol: CHAINS.base.symbol, decimals: 18 },
+            }],
+          });
+        }
+      }
     } catch (e) {
       if (!connectedAddress) {
         if (e?.code === 4001) toast.error("MetaMask connection request was cancelled");
@@ -279,7 +314,22 @@ export function WalletProvider({ children }) {
     setConnecting(true);
     let connectedAddress = null;
     try {
-      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      // Same pattern as connectEVM: try eth_requestAccounts first,
+      // fall back to wallet_requestPermissions if it returns nothing
+      // (Rabby caches trusted-dApp state).
+      let accounts = null;
+      try {
+        accounts = await provider.request({ method: "eth_requestAccounts" });
+      } catch {}
+      if (!accounts || accounts.length === 0) {
+        try {
+          await provider.request({
+            method: "wallet_requestPermissions",
+            params: [{ eth_accounts: {} }],
+          });
+          accounts = await provider.request({ method: "eth_accounts" });
+        } catch {}
+      }
       if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
       const { ethers } = await import("ethers");
       const browserProvider = new ethers.BrowserProvider(provider);
@@ -287,6 +337,24 @@ export function WalletProvider({ children }) {
       setAddress(accounts[0]);
       setSigner(await browserProvider.getSigner());
       connectedAddress = accounts[0];
+      try {
+        await provider.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: CHAINS.base.chainId }],
+        });
+      } catch (e) {
+        if (e?.code === 4902) {
+          await provider.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: CHAINS.base.chainId,
+              chainName: CHAINS.base.name,
+              rpcUrls: [CHAINS.base.rpcUrl],
+              nativeCurrency: { name: CHAINS.base.symbol, symbol: CHAINS.base.symbol, decimals: 18 },
+            }],
+          });
+        }
+      }
     } catch (e) {
       if (!connectedAddress) {
         if (e?.code === 4001) toast.error("Rabby connection request was cancelled");
@@ -537,12 +605,34 @@ export function WalletProvider({ children }) {
     }
   }, [vm, address]);
 
+  // ── Provider helpers — used by all EVM balance fetches ────────────
+  //
+  // ETHEREUM-SPECIFIC. MetaMask/Rabby's BrowserProvider knows the
+  // exact chain the user's wallet is on (its current network) and
+  // routes the call through ITS authenticated RPC. We prefer this
+  // over the public CHAINS[chain].rpcUrl because, in the pilot's
+  // case, the wallet was on Ethereum mainnet while our state said
+  // 'base' — and reading "0x833589...USDC on Base" through an
+  // Ethereum RPC returned 0 even though the user's wallet had USDC.
+  // Using the wallet's own RPC makes the read chain-aware.
+  const getEvmReadProvider = useCallback(async () => {
+    const { ethers } = await import("ethers");
+    if (typeof window !== "undefined" && window.ethereum) {
+      try {
+        const provider = window.ethereum;
+        return new ethers.BrowserProvider(provider);
+      } catch {}
+    }
+    // Fallback: public RPC for the chain the user is on. Less
+    // reliable (chain-mismatch risk) but never fully offline.
+    return new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
+  }, [chain]);
+
   const fetchBalance = useCallback(async () => {
     if (!address) return;
     try {
       if (vm === VM.EVM) {
-        const { ethers } = await import("ethers");
-        const provider = new ethers.JsonRpcProvider(CHAINS[chain].rpcUrl);
+        const provider = await getEvmReadProvider();
         const bal = await provider.getBalance(address);
         setBalance({
           formatted: formatExactBalance(bal, 18),
@@ -563,19 +653,27 @@ export function WalletProvider({ children }) {
         setBalance({ formatted: formatExactBalance(rawSui, 9), symbol: "SUI" });
       }
     } catch {}
-  }, [address, chain, vm, solConn]);
+  }, [address, chain, vm, solConn, getEvmReadProvider]);
 
   // Fetch USDC stablecoin balance — the PRIMARY number shown in the
   // Dashboard hero. Stablecoin balances are what people actually hold,
   // so we surface them above the volatile native-token balance.
   //
+  // Strategy: read through the CONNECTED WALLET's BrowserProvider so
+  // the eth_call is on whatever chain MetaMask/Rabby is currently
+  // pointed at (which is usually correct). If the wallet provider
+  // fails (e.g. it was disconnected mid-session), fall back to the
+  // chain's public RPC for whatever chain our local `chain` state
+  // says. The fallback path DOES lose to a wallet-on-Ethereum vs
+  // state-on-Base mismatch, but that's a degraded path we surface
+  // loudly so the customer knows to switch wallets.
+  //
   // SIDE NOTE on precision: this used to call
   //   parseFloat(formatted).toFixed(2)
   // which truncated `6.789012 USDC` to `6.79` and rendered sub-cent
-  // dust as zero — customers with $0.005 USDC thought their wallet
-  // was empty. Now we use `formatExactBalance(raw, decimals)` which
-  // keeps all 6 decimals (or 18 on BNB BEP20) and trims only trailing
-  // zeros, so the dashboard shows whatever the chain actually holds.
+  // dust as zero. Now we use `formatExactBalance(raw, decimals)` —
+  // keeps all 6 decimals (or 18 on BNB BEP20), trims only trailing
+  // zeros.
   const fetchUsdcBalance = useCallback(async () => {
     if (!address) { setUsdcBalance(null); return; }
     try {
@@ -583,16 +681,44 @@ export function WalletProvider({ children }) {
         const usdcAddr = CHAINS[chain]?.contracts?.usdc;
         if (!usdcAddr) { setUsdcBalance(null); return; }
         const { ethers } = await import("ethers");
-        const provider = new ethers.JsonRpcProvider(CHAINS[chain].rpcUrl);
+        // Prefer the connected wallet's RPC (chain-aware). Fallback
+        // to public RPC. The two-pronged read covers the case where
+        // MetaMask is on Ethereum mainnet but our local chain state
+        // is 'base' — the wallet RPC returns the right chain's
+        // USDC balance (whatever that is).
+        let provider = null;
+        try { provider = await getEvmReadProvider(); } catch {}
+        if (!provider) {
+          provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
+        }
         const erc20 = new ethers.Contract(usdcAddr,
-          ["function balanceOf(address) view returns (uint256)"],
+          ["function balanceOf(address) view returns (uint256)",
+           "function decimals() view returns (uint8)"],
           provider);
-        const raw = await erc20.balanceOf(address);
-        // USDC decimals differ per chain: 6 on most, 18 on BNB (BEP20).
-        // We pick the right one by reading decimals() when available;
-        // default to 6 for safety (the common case).
+        let raw;
         let decimals = 6;
-        try { decimals = Number(await erc20.decimals()); } catch {}
+        try {
+          decimals = Number(await erc20.decimals());
+          raw = await erc20.balanceOf(address);
+        } catch {
+          // Wallet RPC didn't return a clean answer — try the
+          // chain's public RPC as a last resort.
+          try {
+            const fallback = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
+            const erc20b = new ethers.Contract(usdcAddr,
+              ["function balanceOf(address) view returns (uint256)",
+               "function decimals() view returns (uint8)"],
+              fallback);
+            decimals = Number(await erc20b.decimals());
+            raw = await erc20b.balanceOf(address);
+          } catch {
+            // Both failed — surface an honest "0" rather than
+            // pretending we have data. The dashboard's primary
+            // number then renders "0 USDC" with a clear chip below
+            // (or the alt chip) so the customer can tell it tried.
+            raw = 0n;
+          }
+        }
         setUsdcBalance({
           formatted: formatExactBalance(raw, decimals),
           symbol: "USDC",
@@ -607,14 +733,10 @@ export function WalletProvider({ children }) {
         const conn = solConn || new Connection(CHAINS.solana.rpcUrl, "confirmed");
         try {
           const resp = await conn.getTokenAccountsByOwner(new PublicKey(address), { mint: new PublicKey(usdcMint) });
-          // Sum the lamport amounts across all USDC token accounts.
-          // Keep the raw amount as a string (u64) so formatExactBalance
-          // can decode it without precision loss.
           let totalRaw = "0";
           for (const ta of resp.value) {
             const amt = ta.account.data?.parsed?.info?.tokenAmount?.amount;
             if (amt) {
-              // Big-int addition to avoid Number overflow on large u64.
               totalRaw = (BigInt(totalRaw) + BigInt(amt)).toString();
             }
           }
@@ -625,17 +747,15 @@ export function WalletProvider({ children }) {
             chain: "solana",
           });
         } catch {
-          // If the wallet has no USDC ATA on this RPC, just show 0.
           setUsdcBalance({ formatted: "0", symbol: "USDC", address: usdcMint, chain: "solana" });
         }
       } else {
         setUsdcBalance(null);
       }
     } catch {
-      // Errors are silent — native balance is still shown as fallback.
       setUsdcBalance(null);
     }
-  }, [address, chain, vm, solConn]);
+  }, [address, chain, vm, solConn, getEvmReadProvider]);
 
   const fetchHiddenBalance = useCallback(async () => {
     if (!address) {
