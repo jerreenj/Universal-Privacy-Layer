@@ -57,33 +57,53 @@ export function PolymarketPrivateBetting() {
 
   const executeBet = async () => {
     if (!betPlan) return;
-    if (!signer && !window.ethereum) return toast.error("No wallet connected");
+    if (!signer) return toast.error("No wallet connected");
     setExecuting(true);
     try {
-      const provider = signer?.provider || (window.ethereum ? new ethers.BrowserProvider(window.ethereum) : null);
-      const activeSigner = signer || (provider ? await provider.getSigner() : null);
-      if (!activeSigner) throw new Error("No signer");
-
-      // Send bet amount (USDC value as native token) to the privacy proxy.
+      // ── RELAYER FLOW ──────────────────────────────────────────
+      // Route the bet funding through the on-chain PrivacyRelayer so
+      // the customer's EOA never appears as msg.sender. The bet funds
+      // go to the bet plan's proxy_address via relayAndAnnounce.
       const amountWei = ethers.parseEther(parseFloat(amountUSDC).toFixed(6).toString());
-      const tx = await activeSigner.sendTransaction({
-        to: betPlan.proxy_address,
-        value: amountWei,
+      const ephemeralKey = "0x" + Array(64).fill(0).map(() =>
+        Math.floor(Math.random() * 16).toString(16)
+      ).join('');
+      const viewTag = Math.floor(Math.random() * 256);
+
+      const prepRes = await axios.post(`${API}/relayer/prepare-tx`, {
+        from_address: address,
+        stealth_address: betPlan.proxy_address,
+        amount_wei: amountWei.toString(),
+        ephemeral_key: ephemeralKey,
+        view_tag: viewTag,
+        chain: chain || "base",
       });
-      setExecutedTx(tx.hash);
-      toast.success("Bet funds sent to privacy proxy");
+
+      const { domain, types, message } = prepRes.data.intent;
+      const signature = await signer.signTypedData(domain, types, message);
+
+      const submitRes = await axios.post(`${API}/relayer/submit`, {
+        intent: prepRes.data.intent,
+        signature,
+        from_address: address,
+        chain: chain || "base",
+      });
+
+      const relayTxHash = submitRes.data.relay_tx_hash || submitRes.data.tx_hash || "";
+      setExecutedTx(relayTxHash);
+      toast.success("Bet funds relayed to privacy proxy");
 
       await axios.post(`${API}/polymarket/record-bet`, {
         bet_id: betPlan.bet_id,
-        tx_hash: tx.hash,
+        tx_hash: relayTxHash,
         status: "submitted",
       });
       toast.success("Bet recorded — relayer will place it on Polymarket");
-      await tx.wait();
       fetchBalance();
       axios.get(`${API}/polymarket/bets/${address}`).then(r => setPastBets(r.data.bets || [])).catch(() => {});
     } catch (e) {
-      toast.error(e.message?.slice(0, 80) || "Execution failed");
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Execution failed";
+      toast.error(msg);
     }
     setExecuting(false);
   };

@@ -60,39 +60,53 @@ export function HyperliquidPrivateTrading() {
 
   const executeTrade = async () => {
     if (!tradePlan) return;
-    if (!signer && !window.ethereum) return toast.error("No wallet connected");
+    if (!signer) return toast.error("No wallet connected");
     setExecuting(true);
     try {
-      const provider = signer?.provider || (window.ethereum ? new ethers.BrowserProvider(window.ethereum) : null);
-      const activeSigner = signer || (provider ? await provider.getSigner() : null);
-      if (!activeSigner) throw new Error("No signer");
-
-      // Send margin to the privacy proxy address. We use the connected
-      // chain's native token; the relayer converts to USDC on Hyperliquid.
-      // 1 USDC ≈ 1 USD; for native-token chains we send the USD value in
-      // native-token-equivalent using a tiny fixed conversion (placeholder
-      // until on-chain price feed is wired; user sees exact amount in the
-      // confirm modal anyway).
+      // ── RELAYER FLOW ──────────────────────────────────────────
+      // Route the margin funding through the on-chain PrivacyRelayer
+      // so the customer's EOA never appears as msg.sender. The margin
+      // goes to the trade plan's proxy_address via relayAndAnnounce.
       const marginWei = ethers.parseEther(parseFloat(sizeUSD).toFixed(6).toString());
-      const tx = await activeSigner.sendTransaction({
-        to: tradePlan.proxy_address,
-        value: marginWei,
+      const ephemeralKey = "0x" + Array(64).fill(0).map(() =>
+        Math.floor(Math.random() * 16).toString(16)
+      ).join('');
+      const viewTag = Math.floor(Math.random() * 256);
+
+      const prepRes = await axios.post(`${API}/relayer/prepare-tx`, {
+        from_address: address,
+        stealth_address: tradePlan.proxy_address,
+        amount_wei: marginWei.toString(),
+        ephemeral_key: ephemeralKey,
+        view_tag: viewTag,
+        chain: chain || "base",
       });
-      setExecutedTx(tx.hash);
-      toast.success("Margin sent to privacy proxy");
+
+      const { domain, types, message } = prepRes.data.intent;
+      const signature = await signer.signTypedData(domain, types, message);
+
+      const submitRes = await axios.post(`${API}/relayer/submit`, {
+        intent: prepRes.data.intent,
+        signature,
+        from_address: address,
+        chain: chain || "base",
+      });
+
+      const relayTxHash = submitRes.data.relay_tx_hash || submitRes.data.tx_hash || "";
+      setExecutedTx(relayTxHash);
+      toast.success("Margin relayed to privacy proxy");
 
       await axios.post(`${API}/hyperliquid/record-trade`, {
         trade_id: tradePlan.trade_id,
-        tx_hash: tx.hash,
+        tx_hash: relayTxHash,
         status: "submitted",
       });
       toast.success("Trade recorded — relayer will open the position");
-      await tx.wait();
       fetchBalance();
-      // refresh past trades list
       axios.get(`${API}/hyperliquid/trades/${address}`).then(r => setPastTrades(r.data.trades || [])).catch(() => {});
     } catch (e) {
-      toast.error(e.message?.slice(0, 80) || "Execution failed");
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Execution failed";
+      toast.error(msg);
     }
     setExecuting(false);
   };

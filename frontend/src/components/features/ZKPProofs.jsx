@@ -147,7 +147,12 @@ export function ZKPProofs() {
     }
   };
 
-  // Step 2 — sign and broadcast PrivacyPool.withdraw on Base.
+  // Step 2 — relay the withdraw through the backend so the customer's
+  // EOA never appears as msg.sender. The backend's /zk-pool/withdraw-relay
+  // endpoint generates the proof server-side (if prover enabled) OR
+  // accepts the browser-generated proof, then calls PrivacyPool.withdraw
+  // via the relayer hot wallet. The recipient is a fresh address (not
+  // the customer's EOA), so deposit↔withdraw unlinkability is preserved.
   const submitWithdraw = async () => {
     if (!proof) return toast.error("Generate the proof first");
     if (!pool?.live) return toast.error("PrivacyPool not live on Base yet");
@@ -155,45 +160,41 @@ export function ZKPProofs() {
     if (!poolAddr) return toast.error("PrivacyPool address missing — refresh /api/deployments");
 
     setLoading(true);
-    setStage("Broadcasting PrivacyPool.withdraw(proof)…");
+    setStage("Relaying withdraw via backend (customer EOA hidden)…");
     try {
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const poolContract = new ethers.Contract(poolAddr, PRIVACY_POOL_WITHDRAW_ABI, signer);
-
       const toBytes = (s) => BigInt(String(s).startsWith("0x") ? String(s) : String(s));
       const a = proof.proof.a.map(toBytes);
       const b = proof.proof.b.map((row) => row.map(toBytes));
       const c = proof.proof.c.map(toBytes);
 
-      // Root + nullifierHash from the public signals (snarkjs order:
-      // [nullifierHash, root, recipient]).
       const nullifierHash = BigInt(proof.publicSignals[0]);
       const root = BigInt(proof.publicSignals[1]);
 
-      const tx = await poolContract.withdraw(
-        nullifierHash,
-        root,
+      // Submit the proof + recipient to the backend's relayer endpoint.
+      // The backend broadcasts PrivacyPool.withdraw() via the relayer hot
+      // wallet — the customer's EOA is never msg.sender.
+      const res = await axios.post(`${API}/zk-pool/withdraw-relay`, {
+        nullifier_hash: nullifierHash.toString(),
+        root: root.toString(),
         recipient,
-        a,
-        b,
-        c,
-        { gasLimit: 600_000 }
-      );
-      setStage("Waiting for confirmation…");
-      const receipt = await tx.wait();
+        proof: { a, b, c },
+        chain: "base",
+      });
+
+      const txHash = res.data?.tx_hash || res.data?.relay_tx_hash || "";
       const explorer = CHAINS.base?.explorer ?? "https://basescan.org";
       setTxResult({
-        hash: receipt?.hash ?? tx.hash,
-        url: `${explorer}/tx/${receipt?.hash ?? tx.hash}`,
+        hash: txHash,
+        url: `${explorer}/tx/${txHash}`,
         recipient,
         amount: noteDenominationEth,
       });
-      toast.success("Withdrawal succeeded");
+      toast.success("Withdrawal relayed on-chain");
       setStage(null);
     } catch (e) {
       console.error(e);
-      toast.error(e?.shortMessage ?? e?.message ?? "Withdraw failed");
+      const msg = e.response?.data?.detail?.slice(0, 80) || e?.shortMessage || e?.message || "Withdraw relay failed";
+      toast.error(msg);
     } finally {
       setLoading(false);
       setStage(null);
