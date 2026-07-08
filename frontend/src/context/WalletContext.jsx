@@ -165,7 +165,8 @@ export function WalletProvider({ children }) {
   const SUI_WALLET_PROBES = [
     // Mysten Labs' official Sui Wallet (the canonical web wallet).
     "suiWallet",
-    // Suiet — popular Chinese-developed Sui extension.
+    // Suiet — popular Chinese-developed Sui extension. The pilot's
+    // installed wallet — must be on this list.
     "suiet",
     // Martian — early Sui wallet, still installed by some users.
     "martian",
@@ -186,6 +187,13 @@ export function WalletProvider({ children }) {
     // ABC Wallet / Slush (rebrand) — newer Sui-first wallets.
     "abcWallet",
     "slushWallet",
+    // Backpack — popular multichain wallet (Solana + Sui + EVM).
+    // Injects as window.backpack with isBackpack true.
+    "backpack",
+    "backpackWallet",
+    // OKX Wallet — multichain exchange wallet with Sui support.
+    // Injects as window.okxwallet with isOkxWallet true.
+    "okxwallet",
     // Legacy single injection — Mysten Labs pre-Wallet-Standard.
     "sui",
   ];

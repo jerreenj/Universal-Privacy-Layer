@@ -86,6 +86,9 @@ export function Landing() {
     bistowWallet: "Trust",
     abcWallet:    "ABC Wallet",
     slushWallet:  "Slush",
+    backpack:     "Backpack",
+    backpackWallet: "Backpack",
+    okxwallet:    "OKX Wallet",
     sui:          "Sui Wallet",
   };
   const detectedSuiLabel = availableWallets?.suiName
