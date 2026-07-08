@@ -115,35 +115,60 @@ export function WalletProvider({ children }) {
   // when the publicKey came back. This eliminates the "Phantom failed
   // load" toast that's been scaring customers even though everything
   // was working.
+  //
+  // Per-wallet EVM connect: window.ethereum may be a single provider
+  // (the active EIP-1193 injector) OR an array of providers when the
+  // user has both MetaMask and Rabby installed. For MetaMask we
+  // pick the provider tagged isMetaMask; for Rabby we pick the
+  // provider tagged isRabby. This way clicking "Rabby" in the
+  // picker routes the eth_requestAccounts prompt to Rabby, not
+  // MetaMask.
+  const pickEvmProvider = useCallback((preferTag) => {
+    if (typeof window === "undefined" || !window.ethereum) return null;
+    const e = window.ethereum;
+    // Single-provider mode (most common). Match the tag if provided.
+    if (!Array.isArray(e.providers)) {
+      if (!preferTag) return e;
+      if (preferTag === "isMetaMask" && e.isMetaMask) return e;
+      if (preferTag === "isRabby"    && e.isRabby)    return e;
+      return null;
+    }
+    // Multi-provider mode (EIP-6963). Find the matching provider in
+    // the array — never the array itself.
+    const pp = e.providers.find(p => p && p[preferTag]);
+    return pp || null;
+  }, []);
+
   const connectEVM = useCallback(async () => {
-    if (!window.ethereum) {
+    const provider = pickEvmProvider("isMetaMask");
+    if (!provider) {
       toast.error("MetaMask not found — install it first");
       return;
     }
     setConnecting(true);
     let connectedAddress = null;
     try {
-      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
       if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
       const { ethers } = await import("ethers");
-      const provider = new ethers.BrowserProvider(window.ethereum);
+      // Tag the BrowserProvider with the picked EIP-1193 provider
+      // (not window.ethereum) so MetaMask-specific RPCs route
+      // through MetaMask, not whatever else is injected.
+      const browserProvider = new ethers.BrowserProvider(provider);
+      try { browserProvider.provider = provider; } catch {}
       setAddress(accounts[0]);
-      setSigner(await provider.getSigner());
+      setSigner(await browserProvider.getSigner());
       connectedAddress = accounts[0];
     } catch (e) {
-      // MetaMask's "user denied" code is 4001; surface that distinctly,
-      // but NEVER toast for transient dApp races — only if we didn't
-      // actually end up with a connected account.
       if (!connectedAddress) {
         if (e?.code === 4001) toast.error("Connection request was cancelled");
         else toast.error("MetaMask connection failed");
       } else {
-        // We DID get an address despite the throw — silent success.
         console.warn("MetaMask connect() threw after authorization:", e);
       }
     }
     setConnecting(false);
-  }, []);
+  }, [pickEvmProvider]);
 
   const connectSolana = useCallback(async () => {
     const phantom = window.phantom?.solana ?? window.solana;
@@ -153,8 +178,12 @@ export function WalletProvider({ children }) {
     }
     setConnecting(true);
     let connectedPubkey = null;
+    // Phantom's onlyConnect option forces a fresh prompt each time
+    // connected=true was cached.  This guarantees the user sees
+    // Phantom's connect UI when they explicitly click 'Phantom' in
+    // the picker — not a silent reconnect from auto-authorization.
     try {
-      const resp = await phantom.connect();
+      const resp = await phantom.connect({ onlyIfTrusted: false });
       if (resp && resp.publicKey) {
         connectedPubkey = resp.publicKey.toBase58();
         const { Connection } = await import("@solana/web3.js");
@@ -180,10 +209,6 @@ export function WalletProvider({ children }) {
         }
       } catch {}
       if (!connectedPubkey) {
-        // Genuine failure (user really did decline). The user said
-        // everything was working but the error was showing; this
-        // branch only fires when no public key came back — i.e. a
-        // real disconnect path, not a spurious handshake race.
         console.warn("Phantom connect() failed:", e);
       } else {
         console.warn("Phantom connect() threw after auth, used publicKey fallback:", e);
@@ -229,10 +254,37 @@ export function WalletProvider({ children }) {
 
   // Rabby injects as window.ethereum (same EIP-1193 provider as
   // MetaMask) so the connection RPC is identical. The picker routes
-  // to this function when the user picks Rabby, but the underlying
-  // call is the same eth_requestAccounts — only the brand identity
-  // differs.
-  const connectRabby = useCallback(() => connectEVM(), [connectEVM]);
+  // to this function when the user picks Rabby, but the prompt
+  // is fired against the provider tagged isRabby (not the
+  // general window.ethereum) — so a MetaMask+Rabby user clicking
+  // "Rabby" sees Rabby's sign UI, not MetaMask's.
+  const connectRabby = useCallback(async () => {
+    const provider = pickEvmProvider("isRabby");
+    if (!provider) {
+      toast.error("Rabby not found — install it first");
+      return;
+    }
+    setConnecting(true);
+    let connectedAddress = null;
+    try {
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
+      const { ethers } = await import("ethers");
+      const browserProvider = new ethers.BrowserProvider(provider);
+      try { browserProvider.provider = provider; } catch {}
+      setAddress(accounts[0]);
+      setSigner(await browserProvider.getSigner());
+      connectedAddress = accounts[0];
+    } catch (e) {
+      if (!connectedAddress) {
+        if (e?.code === 4001) toast.error("Connection request was cancelled");
+        else toast.error("Rabby connection failed");
+      } else {
+        console.warn("Rabby connect() threw after authorization:", e);
+      }
+    }
+    setConnecting(false);
+  }, [pickEvmProvider]);
 
   // Detected wallets — surfaced to the Landing page so the wallet-
   // picker only shows options that are actually installed. Refreshed

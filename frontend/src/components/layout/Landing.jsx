@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Wallet, Check } from "lucide-react";
+import { ChevronDown, Check } from "lucide-react";
 import { CHAINS, VM, VM_GROUPS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import RotatingEarth from "@/components/ui/RotatingEarth";
+import { MagnetizeButton } from "@/components/ui/magnetize-button";
 import {
   MetaMaskLogo, PhantomLogo, SuiLogo, RabbyLogo,
 } from "@/components/ui/wallets/WalletLogo";
@@ -16,14 +17,18 @@ import {
  * Connect immediately re-fired Phantom.
  *
  * UI rules:
- *   - One plain button (no double icon).
+ *   - Green MagnetizeButton (the "magnetic" particle effect the
+ *     pilot picked) — only ONE wallet icon shows (the internal one
+ *     MagnetizeButton renders).
  *   - Dropdown header is just "Pick the wallet" — no subtitle.
- *   - Each row uses the wallet's real brand logo.
+ *   - Each row uses the wallet's real brand logo (downloaded SVGs
+ *     from /public/wallets/).
  *   - "Detected" badge only shows for wallets actually installed.
- *     Specifically: window.ethereum.isMetaMask for MetaMask,
- *     window.ethereum.isRabby for Rabby (NOT both if only one is
- *     the active EIP-1193 provider), window.phantom.solana for
- *     Phantom, window.suiWallet for Sui.
+ *   - Clicking a wallet routes to its SPECIFIC provider — MetaMask
+ *     uses the isMetaMask provider (not the general ethereum),
+ *     Rabby uses the isRabby provider; Phantom connect uses
+ *     onlyIfTrusted:false so the user sees a fresh sign prompt
+ *     rather than a silent cached reconnect.
  */
 export function Landing() {
   const {
@@ -100,19 +105,21 @@ export function Landing() {
           <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${showChains ? "rotate-180" : ""}`} />
         </div>
 
-        {/* Plain button — no MagnetizeButton so there's only ONE icon,
-            the chevron. */}
+        {/* MagnetizeButton — green particle button the pilot picked.
+            It already renders a single wallet icon internally so we
+            do NOT add another. Click opens the family picker; the
+            Magnetize magnet-particle effect stays visible under the
+            floating dropdown so the trigger keeps its identity. */}
         <div className="relative" ref={walletMenuRef}>
-          <button
+          <MagnetizeButton
             onClick={() => setWalletMenuOpen((o) => !o)}
             disabled={connecting}
+            particleCount={14}
+            className="px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm"
             data-testid="connect-wallet-button"
-            className="inline-flex items-center gap-2 px-3 sm:px-4 md:px-6 py-2 sm:py-2.5 bg-white text-black text-xs sm:text-sm font-semibold uppercase tracking-wider hover:bg-white/90 transition-colors disabled:opacity-50"
           >
-            <Wallet className="w-4 h-4" />
             {connecting ? "Connecting…" : "Connect Wallet"}
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${walletMenuOpen ? "rotate-180" : ""}`} />
-          </button>
+          </MagnetizeButton>
 
           {walletMenuOpen && (
             <div
