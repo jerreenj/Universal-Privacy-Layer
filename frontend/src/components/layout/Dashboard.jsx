@@ -346,9 +346,6 @@ export function Dashboard() {
                   on {CHAINS[safeChain]?.name}
                 </span>
                 <ChevronDown className={`w-4 h-4 text-white/60 transition-transform ${tokenMenuOpen ? "rotate-180" : ""}`} />
-                <span className="ml-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-blue-500/15 border border-blue-400/30 text-blue-300">
-                  Primary
-                </span>
               </button>
 
               {tokenMenuOpen && (
@@ -397,11 +394,6 @@ export function Dashboard() {
                             </div>
                             <div className="text-[10px] text-white/40">{opt.sub}</div>
                           </div>
-                          {isFocused && (
-                            <span className="text-[10px] uppercase tracking-wider text-blue-300 ml-3">
-                              ★ Primary
-                            </span>
-                          )}
                         </button>
                     );
                   })}
@@ -409,7 +401,10 @@ export function Dashboard() {
               )}
             </div>
 
-            {/* Other-token subtitle — clickable to flip primary in one tap. */}
+            {/* Other-token subtitle — clickable to flip the row in
+                one tap. Same UX on every chain (EVM, Solana, Sui):
+                see the primary token's big number + see this small
+                chip below for the alternate, click flips it. */}
             {(() => {
               const other = focusedToken === "usdc"
                 ? (balance ? balance.formatted : null)
@@ -424,7 +419,6 @@ export function Dashboard() {
                   <span className="text-white/30">+</span>
                   <button
                     onClick={() => setFocusedToken(otherKey)}
-                    title={`Switch primary to ${otherSymbol}`}
                     data-testid="alternate-token-chip"
                     className="inline-flex items-center gap-1.5 hover:text-white transition-colors"
                   >
@@ -432,7 +426,6 @@ export function Dashboard() {
                     <span>{otherSymbol}</span>
                     <ChevronDown className="w-3 h-3 text-white/30" />
                   </button>
-                  <span className="text-white/20 ml-auto">tap to make this primary</span>
                 </div>
               );
             })()}
