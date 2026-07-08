@@ -2831,6 +2831,117 @@ async def zk_pool_prove(req: ZKPoolProveRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Fund proxy via PrivacyPool (breaks main→proxy link) ──────────────
+# POST /api/zk-pool/withdraw-relay
+#   The customer deposits ETH into PrivacyPool from their main wallet
+#   (visible — enters anonymity set). Then this endpoint generates the
+#   ZK proof server-side AND broadcasts the withdraw tx via the relayer
+#   hot wallet. ETH lands at the proxy address. The relayer is
+#   msg.sender; the ZK proof breaks the deposit↔withdraw link. An
+#   observer sees: relayer called withdraw, proxy got ETH. No link
+#   to the customer's main wallet.
+class ZKPoolWithdrawRelayRequest(BaseModel):
+    nullifier: str
+    secret: str
+    recipient: str  # proxy address
+
+@api_router.post("/zk-pool/withdraw-relay")
+async def zk_pool_withdraw_relay(req: ZKPoolWithdrawRelayRequest):
+    """Server-side: generate ZK proof + relay the withdraw tx so the
+    customer's main wallet never appears on the withdraw call."""
+    try:
+        pool_addr = UPL_CONTRACTS.get("base", {}).get("privacy_pool")
+        if not pool_addr:
+            raise HTTPException(status_code=400, detail="PrivacyPool not deployed")
+
+        relayer_key = os.environ.get("RELAYER_PRIVATE_KEY") or _read_hot_wallet_keyfile()
+        if not relayer_key:
+            raise HTTPException(status_code=503, detail="Relayer wallet not configured")
+        acct = Account.from_key(relayer_key)
+
+        # 1. Generate witness inputs (Merkle path + root).
+        witness = await generate_withdraw_inputs(int(req.nullifier), int(req.secret))
+        if not witness or not witness.get("root"):
+            raise HTTPException(status_code=400, detail="Could not find deposit in tree — wait for confirmation")
+
+        nullifier_hash = witness.get("nullifierHash")
+        root = witness.get("root")
+
+        # 2. Generate ZK proof server-side (if prover enabled).
+        #    If prover disabled, fall back to returning the witness
+        #    so the FE can generate the proof in-browser.
+        proof = None
+        public_signals = None
+        if ZK_POOL_PROVER_ENABLED:
+            prover_input = {
+                "nullifier": str(int(req.nullifier)),
+                "secret": str(int(req.secret)),
+                "pathElements": [str(p) for p in witness.get("merklePathElements", [])],
+                "pathIndices": [int(i) for i in witness.get("merklePathIndices", [])],
+                "root": str(root),
+                "recipient": req.recipient,
+                "zkeyPath": ZK_POOL_ZKEY_PATH,
+                "wasmPath": ZK_POOL_WASM_PATH,
+            }
+            with _tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+                _json.dump(prover_input, f)
+                stdin_path = f.name
+            try:
+                proc = _subprocess.run(
+                    ["node", "/app/scripts/zk_pool_prover.js"],
+                    stdin=open(stdin_path, "rb"),
+                    capture_output=True,
+                    timeout=ZK_POOL_PROVER_TIMEOUT_S,
+                )
+                if proc.returncode != 0:
+                    raise HTTPException(status_code=500, detail=f"Prover failed: {proc.stderr.decode('utf-8','replace')[:300]}")
+                proof_doc = _json.loads(proc.stdout.decode("utf-8"))
+                proof = proof_doc["proof"]
+                public_signals = proof_doc["publicSignals"]
+            finally:
+                try: _os.unlink(stdin_path)
+                except OSError: pass
+        else:
+            # Prover disabled — return witness so FE can prove in-browser.
+            return {
+                "status": "need_browser_proof",
+                "witness": witness,
+                "recipient": req.recipient,
+                "message": "Server prover disabled. Generate proof in-browser and call /api/zk-pool/withdraw-relay-final",
+            }
+
+        # 3. Relay the withdraw tx via the hot wallet.
+        w3 = get_w3("base")
+        pool = w3.eth.contract(address=pool_addr, abi=PRIVACY_POOL_ABI)
+
+        # Extract proof components from the snarkjs output.
+        pi_a = [int(x, 16) if isinstance(x, str) and x.startswith("0x") else int(x) for x in proof["pi_a"][:2]]
+        pi_b = [
+            [int(x, 16) if isinstance(x, str) and x.startswith("0x") else int(x) for x in row[:2]]
+            for row in proof["pi_b"][:2]
+        ]
+        pi_c = [int(x, 16) if isinstance(x, str) and x.startswith("0x") else int(x) for x in proof["pi_c"][:2]]
+        pub = [int(x, 16) if isinstance(x, str) and x.startswith("0x") else int(x) for x in public_signals[:3]]
+
+        nonce = w3.eth.get_transaction_count(acct.address)
+        tx = pool.functions.withdraw(pi_a, pi_b, pi_c, pub).build_transaction({
+            "from": acct.address,
+            "nonce": nonce,
+            "gas": 500000,
+            "gasPrice": w3.eth.gas_price,
+            "chainId": 8453,
+        })
+        signed = acct.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+        logger.info(f"zk-pool withdraw-relayed: {tx_hash} → {req.recipient}")
+        return {"tx_hash": tx_hash, "relayer": acct.address, "recipient": req.recipient}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"zk-pool/withdraw-relay error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── P3.8 — secp256k1 Stealth-Address Ownership ZK (PoC / RESEARCH-ONLY) ───
 # ⚠ NOT FOR PRODUCTION USE. ⚠
 # See docs/secp256k1-stealth-zk.md for the full research doc + audit

@@ -26,6 +26,7 @@ import {
     getOrCreateProxyWallet,
     checkProxyBalance,
     fundProxyWallet,
+    fundProxyPrivately,
 } from "@/lib/stealth-proxy";
 
 const FORWARD_ABI = [
@@ -157,6 +158,29 @@ export function SwapContent() {
       setProxyBal(bal);
       toast.success(`Proxy funded with ${ethAmount} ETH`);
     } catch (e) { toast.error("Funding failed: " + (e.message || "").slice(0, 60)); }
+    setProxyBusy(false);
+  };
+
+  // Fund proxy PRIVATELY through the PrivacyPool. Breaks the
+  // main→proxy link so the observer can't trace the funding.
+  const fundProxyPrivacy = async () => {
+    if (!signer || !proxy) return;
+    setProxyBusy(true);
+    try {
+      toast.info("Depositing into PrivacyPool (breaks the link)…");
+      const result = await fundProxyPrivately(
+        signer, proxy.address,
+        "0x3F0b23Aca0624981a503e8f042db2F3884D0C89C",
+        API,
+      );
+      toast.success("Proxy funded privately — no link to your wallet");
+      // Refresh balance.
+      const provider = signer.provider || new ethers.BrowserProvider(window.ethereum);
+      const bal = await checkProxyBalance(proxy.address, provider, USDC.address);
+      setProxyBal(bal);
+    } catch (e) {
+      toast.error("Private funding failed: " + (e.message || "").slice(0, 80));
+    }
     setProxyBusy(false);
   };
 
@@ -361,13 +385,22 @@ export function SwapContent() {
             <span className="font-mono text-white/70">{parseFloat(proxyBal.usdc).toFixed(2)}</span>
           </div>
           {parseFloat(proxyBal.eth) < 0.001 && (
-            <button
-              onClick={() => fundProxy("0.005")}
-              disabled={proxyBusy}
-              className="w-full py-2 border border-blue-400/40 text-blue-300 text-xs hover:bg-blue-500/10 disabled:opacity-50"
-            >
-              {proxyBusy ? "Funding…" : "Fund proxy (0.005 ETH)"}
-            </button>
+            <div className="space-y-1">
+              <button
+                onClick={fundProxyPrivacy}
+                disabled={proxyBusy}
+                className="w-full py-2 border border-emerald-400/40 text-emerald-300 text-xs hover:bg-emerald-500/10 disabled:opacity-50"
+              >
+                {proxyBusy ? "Funding privately…" : "Fund privately (via PrivacyPool)"}
+              </button>
+              <button
+                onClick={() => fundProxy("0.005")}
+                disabled={proxyBusy}
+                className="w-full py-2 border border-white/20 text-white/50 text-xs hover:bg-white/5 disabled:opacity-50"
+              >
+                {proxyBusy ? "Funding…" : "Fund directly (0.005 ETH)"}
+              </button>
+            </div>
           )}
         </div>
       )}

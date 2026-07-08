@@ -31,7 +31,17 @@
 import { ethers } from "ethers";
 import axios from "axios";
 
-const LS_KEY = "upl:stealth-proxy";
+/**
+ * Cache key MUST be per-address — different wallets have different
+ * stealth wallets, so a single global LS_KEY leaks wallet A's proxy
+ * to wallet B.
+ *
+ * HKDF derivation is deterministic per-wallet (same wallet signature
+ * → same private key), so the cache hit is correct; the lookup is
+ * just per-wallet.
+ */
+const lsKey = (address) =>
+    `upl:stealth-proxy:${(address || "").toLowerCase()}`;
 
 /**
  * Get or create the customer's proxy wallet. Same main wallet →
@@ -41,13 +51,19 @@ const LS_KEY = "upl:stealth-proxy";
  * @returns {Promise<{address: string, privateKey: string, wallet: ethers.Wallet}>}
  */
 export async function getOrCreateProxyWallet(signer) {
-    // Check localStorage first.
+    // Get the wallet's own address — we use this as the cache key
+    // so different connected wallets never share proxies.
+    let ownerAddress = "";
+    try { ownerAddress = await signer.getAddress(); } catch {}
+
+    // Check localStorage first — per-wallet key.
     try {
-        const cached = localStorage.getItem(LS_KEY);
+        const cached = localStorage.getItem(lsKey(ownerAddress));
         if (cached) {
             const parsed = JSON.parse(cached);
             const wallet = new ethers.Wallet(parsed.privateKey);
-            // Sanity: address match.
+            // Sanity: address match — guards against a corrupted cache
+            // entry.
             if (wallet.address === parsed.address) {
                 return { address: parsed.address, privateKey: parsed.privateKey, wallet };
             }
@@ -73,7 +89,7 @@ export async function getOrCreateProxyWallet(signer) {
     const { deriveStealthEOA } = await import("@/lib/wallet-stealth");
     const derived = await deriveStealthEOA(freshSigner);
     try {
-        localStorage.setItem(LS_KEY, JSON.stringify({
+        localStorage.setItem(lsKey(ownerAddress), JSON.stringify({
             address: derived.address,
             privateKey: derived.privateKey,
         }));
@@ -140,11 +156,26 @@ export async function fundProxyUSDC(mainSigner, proxyAddress, usdcAddress, usdcA
 }
 
 /**
- * Forget the cached proxy (used if the customer wants to derive
- * a new one — e.g. after a key compromise).
+ * Forget the cached proxy for a specific wallet (or all of them).
+ * Use after a key compromise, or for testing.
+ *
+ * @param {string} [address] - specific wallet to forget. If omitted,
+ *                             every cached proxy is purged.
  */
-export function forgetProxyWallet() {
-    try { localStorage.removeItem(LS_KEY); } catch {}
+export function forgetProxyWallet(address) {
+    if (address) {
+        try { localStorage.removeItem(lsKey(address)); } catch {}
+        return;
+    }
+    // Purge every cached proxy. Walk all localStorage keys.
+    try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith("upl:stealth-proxy:")) {
+                localStorage.removeItem(k);
+            }
+        }
+    } catch {}
 }
 
 /**
