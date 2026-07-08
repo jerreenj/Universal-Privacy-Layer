@@ -25,9 +25,6 @@ import { ethers } from "ethers";
 export const STEALTH_REGISTRY_BY_CHAIN = {
   // chain alias -> { registry address, optional honest-fallback }
   base:        "0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1", // P4.1 active
-  // Note: legacy 0x05077cB4c4214b89dD35F949b587d31e79b3B0c9 still works but
-  // scanners that know P4.1's live addr read at this slot by default.
-  "base-legacy": "0x05077cB4c4214b89dD35F949b587d31e79b3B0c9",
 };
 
 export const STEALTH_ANNOUNCEMENT_TOPIC =

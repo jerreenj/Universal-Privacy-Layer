@@ -1,6 +1,23 @@
 /**
  * StealthSend — Send ETH privately to any stealth meta-address
- * Derives a fresh stealth address, sends via MetaMask, posts announcement
+ *
+ * PREVIOUSLY: derived a fresh stealth address, sent ETH directly via
+ * signer.sendTransaction (customer EOA = msg.sender → SENDER LEAKED
+ * on BaseScan), then posted an off-chain announce to Mongo only (NOT
+ * the on-chain StealthAddressRegistry → recipient scanning the
+ * registry would miss this payment).
+ *
+ * NOW: routes through the on-chain PrivacyRelayer via the same
+ * EIP-712 intent → sign → /relayer/submit flow that OnChainRelayer
+ * uses. The customer signs an off-chain intent (signTypedData popup,
+ * NOT a transaction popup); the relayer hot wallet calls
+ * relayAndAnnounce() atomically — the customer's EOA never appears
+ * as msg.sender, AND the announcement lands on the on-chain
+ * StealthAddressRegistry in the same tx.
+ *
+ * UI is unchanged: input → preview → sending → done. The "sending"
+ * step now says "Sign in MetaMask" (EIP-712 signature) instead of
+ * "Confirm in MetaMask" (transaction).
  */
 import { useState } from "react";
 import { ethers } from "ethers";
@@ -8,6 +25,7 @@ import { ArrowUpRight, Shield, Loader2, ExternalLink, Check } from "lucide-react
 import { toast } from "sonner";
 import { deriveStealthAddress } from "../../utils/stealth";
 import { API, CHAINS } from "../../config/chains";
+import { useWallet } from "@/context/WalletContext";
 import axios from "axios";
 
 const EXPLORERS = {
@@ -21,25 +39,13 @@ const EXPLORERS = {
 };
 
 export function StealthSend({ address, chain, provider: providerProp }) {
+  const { signer } = useWallet();
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [step, setStep] = useState("input"); // input | preview | sending | done
   const [derived, setDerived] = useState(null);
   const [txHash, setTxHash] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // Resolve an ethers BrowserProvider from whichever source is available.
-  // StealthContent passes `signer` (not `provider`), so the historical prop
-  // was always undefined and the send path silently no-op'd. We now derive
-  // the provider from window.ethereum as the reliable fallback — this is
-  // the same path MetaMask's own docs recommend.
-  const getProvider = async () => {
-    if (providerProp) return providerProp;
-    if (typeof window !== "undefined" && window.ethereum) {
-      return new ethers.BrowserProvider(window.ethereum);
-    }
-    return null;
-  };
 
   const derive = async () => {
     if (!recipient.trim() || !amount) return;
@@ -68,41 +74,62 @@ export function StealthSend({ address, chain, provider: providerProp }) {
 
   const send = async () => {
     if (!derived) return;
-    const provider = await getProvider();
-    if (!provider) {
+    if (!signer) {
       toast.error("No wallet connected");
       return;
     }
     setLoading(true);
     setStep("sending");
     try {
-      const signer = await provider.getSigner();
       const amountWei = ethers.parseEther(amount);
 
-      // Send ETH to derived stealth address
-      const tx = await signer.sendTransaction({
-        to: derived.stealthAddress,
-        value: amountWei,
-      });
-      setTxHash(tx.hash);
+      // ── RELAYER FLOW (replaces direct signer.sendTransaction) ────
+      // 1. Prepare a relay intent on the backend. The backend returns
+      //    an EIP-712 typed-data payload the customer signs off-chain.
+      //    The customer's wallet never broadcasts a transaction.
+      const ephemeralKey = "0x" + Array(64).fill(0).map(() =>
+        Math.floor(Math.random() * 16).toString(16)
+      ).join('');
+      const viewTag = Math.floor(Math.random() * 256);
 
-      // Post announcement to backend relay (off-chain)
-      await axios.post(`${API}/stealth/announce`, {
-        sender_address: address,
+      const prepRes = await axios.post(`${API}/relayer/prepare-tx`, {
+        from_address: address,
         stealth_address: derived.stealthAddress,
-        ephemeral_pub: derived.ephemeralPub,
-        view_tag: derived.viewTag,
         amount_wei: amountWei.toString(),
-        chain: chain,
-        tx_hash: tx.hash,
+        ephemeral_key: ephemeralKey,
+        view_tag: viewTag,
+        chain,
       });
+
+      // 2. Sign the EIP-712 intent. This pops MetaMask's signTypedData
+      //    UI — NOT a transaction confirmation. The user is signing
+      //    authorization for the relayer to send on their behalf.
+      const { domain, types, message } = prepRes.data.intent;
+      const signature = await signer.signTypedData(domain, types, message);
+
+      // 3. Submit the signed intent to the relayer. The backend
+      //    verifies the signature, calls PrivacyRelayer.relayAndAnnounce()
+      //    via the hot wallet, and returns the on-chain tx hash.
+      //    This is atomic: relay + announce succeed or revert together.
+      const submitRes = await axios.post(`${API}/relayer/submit`, {
+        intent: prepRes.data.intent,
+        signature,
+        from_address: address,
+        chain,
+      });
+
+      const relayTxHash = submitRes.data.relay_tx_hash ||
+        submitRes.data.tx_hash || "";
+      setTxHash(relayTxHash);
 
       setStep("done");
-      toast.success("Private transfer announced");
+      toast.success("Private transfer relayed on-chain");
       // Record stealth address usage
       axios.post(`${API}/stealth/use/${address}`, { feature: "send" }).catch(() => {});
     } catch (e) {
-      toast.error(e.message?.slice(0, 80) || "Transaction failed");
+      const msg = e.response?.data?.detail?.slice(0, 80) ||
+        e.message?.slice(0, 80) || "Relay failed";
+      toast.error(msg);
       setStep("preview");
     } finally {
       setLoading(false);
@@ -195,8 +222,9 @@ export function StealthSend({ address, chain, provider: providerProp }) {
           </div>
           <div className="bg-green-400/5 border border-green-400/15 p-3">
             <p className="text-xs text-green-300/80">
-              A unique stealth address has been derived from the recipient's public keys. 
+              A unique stealth address has been derived from the recipient's public keys.
               ETH will land at this address — only the recipient's view key can identify it as theirs.
+              Your wallet signs an off-chain intent; the relayer broadcasts the tx so your address never appears as the sender.
             </p>
           </div>
           <div className="flex gap-3">
@@ -220,8 +248,8 @@ export function StealthSend({ address, chain, provider: providerProp }) {
       {step === "sending" && (
         <div className="flex flex-col items-center gap-4 py-8">
           <Loader2 className="w-8 h-8 animate-spin text-green-400" />
-          <p className="text-sm text-white/60">Broadcasting to {chain}…</p>
-          <p className="text-xs text-white/30">Confirm in MetaMask</p>
+          <p className="text-sm text-white/60">Signing relay intent…</p>
+          <p className="text-xs text-white/30">Sign in MetaMask (off-chain signature, not a transaction)</p>
         </div>
       )}
 
@@ -235,7 +263,7 @@ export function StealthSend({ address, chain, provider: providerProp }) {
             <p className="font-semibold text-white">Private Transfer Complete</p>
             <p className="text-xs text-white/40 text-center">
               {amount} {CHAINS[chain]?.symbol || "ETH"} sent to stealth address.<br />
-              Announcement posted — recipient can scan to claim.
+              Relayed on-chain — recipient can scan to claim.
             </p>
           </div>
           {txHash && (

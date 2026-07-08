@@ -2688,14 +2688,25 @@ import subprocess as _subprocess
 import tempfile as _tempfile
 import os as _os
 
-ZK_POOL_PROVER_ENABLED = _os.environ.get("ZK_POOL_PROVER_ENABLED", "0") == "1"
+# ZK prover — enabled by default. The pilot needs the server-side
+# Groth16 prover so the PrivacyPool private-funding flow (deposit →
+# withdraw to proxy) works without requiring the browser to run
+# snarkjs WASM for 5-20s. Set ZK_POOL_PROVER_ENABLED=0 to disable.
+ZK_POOL_PROVER_ENABLED = _os.environ.get("ZK_POOL_PROVER_ENABLED", "1") == "1"
+# Prover script path — defaults to the repo-relative location so it
+# works both in local dev and Docker (override with the env var for
+# Docker deployments where the app lives at /app).
+ZK_POOL_PROVER_SCRIPT = _os.environ.get(
+    "ZK_POOL_PROVER_SCRIPT",
+    _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts", "zk_pool_prover.js"),
+)
 ZK_POOL_ZKEY_PATH = _os.environ.get(
     "ZK_POOL_ZKEY_PATH",
-    "/app/backend/zk_artifacts/withdraw_final.zkey",
+    _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "backend", "zk_artifacts", "withdraw_final.zkey"),
 )
 ZK_POOL_WASM_PATH = _os.environ.get(
     "ZK_POOL_WASM_PATH",
-    "/app/backend/zk_artifacts/withdraw_js/withdraw.wasm",
+    _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "backend", "zk_artifacts", "withdraw_js", "withdraw.wasm"),
 )
 ZK_POOL_PROVER_TIMEOUT_S = int(_os.environ.get("ZK_POOL_PROVER_TIMEOUT_S", "60"))
 

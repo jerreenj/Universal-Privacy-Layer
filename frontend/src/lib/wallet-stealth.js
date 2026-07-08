@@ -246,12 +246,6 @@ export async function generateStealthAddress(metaAddress) {
   const ephPriv = BigInt(eph.privateKey);
   const ephPub = "0x" + eph.publicKey.slice(4);
 
-  const viewNode = new ethers.SigningKey(
-    // we don't need the actual privkey — derive the pubkey node uncompressed.
-    // For ECDH we need an x-coordinate only, but ethers' computeSharedSecret
-    // can use the uncompressed pub directly via ecdh on secp256k1.
-    ephPriv
-  );
   // ECDH: sharedSecret = ephPriv * viewPub (as a Point)
   // ethers v6 doesn't ship an ECDH helper, but we can use noble's secp256k1
   // via computeSharedSecret on ethers.Wallet — note: ethers supports ECDH

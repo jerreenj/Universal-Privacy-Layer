@@ -128,11 +128,10 @@ export async function deriveDefaultViewTag(signer, chainId) {
  * @param {bigint} ethInWei — exact msg.value the customer sent
  * @param {number|bigint} usdcPerEth6dec — vault rate at the time
  * @param {number} feeBps — vault fee in basis points
- * @param {string} viewTagHex — 1-byte hex view tag
  * @returns {bigint} plaintext USDC out (6-dec)
  */
 export function decodeConfidentialSwapAmount(
-    ethInWei, usdcPerEth6dec, feeBps, viewTagHex
+    ethInWei, usdcPerEth6dec, feeBps
 ) {
     const fee = (BigInt(ethInWei) * BigInt(feeBps)) / 10000n;
     const swapAmount = BigInt(ethInWei) - fee;
@@ -148,7 +147,7 @@ export function decodeConfidentialSwapAmount(
 export function quoteConfidentialUsdcOut(
     ethInWei, usdcPerEth6dec, feeBps = 5
 ) {
-    return decodeConfidentialSwapAmount(ethInWei, usdcPerEth6dec, feeBps, "0x00");
+    return decodeConfidentialSwapAmount(ethInWei, usdcPerEth6dec, feeBps);
 }
 
 /**
@@ -164,7 +163,7 @@ export function buildConfidentialSwapArgs({
     recipientStealth,
     minUsdcOut = 0n,
 }) {
-    const amt = decodeConfidentialSwapAmount(ethInWei, usdcPerEth6dec, feeBps, viewTagHex);
+    const amt = decodeConfidentialSwapAmount(ethInWei, usdcPerEth6dec, feeBps);
     const commit = buildConfidentialCommitment(amt, viewTagHex);
     return {
         recipient: recipientStealth,

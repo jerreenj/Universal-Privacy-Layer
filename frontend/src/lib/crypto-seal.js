@@ -45,14 +45,6 @@ const DOMAIN_SEPARATOR =
 const _sealKeyCache = new Map(); // addr -> CryptoKey
 
 // ─── helpers ───────────────────────────────────────────────────────────
-function toHex(buf) {
-  if (typeof buf === "string") return buf;
-  const bytes = new Uint8Array(buf);
-  let s = "0x";
-  for (const b of bytes) s += b.toString(16).padStart(2, "0");
-  return s;
-}
-
 function fromHex(hex) {
   if (typeof hex !== "string" || !hex.startsWith("0x")) {
     throw new Error("expected 0x-prefixed hex");

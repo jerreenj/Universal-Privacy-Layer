@@ -202,7 +202,13 @@ export async function fundProxyPrivately(mainSigner, proxyAddress, poolAddress, 
             ? new ethers.BrowserProvider(window.ethereum) : null);
     if (!provider) throw new Error("No provider");
 
-    const DENOM = ethers.parseEther("0.01"); // smallest denomination
+    // MUST match the denomination registered in PrivacyPool.sol on Base.
+    // deployed_base.json registers 0.1 ETH (100000000000000000 wei) as the
+    // initial denomination. If this doesn't match, PrivacyPool.deposit()
+    // reverts with DenominationNotEnabled and the private-funding flow is
+    // dead — the proxy wallet becomes linkable to the main wallet via the
+    // direct-funding fallback.
+    const DENOM = ethers.parseEther("0.1");
 
     // 1. Generate nullifier + secret (random 32 bytes each).
     const nullifier = ethers.hexlify(ethers.randomBytes(32));

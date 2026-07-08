@@ -47,7 +47,6 @@ export function WalletProvider({ children }) {
   const [solConn, setSolConn] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const [privacyWallet, setPrivacyWallet] = useState(null);
-  const [, setDeploymentsLoaded] = useState(false);
 
   const vm = CHAINS[chain].vm;
 
@@ -96,7 +95,6 @@ export function WalletProvider({ children }) {
             registryPda: sol.registry_pda,
           };
         }
-        setDeploymentsLoaded(true);
       } catch {
         // Non-fatal: deployments endpoint unreachable → keep static config
         // (zero-address EVM placeholders, Sui "coming soon"). This is the
