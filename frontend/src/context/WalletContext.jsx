@@ -227,18 +227,48 @@ export function WalletProvider({ children }) {
     if (vm === VM.SUI) return connectSui();
   }, [vm, connectEVM, connectSolana, connectSui]);
 
+  // Rabby injects as window.ethereum (same EIP-1193 provider as
+  // MetaMask) so the connection RPC is identical. The picker routes
+  // to this function when the user picks Rabby, but the underlying
+  // call is the same eth_requestAccounts — only the brand identity
+  // differs.
+  const connectRabby = useCallback(() => connectEVM(), [connectEVM]);
+
   // Detected wallets — surfaced to the Landing page so the wallet-
   // picker only shows options that are actually installed. Refreshed
   // on mount and on visibility change so an extension installed while
   // the tab was backgrounded appears immediately on next open.
+  //
+  // EVM detection is split per-wallet because the user's browser can
+  // only have ONE active EIP-1193 provider at a time (modern wallets
+  // announce themselves via the `is<Wallet>` flag on
+  // window.ethereum). MetaMask and Rabby both inject as
+  // window.ethereum but they tag their provider so we can tell which
+  // is the active one. We do NOT mark both as "Detected" when only
+  // one is installed — each wallet is independently marked.
   const [availableWallets, setAvailableWallets] = useState({
-    evm: false, solana: false, sui: false,
+    metamask: false, phantom: false, sui: false, rabby: false,
   });
   const detectWallets = useCallback(() => {
+    if (typeof window === "undefined") {
+      setAvailableWallets({
+        metamask: false, phantom: false, sui: false, rabby: false,
+      });
+      return;
+    }
+    const e = window.ethereum;
     setAvailableWallets({
-      evm:    typeof window !== "undefined" && !!window.ethereum,
-      solana: typeof window !== "undefined" && !!(window.phantom?.solana ?? window.solana),
-      sui:    typeof window !== "undefined" && !!(window.suiWallet ?? window.sui),
+      // MetaMask tags its provider. Some forks (e.g. MetaMask Flask) only
+      // set isMetaMask on the active provider.
+      metamask: !!(e && (e.isMetaMask || (Array.isArray(e.providers) &&
+        e.providers.some(p => p?.isMetaMask)))),
+      // Rabby tags itself similarly. Newer builds inject a `providers`
+      // array on window.ethereum so an EIP-6963 multi-injector can
+      // pick a specific one.
+      rabby: !!(e && (e.isRabby || (Array.isArray(e.providers) &&
+        e.providers.some(p => p?.isRabby)))),
+      phantom: !!(window.phantom?.solana ?? window.solana?.isPhantom),
+      sui:     !!(window.suiWallet ?? window.sui),
     });
   }, []);
   useEffect(() => {
@@ -414,7 +444,7 @@ export function WalletProvider({ children }) {
   }, [disconnect]);
 
   return (
-    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, hiddenBalanceError, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, availableWallets, connectWallet, connectEVM, connectSolana, connectSui, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance }}>
+    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, hiddenBalanceError, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, availableWallets, connectWallet, connectEVM, connectRabby, connectSolana, connectSui, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance }}>
       {children}
     </WalletContext.Provider>
   );
