@@ -15,8 +15,6 @@ const SUI_WALLET_PROBES = [
   "surfWallet", "fewcha", "glassWallet",
   "trustWallet", "bistowWallet",
   "abcWallet", "slushWallet",
-  "backpack", "backpackWallet",
-  "okxwallet",
   "sui",
 ];
 
@@ -47,9 +45,6 @@ const tests = [
   { name: "Trust installed",          mock: { trustWallet: { requestPermissions: () => {} } } },
   { name: "ABC installed",            mock: { abcWallet: { requestPermissions: () => {} } } },
   { name: "Slush installed",          mock: { slushWallet: { connect: () => {} } } },
-  { name: "Backpack installed",       mock: { backpack: { requestPermissions: () => {} } } },
-  { name: "Backpack (alt key)",       mock: { backpackWallet: { connect: () => {} } } },
-  { name: "OKX Wallet installed",     mock: { okxwallet: { requestPermissions: () => {} } } },
   { name: "Sui Wallet (official)",    mock: { suiWallet: { requestPermissions: () => {} } } },
   { name: "Legacy 'sui' injection",   mock: { sui:      { requestPermissions: () => {} } } },
   // Negative cases

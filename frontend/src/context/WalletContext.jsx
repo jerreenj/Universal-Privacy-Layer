@@ -187,13 +187,6 @@ export function WalletProvider({ children }) {
     // ABC Wallet / Slush (rebrand) — newer Sui-first wallets.
     "abcWallet",
     "slushWallet",
-    // Backpack — popular multichain wallet (Solana + Sui + EVM).
-    // Injects as window.backpack with isBackpack true.
-    "backpack",
-    "backpackWallet",
-    // OKX Wallet — multichain exchange wallet with Sui support.
-    // Injects as window.okxwallet with isOkxWallet true.
-    "okxwallet",
     // Legacy single injection — Mysten Labs pre-Wallet-Standard.
     "sui",
   ];
