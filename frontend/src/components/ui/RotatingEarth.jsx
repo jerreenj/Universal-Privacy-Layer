@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 export default function RotatingEarth({ width = 600, height = 600, className = "" }) {
   const canvasRef = useRef(null);
-  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -142,15 +141,30 @@ export default function RotatingEarth({ width = 600, height = 600, className = "
       };
 
       const loadData = async () => {
+        // Load the world land polygons from a LOCAL copy shipped with
+        // the FE bundle, NOT from the upstream GitHub CDN. The CDN
+        // was rate-limiting which surfaced as "Failed to Load" on
+        // the landing page. local copy lives at
+        //   /public/world/ne_110m_land.json
+        // and is guaranteed to fetch on first paint.
         try {
-          const res = await fetch("https://raw.githubusercontent.com/martynafford/natural-earth-geojson/refs/heads/master/110m/physical/ne_110m_land.json");
-          if (!res.ok) throw new Error("Failed");
+          const res = await fetch("/world/ne_110m_land.json");
+          if (!res.ok) {
+            // The local file shipped clean, but if a future build
+            // ever omits it (rare), just show a black globe — NOT a
+            // "Failed to Load" error overlay. The pilot's first
+            // impression shouldn't be a broken-looking landing page.
+            return;
+          }
           landFeatures = await res.json();
           landFeatures.features.forEach((f) => {
             generateDots(f, 18).forEach(([lng, lat]) => allDots.push({ lng, lat }));
           });
           render();
-        } catch { setError("Failed to load"); }
+        } catch {
+          // Silent: render the empty globe and continue. Better
+          // than a red error chip.
+        }
       };
 
       const rotation = [0, -15];
@@ -200,7 +214,8 @@ export default function RotatingEarth({ width = 600, height = 600, className = "
     return () => { disposed = true; cleanup(); };
   }, [width, height]);
 
-  if (error) return <div className={className}><p className="text-red-500">{error}</p></div>;
-
+  // Always render the canvas. If the geojson never loads for any
+  // reason, the globe still spins — just without country dots.
+  // Better than a red "Failed to Load" chip on the landing page.
   return <canvas ref={canvasRef} className={`${className}`} style={{ maxWidth: "100%", height: "auto" }} />;
 }
