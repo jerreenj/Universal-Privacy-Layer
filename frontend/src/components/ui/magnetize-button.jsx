@@ -7,7 +7,34 @@ import { Wallet } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 
-function MagnetizeButton({ className, particleCount = 12, attractRadius = 50, children, ...props }) {
+/**
+ * MagnetizeButton — green particle button with a magnetic-levitation
+ * effect on hover (particles fly inward, scale-up; on pointer-out
+ * they spread back out). It's the visual identity the pilot asked
+ * us to keep (the 'gorgeous' magnet effect).
+ *
+ * Slots:
+ *   - prefix     ReactNode rendered before the label (a wallet logo,
+ *                etc.). When it's present, the default lucide Wallet
+ *                icon is hidden so each tile can show its own brand.
+ *   - children   text label or any ReactNode; falls back to "Connect"
+ *                when omitted (the original behaviour).
+ *
+ * Tunables:
+ *   - particleCount   how many particles — default 12. Bump to 16+
+ *                     for showcase tiles.
+ *   - className       merged with the green button styling.
+ *   - variant         'primary' (green) or any future override.
+ */
+function MagnetizeButton({
+  className,
+  particleCount = 12,
+  attractRadius = 50,
+  prefix,
+  children,
+  variant = "primary",
+  ...props
+}) {
   const [isAttracting, setIsAttracting] = useState(false);
   const [particles, setParticles] = useState([]);
   const particlesControl = useAnimation();
@@ -39,14 +66,19 @@ function MagnetizeButton({ className, particleCount = 12, attractRadius = 50, ch
     }));
   }, [particlesControl, particles]);
 
+  const variantStyles = {
+    primary: "bg-[#00FF94] hover:bg-[#00FF94]/90 text-black",
+    ghost:   "bg-white/10 hover:bg-white/20 text-white",
+  }[variant] || "bg-[#00FF94] hover:bg-[#00FF94]/90 text-black";
+
   return (
     <Button
       className={cn(
-        "min-w-40 relative touch-none",
-        "bg-[#00FF94] hover:bg-[#00FF94]/90",
-        "text-black font-bold uppercase tracking-widest",
+        "relative touch-none",
+        "font-bold uppercase tracking-widest",
         "border-none",
         "transition-all duration-300",
+        variantStyles,
         className
       )}
       onMouseEnter={handleInteractionStart}
@@ -70,7 +102,11 @@ function MagnetizeButton({ className, particleCount = 12, attractRadius = 50, ch
         />
       ))}
       <span className="relative w-full flex items-center justify-center gap-2">
-        <Wallet className={cn("w-4 h-4 transition-transform duration-300", isAttracting && "scale-110")} />
+        {prefix !== undefined ? (
+          prefix
+        ) : (
+          <Wallet className={cn("w-4 h-4 transition-transform duration-300", isAttracting && "scale-110")} />
+        )}
         {children || (isAttracting ? "Connecting..." : "Connect")}
       </span>
     </Button>

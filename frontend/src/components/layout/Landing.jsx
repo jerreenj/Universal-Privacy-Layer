@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { ChevronDown, Check } from "lucide-react";
 import { CHAINS, VM, VM_GROUPS, LIVE_COUNT } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -11,24 +11,33 @@ import {
 /**
  * Landing page (no wallet connected).
  *
- * The Connect Wallet button opens a wallet-family picker so the
- * customer always sees their options. Previously this dispatched to
- * the current chain's wallet — disconnecting on Solana then clicking
- * Connect immediately re-fired Phantom.
+ * The connect experience used to be a single MagnetizeButton that
+ * opened a wallet-family picker dropdown. The pilot asked for the
+ * same gorgeous magnet-particle effect on the OTHER wallets too
+ * (MetaMask, Rabby, Sui), not just Phantom — and didn't want a
+ * dropdown selector in front of it.
  *
- * UI rules:
- *   - Green MagnetizeButton (the "magnetic" particle effect the
- *     pilot picked) — only ONE wallet icon shows (the internal one
- *     MagnetizeButton renders).
- *   - Dropdown header is just "Pick the wallet" — no subtitle.
- *   - Each row uses the wallet's real brand logo (downloaded SVGs
- *     from /public/wallets/).
- *   - "Detected" badge only shows for wallets actually installed.
- *   - Clicking a wallet routes to its SPECIFIC provider — MetaMask
- *     uses the isMetaMask provider (not the general ethereum),
- *     Rabby uses the isRabby provider; Phantom connect uses
- *     onlyIfTrusted:false so the user sees a fresh sign prompt
- *     rather than a silent cached reconnect.
+ * New layout:
+ *   - Top-right stack of FOUR green MagnetizeButton tiles, one per
+ *     wallet family. Each tile uses the wallet's real brand logo
+ *     (prefix slot — the default Wallet icon is hidden so the
+ *     brand shows through) and the wallet name as the label.
+ *   - On hover the magnet particles fly inward toward the cursor /
+ *     touch point — the 'gorgeous' magnet-up-and-down effect the
+ *     pilot liked.
+ *   - Click → connect that specific wallet directly: MetaMask /
+ *     Rabby auto-switch MetaMask to Base chain + popup sign UI;
+ *     Phantom forces a connect popup with onlyIfTrusted:false;
+ *     Sui Wallet family calls requestPermissions() on the
+ *     detected wallet.
+ *   - Wallets not installed are dimmed and disabled. No silent
+ *     dead click — clicking pulls a clear toast instead.
+ *   - "Detected" / "Not installed" chip on every row so the
+ *     customer can see what their browser actually has at a
+ *     glance.
+ *
+ * No other part of the Landing was touched — globe, stats grid,
+ * chains strip, terms links all unchanged.
  */
 export function Landing() {
   const {
@@ -36,34 +45,13 @@ export function Landing() {
     connectEVM, connectRabby, connectSolana, connectSui,
   } = useWallet();
   const [showChains, setShowChains] = useState(false);
-  const [walletMenuOpen, setWalletMenuOpen] = useState(false);
-  const walletMenuRef = useRef(null);
-
-  useEffect(() => {
-    if (!walletMenuOpen) return;
-    const onDocClick = (e) => {
-      if (walletMenuRef.current && !walletMenuRef.current.contains(e.target)) {
-        setWalletMenuOpen(false);
-      }
-    };
-    const onEsc = (e) => { if (e.key === "Escape") setWalletMenuOpen(false); };
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onEsc);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onEsc);
-    };
-  }, [walletMenuOpen]);
 
   const vmGroups = Object.entries(VM_GROUPS).map(([vmKey, info]) => ({
     vmKey, ...info,
     chains: Object.entries(CHAINS).filter(([, v]) => v.vm === vmKey),
   }));
 
-  // Human-readable names for any Sui wallet we detected. The user
-  // has 12+ different Sui extensions, and "Suiet" or "Martian" is
-  // more useful feedback than a generic "Sui Wallet" — they can
-  // confirm at a glance their installed wallet is the one we see.
+  // Human-readable label for the detected Sui wallet variant.
   const SUI_DISPLAY_NAMES = {
     suiWallet:    "Sui Wallet",
     suiet:        "Suiet",
@@ -84,11 +72,8 @@ export function Landing() {
     ? (SUI_DISPLAY_NAMES[availableWallets.suiName] || availableWallets.suiName)
     : null;
 
-  // 4 wallet options the customer can pick. Detection is per-wallet
-  // so a MetaMask-only user sees MetaMask as detected and Rabby as
-  // not installed, and vice versa. Sui detection is intentionally
-  // generous — any of ~12 Sui wallet extensions flips the row to
-  // "Detected" with the specific wallet name surfaced.
+  // 4 wallet magnets — visible at once, no dropdown, no selector.
+  // Click any → connect that family directly.
   const walletOptions = [
     {
       key: "metamask",
@@ -122,7 +107,7 @@ export function Landing() {
 
   return (
     <div className="min-h-screen relative bg-black overflow-hidden">
-      <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-3 sm:px-4 md:px-6 py-3 bg-black/80 backdrop-blur-sm">
+      <div className="fixed top-0 left-0 right-0 z-50 flex items-start justify-between px-3 sm:px-4 md:px-6 py-3 bg-black/80 backdrop-blur-sm">
         <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border border-white/20 text-[10px] sm:text-xs cursor-pointer hover:border-white/40 transition-all"
           onClick={() => setShowChains(!showChains)} data-testid="live-chain-badge">
           <div className="w-1.5 sm:w-2 h-1.5 sm:h-2 rounded-full bg-green-400 animate-pulse" />
@@ -130,65 +115,39 @@ export function Landing() {
           <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${showChains ? "rotate-180" : ""}`} />
         </div>
 
-        {/* MagnetizeButton — green particle button the pilot picked.
-            It already renders a single wallet icon internally so we
-            do NOT add another. Click opens the family picker; the
-            Magnetize magnet-particle effect stays visible under the
-            floating dropdown so the trigger keeps its identity. */}
-        <div className="relative" ref={walletMenuRef}>
-          <MagnetizeButton
-            onClick={() => setWalletMenuOpen((o) => !o)}
-            disabled={connecting}
-            particleCount={14}
-            className="px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm"
-            data-testid="connect-wallet-button"
-          >
-            {connecting ? "Connecting…" : "Connect Wallet"}
-          </MagnetizeButton>
-
-          {walletMenuOpen && (
-            <div
-              role="listbox"
-              data-testid="wallet-family-picker"
-              className="absolute top-full right-0 mt-2 z-50 bg-black/95 backdrop-blur-md border border-white/20 min-w-[280px] sm:min-w-[320px] shadow-2xl"
-            >
-              <div className="px-4 py-3 border-b border-white/10">
-                <div className="text-xs uppercase tracking-wider text-white font-semibold">
-                  Pick the wallet
-                </div>
-              </div>
-              {walletOptions.map((opt) => (
-                <button
-                  key={opt.key}
-                  onClick={() => {
-                    if (!opt.installed || connecting) return;
-                    setWalletMenuOpen(false);
-                    opt.onClick?.();
-                  }}
-                  disabled={!opt.installed || connecting}
-                  data-wallet-key={opt.key}
-                  data-wallet-installed={opt.installed ? "true" : "false"}
-                  className={`w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/10 transition-colors border-b border-white/10 last:border-b-0 ${
-                    !opt.installed ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
-                  }`}
-                >
-                  <opt.Logo size={28} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-white">{opt.label}</div>
-                  </div>
-                  {opt.installed ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-green-400">
-                      <Check className="w-3 h-3" /> Detected
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-white/30">
-                      Not installed
-                    </span>
-                  )}
-                </button>
-              ))}
+        {/* 4 wallet magnets stacked vertically in the top-right.
+            NO dropdown — every wallet has its own directly-clickable
+            tile, all beautiful magnet particles, none hidden behind
+            a selector. */}
+        <div className="flex flex-col gap-2">
+          {walletOptions.map((opt) => (
+            <div key={opt.key} className="relative">
+              <MagnetizeButton
+                onClick={() => {
+                  if (!opt.installed || connecting) return;
+                  opt.onClick?.();
+                }}
+                disabled={!opt.installed || connecting}
+                particleCount={10}
+                prefix={<opt.Logo size={20} />}
+                data-testid={`connect-${opt.key}`}
+                className={`
+                  px-3 sm:px-4 py-1.5 sm:py-2 text-[10px] sm:text-xs
+                  min-w-[180px] sm:min-w-[210px]
+                  ${opt.installed ? "" : "opacity-40 cursor-not-allowed"}
+                `}
+              >
+                {connecting ? "Connecting…" : opt.label}
+              </MagnetizeButton>
+              <span
+                className={`absolute -bottom-1 right-1.5 text-[8px] sm:text-[9px] uppercase tracking-wider ${
+                  opt.installed ? "text-white/70" : "text-white/30"
+                }`}
+              >
+                {opt.installed ? "Detected" : "Not installed"}
+              </span>
             </div>
-          )}
+          ))}
         </div>
       </div>
 
@@ -236,7 +195,7 @@ export function Landing() {
           {[["100%", "Private"], [LIVE_COUNT.toString(), "Chains"], ["10", "Pillars"]].map(([val, lbl]) => (
             <div key={lbl} className="text-center">
               <span className="block text-lg sm:text-xl md:text-2xl font-bold text-white">{val}</span>
-              <span className="text-[9px] sm:text-[10px] sm:text-xs text-white/40 uppercase tracking-wider">{lbl}</span>
+              <span className="text-[9px] sm:text-[10px] text-white/40 uppercase tracking-wider">{lbl}</span>
             </div>
           ))}
         </div>
