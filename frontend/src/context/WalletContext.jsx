@@ -286,30 +286,63 @@ export function WalletProvider({ children }) {
     setUsdcBalance(null);
     setHiddenBalance(null);
 
-    const suiWallet = window.suiWallet ?? window.sui;
-    if (!suiWallet) {
-      toast.error("Sui Wallet not detected. Install the Sui browser extension to connect.");
+    // Find ANY Sui wallet on the page. The probe list covers the
+    // dozen-or-so Sui extensions currently shipping, so pilots with
+    // Suiet/Martian/Ethos/Nightly/Surf/Fewcha/Glass/Trust/ABC etc.
+    // get a working gesture.
+    const found = detectAnySuiWallet();
+    if (!found) {
+      toast.error(
+        "No Sui wallet detected. Install a Sui browser extension " +
+        "(Sui Wallet, Suiet, Martian, Ethos, Nightly, Surf, Fewcha, " +
+        "Glass, Trust, or ABC Wallet)."
+      );
       return;
     }
     setConnecting(true);
     let connectedAddress = null;
+    // We try the wallet's connection methods IN ORDER:
+    //   1) requestPermissions() if it exists — surfaces the popup
+    //   2) connect()           if it exists — surfaces the popup in
+    //      some wallets (Mist-en / Wallet Standard adapters)
+    //   3) getAccounts()       to discover the address — this is the
+    //      canonical read for Sui once permission is granted.
+    // If the wallet already has us authorized, requestPermissions()
+    // is a no-op (no popup pops) — that's fine; we proceed to read
+    // the address and connect the dashboard.
     try {
-      // requestPermissions always triggers the wallet popup if it
-      // hasn't yet authorized this dApp. If it HAS authorized us,
-      // the popup is skipped (cached consent). Either way, the user
-      // had to click Connect in our picker to get here.
-      await suiWallet.requestPermissions();
-      const accounts = await suiWallet.getAccounts();
+      const api = found.api;
+      if (typeof api.requestPermissions === "function") {
+        await api.requestPermissions();
+      } else if (typeof api.connect === "function") {
+        await api.connect();
+      }
+      // Read the active address. Different wallets expose accounts
+      // under different keys, so we try a handful.
+      let accounts = null;
+      if (typeof api.getAccounts === "function") {
+        accounts = await api.getAccounts();
+      } else if (typeof api.getAccount === "function") {
+        accounts = [await api.getAccount()];
+      } else if (typeof api.accounts === "function") {
+        accounts = await api.accounts();
+      } else if (Array.isArray(api.accounts)) {
+        accounts = api.accounts;
+      }
       if (!accounts || accounts.length === 0) throw new Error("No accounts exposed");
-      setAddress(accounts[0]);
-      setSigner(suiWallet);
-      connectedAddress = accounts[0];
+      const a0 = accounts[0];
+      // Some wallets return a string, others a { address } object.
+      const addr = typeof a0 === "string" ? a0 : (a0?.address ?? a0?.toString?.() ?? null);
+      if (!addr) throw new Error("Sui wallet returned no address");
+      setAddress(addr);
+      setSigner(api);
+      connectedAddress = addr;
     } catch (e) {
       if (!connectedAddress) {
         if (e?.code === 4001 || /user rejected|cancelled/i.test(String(e?.message || ""))) {
           // silent — user dismissed the popup
         } else {
-          toast.error("Sui Wallet connection failed");
+          toast.error(`Sui wallet (${found.key}) connection failed`);
           console.warn("Sui connect threw:", e);
         }
       } else {
@@ -317,7 +350,7 @@ export function WalletProvider({ children }) {
       }
     }
     setConnecting(false);
-  }, []);
+  }, [detectAnySuiWallet]);
 
   // connectWallet dispatches to the right family based on the
   // currently-selected chain. The Landing page now also exposes the
@@ -334,43 +367,119 @@ export function WalletProvider({ children }) {
   // the chain-switch + balance-reset prologue.
   const connectRabby = connectRabbyFn;
 
-  // Detected wallets — surfaced to the Landing page so the wallet-
-  // picker only shows options that are actually installed. Refreshed
-  // on mount and on visibility change so an extension installed while
-  // the tab was backgrounded appears immediately on next open.
+  // ──────────────────────────────────────────────────────────────────
+  // Generous Sui-wallet detection — any of the major wallet extensions
+  // the Sui dApp Kit and Wallet Standard recognize. We probe a list
+  // of injection points the wallets use to publish themselves on
+  // window. The first one that's a real object with a connection
+  // method is our wallet.
   //
-  // EVM detection is split per-wallet because the user's browser can
-  // only have ONE active EIP-1193 provider at a time (modern wallets
-  // announce themselves via the `is<Wallet>` flag on
-  // window.ethereum). MetaMask and Rabby both inject as
-  // window.ethereum but they tag their provider so we can tell which
-  // is the active one. We do NOT mark both as "Detected" when only
-  // one is installed — each wallet is independently marked.
+  // Each candidate is a known property name on window. Older wallets
+  // used a single property (window.suiWallet, window.suiet); newer
+  // ones follow the Wallet Standard and don't inject anything —
+  // announcing themselves via events. We handle both by checking the
+  // legacy injections here. If your wallet isn't on this list, an
+  // extension PR is one line away.
+  const SUI_WALLET_PROBES = [
+    // Mysten Labs' official Sui Wallet (the canonical web wallet).
+    "suiWallet",
+    // Suiet — popular Chinese-developed Sui extension.
+    "suiet",
+    // Martian — early Sui wallet, still installed by some users.
+    "martian",
+    // Ethos (alternate name history).
+    "ethos",
+    "ethosWallet",
+    // Nightly — multi-chain wallet with Sui support.
+    "nightly",
+    // Surf — Sui-native DEX wallet.
+    "surfWallet",
+    // Fewcha — early Sui extension, still around.
+    "fewcha",
+    // Glass — Bware Labs' Sui extension.
+    "glassWallet",
+    // Trust (Bifrost) — multi-chain wallet with Sui support.
+    "trustWallet",
+    "bistowWallet",
+    // ABC Wallet / Slush (rebrand) — newer Sui-first wallets.
+    "abcWallet",
+    "slushWallet",
+    // Legacy single injection — Mysten Labs pre-Wallet-Standard.
+    "sui",
+  ];
+
+  /**
+   * detectAnySuiWallet() →
+   *   { key, api } | null
+   *
+   * Returns the first viable Sui wallet from the probe list. `key`
+   * is the property name so the toast can name it ("Suiet detected",
+   * "Phantom-like: Sui Wallet", etc.). `api` is the window property
+   * itself — the object whose methods we call to authenticate.
+   */
+  const detectAnySuiWallet = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    for (const key of SUI_WALLET_PROBES) {
+      const api = window[key];
+      if (!api) continue;
+      // The object might be injected but not yet fully loaded (rare
+      // race during extension boot). We check for at least one of the
+      // known connection methods so a stub doesn't sneak through.
+      if (
+        typeof api === "object" &&
+        (typeof api.requestPermissions === "function" ||
+          typeof api.connect === "function" ||
+          typeof api.hasPermissions === "function")
+      ) {
+        return { key, api };
+      }
+    }
+    return null;
+  }, []);
+
+  /**
+   * Detected wallets — surfaced to the Landing page so the wallet-
+   * picker only shows options that are actually installed. Refreshed
+   * on mount and on visibility change so an extension installed
+   * while the tab was backgrounded appears immediately on next open.
+   *
+   * EVM detection is split per-wallet because the user's browser can
+   * only have ONE active EIP-1193 provider at a time (modern wallets
+   * announce themselves via the `is<Wallet>` flag on
+   * window.ethereum). For Sui detection is intentionally GENEROUS —
+   * any of ~12 known Sui wallet injections flips the picker to
+   * "Detected", since the user just wants to sign in with whatever
+   * wallet they happen to have installed.
+   */
   const [availableWallets, setAvailableWallets] = useState({
-    metamask: false, phantom: false, sui: false, rabby: false,
+    metamask: false, phantom: false, sui: false, suiName: null, rabby: false,
   });
   const detectWallets = useCallback(() => {
     if (typeof window === "undefined") {
       setAvailableWallets({
-        metamask: false, phantom: false, sui: false, rabby: false,
+        metamask: false, phantom: false, sui: false, suiName: null, rabby: false,
       });
       return;
     }
     const e = window.ethereum;
+    const suiFound = detectAnySuiWallet();
     setAvailableWallets({
-      // MetaMask tags its provider. Some forks (e.g. MetaMask Flask) only
-      // set isMetaMask on the active provider.
+      // MetaMask tags its provider. Some forks (e.g. MetaMask Flask)
+      // only set isMetaMask on the active provider.
       metamask: !!(e && (e.isMetaMask || (Array.isArray(e.providers) &&
         e.providers.some(p => p?.isMetaMask)))),
-      // Rabby tags itself similarly. Newer builds inject a `providers`
-      // array on window.ethereum so an EIP-6963 multi-injector can
-      // pick a specific one.
+      // Rabby tags itself similarly. EIP-6963 multi-injector puts
+      // every wallet on `providers` so we can pick the right one.
       rabby: !!(e && (e.isRabby || (Array.isArray(e.providers) &&
         e.providers.some(p => p?.isRabby)))),
       phantom: !!(window.phantom?.solana ?? window.solana?.isPhantom),
-      sui:     !!(window.suiWallet ?? window.sui),
+      // Any Sui wallet (suiet, martian, ethos, nightly, surf, fewcha,
+      // glass, trust/abc/slush, suiWallet, sui). The label is the
+      // first probe that hits.
+      sui:     !!suiFound,
+      suiName: suiFound ? suiFound.key : null,
     });
-  }, []);
+  }, [detectAnySuiWallet]);
   useEffect(() => {
     detectWallets();
     const onVis = () => { if (document.visibilityState === "visible") detectWallets(); };

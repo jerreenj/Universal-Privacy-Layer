@@ -60,10 +60,35 @@ export function Landing() {
     chains: Object.entries(CHAINS).filter(([, v]) => v.vm === vmKey),
   }));
 
+  // Human-readable names for any Sui wallet we detected. The user
+  // has 12+ different Sui extensions, and "Suiet" or "Martian" is
+  // more useful feedback than a generic "Sui Wallet" — they can
+  // confirm at a glance their installed wallet is the one we see.
+  const SUI_DISPLAY_NAMES = {
+    suiWallet:    "Sui Wallet",
+    suiet:        "Suiet",
+    martian:      "Martian",
+    ethos:        "Ethos",
+    ethosWallet:  "Ethos",
+    nightly:      "Nightly",
+    surfWallet:   "Surf",
+    fewcha:       "Fewcha",
+    glassWallet:  "Glass",
+    trustWallet:  "Trust",
+    bistowWallet: "Trust",
+    abcWallet:    "ABC Wallet",
+    slushWallet:  "Slush",
+    sui:          "Sui Wallet",
+  };
+  const detectedSuiLabel = availableWallets?.suiName
+    ? (SUI_DISPLAY_NAMES[availableWallets.suiName] || availableWallets.suiName)
+    : null;
+
   // 4 wallet options the customer can pick. Detection is per-wallet
-  // (NOT just "is there an EVM provider?") so a MetaMask-only user
-  // sees MetaMask as detected and Rabby as not installed, and vice
-  // versa — the user is never forced into a wallet they don't have.
+  // so a MetaMask-only user sees MetaMask as detected and Rabby as
+  // not installed, and vice versa. Sui detection is intentionally
+  // generous — any of ~12 Sui wallet extensions flips the row to
+  // "Detected" with the specific wallet name surfaced.
   const walletOptions = [
     {
       key: "metamask",
@@ -88,7 +113,7 @@ export function Landing() {
     },
     {
       key: "sui",
-      label: "Sui Wallet",
+      label: detectedSuiLabel ? `Sui (${detectedSuiLabel})` : "Sui Wallet",
       installed: !!availableWallets?.sui,
       onClick: connectSui,
       Logo: SuiLogo,
