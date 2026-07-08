@@ -160,16 +160,13 @@ export function Dashboard() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    // Restore the customer's last-picked primary token from localStorage.
-    // Per-wallet so a fresh MetaMask account starts on the USDC default
-    // and doesn't inherit some other pilot customer's pref.
-    if (address) {
-      try {
-        const saved = localStorage.getItem(`upl:focused-token:${address.toLowerCase()}`);
-        if (saved === "usdc" || saved === "native") setFocusedToken(saved);
-      } catch {}
-    }
-    // Take over scroll management from the browser.
+    // ALWAYS start on USDC. We deliberately do NOT read a stale
+    // localStorage preference — the pilot asked for USDC primary by
+    // default every time they connect. If they explicitly pick ETH
+    // via the dropdown during the session, that's saved for THIS
+    // session only via the click handlers below — and the next
+    // account they connect starts fresh on USDC.
+    if (address) setFocusedToken("usdc");
   }, [address]);
 
   // Close the token-picker dropdown on outside click so it doesn't
@@ -282,53 +279,115 @@ export function Dashboard() {
       <Navbar />
       <div className="pt-20 md:pt-24 pb-12 md:pb-16 px-4 md:px-6">
         <div className="max-w-4xl mx-auto">
-          {/* Balance card */}
+          {/* Balance card ---------------------------------------------------------
+              Layout: the BIG number is the primary token (USDC by default).
+              The chosen-token name sits directly under it with a chevron that
+              opens the dropdown — no separate "Balance on Chain" header text
+              that distracts from the token. The chain name rides along beside
+              the token ("USDC on Base") so the customer knows where the funds
+              live without losing focus on the token itself.
+          */}
           <div className="bg-white/5 border border-white/10 p-5 md:p-8 mb-6">
-            <div className="flex items-center justify-between mb-3">
-              <div className="relative" ref={tokenMenuRef}>
-                {/* Token-picker dropdown — same UX for both choices, USDC
-                   promoted as the default primary. The customer taps the
-                   token chip on the big-number row OR the chip in the
-                   subtitle row to make that token primary. */}
-                <button
-                  onClick={() => setTokenMenuOpen((o) => !o)}
-                  className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider text-white/50 hover:text-white transition-colors"
-                  aria-haspopup="listbox"
-                  aria-expanded={tokenMenuOpen}
-                >
-                  Balance on{" "}
-                  <span style={{ color: CHAINS[safeChain].color }}>{CHAINS[safeChain].name}</span>
-                  <ChevronDown className={`w-3 h-3 transition-transform ${tokenMenuOpen ? "rotate-180" : ""}`} />
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] uppercase tracking-wider text-white/40">
+                Wallet balance
+              </span>
+              <div className="flex gap-1">
+                <button onClick={() => setShowBal(!showBal)} className="p-2 hover:bg-white/10" aria-label="Toggle balance visibility">
+                  {showBal ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                 </button>
-                {tokenMenuOpen && (
-                  <div
-                    role="listbox"
-                    className="absolute top-full left-0 mt-2 z-20 bg-black border border-white/20 min-w-[180px] shadow-lg"
-                  >
-                    {[
-                      { key: "usdc",   label: "USDC", sub: "Stablecoin — same on every chain", symbol: "USDC" },
-                      { key: "native", label: CHAINS[safeChain]?.symbol || "Native", sub: "Chain native token", symbol: CHAINS[safeChain]?.symbol || "" },
-                    ].map((opt) => {
-                      const isFocused = focusedToken === opt.key;
-                      const hasBalance =
-                        opt.key === "usdc" ? !!usdcBalance : !!balance;
-                      return (
-                        <button
+                <button onClick={refresh} className="p-2 hover:bg-white/10" aria-label="Refresh balance">
+                  <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* BIG number — the focused token's exact on-chain amount. */}
+            <div className="flex items-end gap-2">
+              <span
+                data-testid="primary-balance-amount"
+                className={`text-4xl md:text-6xl font-bold tracking-tight ${
+                  !showBal ? "text-white/0 select-none" : "text-white"
+                }`}
+                style={!showBal ? {
+                  background: "rgba(255,255,255,0.4)",
+                  WebkitBackgroundClip: "text",
+                  color: "transparent",
+                } : undefined}
+              >
+                {(() => {
+                  if (!showBal) return "••••••";
+                  if (focusedToken === "usdc") {
+                    // Loading state: address set, USDC fetch in-flight.
+                    if (usdcBalance === null && address) return "…";
+                    if (usdcBalance === null) return "—";
+                    return usdcBalance.formatted;
+                  }
+                  // native token
+                  if (balance === null) return "…";
+                  return balance.formatted;
+                })()}
+              </span>
+            </div>
+
+            {/* Token + chain label with dropdown trigger. */}
+            <div className="relative inline-block mt-2" ref={tokenMenuRef}>
+              <button
+                onClick={() => setTokenMenuOpen((o) => !o)}
+                aria-haspopup="listbox"
+                aria-expanded={tokenMenuOpen}
+                data-testid="primary-token-label"
+                className="inline-flex items-center gap-1.5 px-2 py-1 text-base md:text-lg font-semibold text-white hover:bg-white/10 transition-colors"
+              >
+                <span data-testid="primary-token-name">
+                  {focusedToken === "usdc" ? "USDC" : (CHAINS[safeChain]?.symbol || "Native")}
+                </span>
+                <span className="text-white/40 text-sm font-normal" style={{ color: CHAINS[safeChain].color }}>
+                  on {CHAINS[safeChain]?.name}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-white/60 transition-transform ${tokenMenuOpen ? "rotate-180" : ""}`} />
+                <span className="ml-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-blue-500/15 border border-blue-400/30 text-blue-300">
+                  Primary
+                </span>
+              </button>
+
+              {tokenMenuOpen && (
+                <div
+                  role="listbox"
+                  className="absolute top-full left-0 mt-2 z-20 bg-black border border-white/20 min-w-[260px] shadow-2xl"
+                >
+                  {[
+                    {
+                      key: "usdc",
+                      label: "USDC",
+                      sub: "Stablecoin — same contract on every supported chain",
+                      symbol: "USDC",
+                      available: !!usdcBalance && usdcBalance.formatted !== "—",
+                    },
+                    {
+                      key: "native",
+                      label: CHAINS[safeChain]?.symbol || "Native",
+                      sub: `Chain native token (${CHAINS[safeChain]?.name || "—"})`,
+                      symbol: CHAINS[safeChain]?.symbol || "",
+                      available: !!balance,
+                    },
+                  ].map((opt) => {
+                    const isFocused = focusedToken === opt.key;
+                    return (
+                      <button
                           key={opt.key}
                           role="option"
                           aria-selected={isFocused}
-                          disabled={!hasBalance}
+                          disabled={!opt.available}
                           onClick={() => {
+                            // Session-only preference. Next connect
+                            // (new account or page reload) starts on
+                            // USDC again — pilot asked for USDC-by-
+                            // default every time.
                             setFocusedToken(opt.key);
-                            try {
-                              if (address) localStorage.setItem(
-                                `upl:focused-token:${address.toLowerCase()}`,
-                                opt.key
-                              );
-                            } catch {}
                             setTokenMenuOpen(false);
                           }}
-                          className={`w-full text-left px-3 py-2 flex items-center justify-between text-xs hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent ${
+                          className={`w-full text-left px-3 py-2.5 flex items-center justify-between text-xs hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent border-b border-white/5 last:border-b-0 ${
                             isFocused ? "bg-white/5" : ""
                           }`}
                         >
@@ -344,32 +403,14 @@ export function Dashboard() {
                             </span>
                           )}
                         </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-1">
-                <button onClick={() => setShowBal(!showBal)} className="p-2 hover:bg-white/10">
-                  {showBal ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                </button>
-                <button onClick={refresh} className="p-2 hover:bg-white/10">
-                  <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-                </button>
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
+
+            {/* Other-token subtitle — clickable to flip primary in one tap. */}
             {(() => {
-              // Compose focused + other balances. The big number is the
-              // focused token; the small chip under it is the other
-              // token, clickable to switch focus. The "★ Primary" badge
-              // moves with focus — never a static label so it's always
-              // true.
-              const focused = focusedToken === "usdc"
-                ? (usdcBalance ? usdcBalance.formatted : null)
-                : (balance ? balance.formatted : null);
-              const focusedSymbol = focusedToken === "usdc"
-                ? "USDC"
-                : (CHAINS[safeChain]?.symbol || "");
               const other = focusedToken === "usdc"
                 ? (balance ? balance.formatted : null)
                 : (usdcBalance ? usdcBalance.formatted : null);
@@ -377,40 +418,25 @@ export function Dashboard() {
                 ? (CHAINS[safeChain]?.symbol || "")
                 : "USDC";
               const otherKey = focusedToken === "usdc" ? "native" : "usdc";
+              if (other === null) return null;
               return (
-                <>
-                  <div className="flex items-end gap-2">
-                    <span className="text-3xl md:text-5xl font-bold">
-                      {showBal ? (focused || "••••••") : "••••••"}
-                    </span>
-                    <span className="text-gray-500 mb-1">{focusedSymbol}</span>
-                  </div>
-                  {(other !== null) && (
-                    <div className="flex items-center gap-2 text-xs text-white/40 mt-1">
-                      <button
-                        onClick={() => {
-                          setFocusedToken(otherKey);
-                          try {
-                            if (address) localStorage.setItem(
-                              `upl:focused-token:${address.toLowerCase()}`,
-                              otherKey
-                            );
-                          } catch {}
-                        }}
-                        className="inline-flex items-center gap-1.5 hover:text-white transition-colors"
-                        title={`Switch primary to ${otherSymbol}`}
-                      >
-                        <span className="text-white/30">+</span>
-                        <span className="font-mono">{other}</span>
-                        <span>{otherSymbol}</span>
-                        <span className="text-white/30">· native</span>
-                        <ChevronDown className="w-3 h-3 text-white/30" />
-                      </button>
-                    </div>
-                  )}
-                </>
+                <div className="flex items-center gap-2 text-xs text-white/40 mt-3 pt-3 border-t border-white/10">
+                  <span className="text-white/30">+</span>
+                  <button
+                    onClick={() => setFocusedToken(otherKey)}
+                    title={`Switch primary to ${otherSymbol}`}
+                    data-testid="alternate-token-chip"
+                    className="inline-flex items-center gap-1.5 hover:text-white transition-colors"
+                  >
+                    <span className="font-mono">{other}</span>
+                    <span>{otherSymbol}</span>
+                    <ChevronDown className="w-3 h-3 text-white/30" />
+                  </button>
+                  <span className="text-white/20 ml-auto">tap to make this primary</span>
+                </div>
               );
             })()}
+
             {hiddenBalance && (
               <div className="mt-4 pt-4 border-t border-white/10">
                 <div className="flex items-center justify-between">
