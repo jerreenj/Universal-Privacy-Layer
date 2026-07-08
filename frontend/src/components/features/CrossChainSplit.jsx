@@ -109,23 +109,52 @@ export function CrossChainSplit() {
     setExecuting(true);
     setCurrentExecIdx(idx);
     try {
-      await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainConfig.chainId }] });
-      const txResponse = await signer.sendTransaction({ to: tx.stealth_address, value: ethers.parseEther(tx.amount.replace(" ETH", "").replace(" " + chainConfig.symbol, "")) });
+      // ── RELAYER FLOW ──────────────────────────────────────────
+      // Routes through the on-chain PrivacyRelayer so the customer's
+      // EOA never appears as msg.sender on any chain. Each split is
+      // an independent relay+announce call on the target chain.
+      const amountNum = tx.amount.replace(" ETH", "").replace(" " + chainConfig.symbol, "");
+      const amountWei = ethers.parseEther(amountNum);
+      const ephemeralKey = "0x" + Array(64).fill(0).map(() =>
+        Math.floor(Math.random() * 16).toString(16)
+      ).join('');
+      const viewTag = Math.floor(Math.random() * 256);
+
+      const prepRes = await axios.post(`${API}/relayer/prepare-tx`, {
+        from_address: address,
+        stealth_address: tx.stealth_address,
+        amount_wei: amountWei.toString(),
+        ephemeral_key: ephemeralKey,
+        view_tag: viewTag,
+        chain: tx.chain,
+      });
+
+      const { domain, types, message } = prepRes.data.intent;
+      const signature = await signer.signTypedData(domain, types, message);
+
+      const submitRes = await axios.post(`${API}/relayer/submit`, {
+        intent: prepRes.data.intent,
+        signature,
+        from_address: address,
+        chain: tx.chain,
+      });
+
+      const relayTxHash = submitRes.data.relay_tx_hash || submitRes.data.tx_hash || "";
       const newSplits = [...splits];
       newSplits[idx].status = "confirming";
-      newSplits[idx].txHash = txResponse.hash;
+      newSplits[idx].txHash = relayTxHash;
       setSplits(newSplits);
-      toast.success(`Transaction sent on ${chainConfig.name}!`);
-      await txResponse.wait();
+      toast.success(`Transaction relayed on ${chainConfig.name}!`);
       newSplits[idx].status = "confirmed";
       setSplits([...newSplits]);
-      await axios.post(`${API}/split/update-status`, { split_id: splitPlan.split_id, chain: tx.chain, status: "confirmed", tx_hash: txResponse.hash });
+      await axios.post(`${API}/split/update-status`, { split_id: splitPlan.split_id, chain: tx.chain, status: "confirmed", tx_hash: relayTxHash });
       toast.success(`${chainConfig.name} split confirmed!`);
     } catch (e) {
       const newSplits = [...splits];
       newSplits[idx].status = "failed";
       setSplits(newSplits);
-      toast.error(e.message || "Transaction failed");
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message || "Transaction failed";
+      toast.error(msg);
     }
     setExecuting(false);
     setCurrentExecIdx(-1);

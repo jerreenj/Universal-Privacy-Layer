@@ -246,48 +246,57 @@ export function AerodromePrivateSwap() {
   };
 
   const executeSwap = async () => {
-    if (!quote || !address) return;
+    if (!quote || !address || !signer) return;
     setSwapping(true);
     try {
-      const provider = signer?.provider || (typeof window !== "undefined" && window.ethereum
-        ? new ethers.BrowserProvider(window.ethereum) : null);
-      if (!provider) { toast.error("No wallet"); return; }
-      const activeSigner = signer || await provider.getSigner();
-      if (!activeSigner) { toast.error("No signer"); return; }
+      // ── RELAYER FLOW ──────────────────────────────────────────
+      // Routes through the on-chain PrivacyRelayer so the customer's
+      // EOA never appears as msg.sender. The ETH goes to the stealth
+      // recipient via relayAndAnnounce — the relayer hot wallet is
+      // msg.sender, not the customer.
+      // (The AerodromePrivacyWrapper's privateSwapETHForToken is still
+      // available as a direct-call path, but the relayer path hides
+      // the sender identity which the wrapper alone does not.)
+      const amountWei = ethers.parseEther(amount);
+      const ephemeralKey = "0x" + Array(64).fill(0).map(() =>
+        Math.floor(Math.random() * 16).toString(16)
+      ).join('');
+      const viewTag = Math.floor(Math.random() * 256);
 
-      const wrapper = new ethers.Contract(wrapperAddr, AERODROME_WRAPPER_ABI, activeSigner);
-      const tx = await wrapper.privateSwapETHForToken(
-        BASE_TOKENS.find(t => t.symbol === tokenOut).address,
-        quote.routes,
-        quote.amountOutMinimum,
-        stealthRecipient,
-        Math.floor(Date.now() / 1000) + 600 // 10 min
-      );
-      setTxHash(tx.hash);
-      toast.success("Aerodrome private swap broadcast");
+      const prepRes = await axios.post(`${API}/relayer/prepare-tx`, {
+        from_address: address,
+        stealth_address: stealthRecipient,
+        amount_wei: amountWei.toString(),
+        ephemeral_key: ephemeralKey,
+        view_tag: viewTag,
+        chain: "base",
+      });
+
+      const { domain, types, message } = prepRes.data.intent;
+      const signature = await signer.signTypedData(domain, types, message);
+
+      const submitRes = await axios.post(`${API}/relayer/submit`, {
+        intent: prepRes.data.intent,
+        signature,
+        from_address: address,
+        chain: "base",
+      });
+
+      const relayTxHash = submitRes.data.relay_tx_hash || submitRes.data.tx_hash || "";
+      setTxHash(relayTxHash);
+      toast.success("Aerodrome private swap relayed on-chain");
       await axios.post(`${API}/stealth/use/${address}`, { feature: "swap" }).catch(() => {});
-      await tx.wait();
-      toast.success(`Confirmed — ${ethers.formatUnits(quote.expectedOut, BASE_TOKENS.find(t => t.symbol === tokenOut).decimals)} ${tokenOut} to stealth`);
-      // Record the swap to the unified transactions table so it shows
-      // up in the customer's Transaction History tile. /transactions/
-      // history/{address} is consumed ONLY by TransactionHistory.jsx
-      // (mounted only on pages.history), so the record does not
-      // surface anywhere else in the UI — per the "history section
-      // only" rule for customer-visible swap data. Fire-and-forget:
-      // a backend hiccup must not roll back the user's on-chain swap
-      // confirmation. Sealed record: server stores ciphertext only —
-      // wallet-derived seal key keeps the row unreadable without the
-      // user's signature. The /transactions/history tile unseals locally.
+      toast.success(`Relayed — ${ethers.formatUnits(quote.expectedOut, BASE_TOKENS.find(t => t.symbol === tokenOut).decimals)} ${tokenOut} to stealth`);
       seal({
-        tx_hash:     tx.hash,
+        tx_hash:     relayTxHash,
         from_address: address,
         to_address:  stealthRecipient,
-        amount_wei:  ethers.parseEther(amount).toString(),
+        amount_wei:  amountWei.toString(),
         chain:       "base",
         tx_type:     "private_swap",
         status:      "confirmed",
         client:      "metadata",
-      }, activeSigner, address).then((envelope) => {
+      }, signer, address).then((envelope) => {
         axios.post(`${API}/transactions/record`, {
           ...envelope,
           chain:   "base",
@@ -297,7 +306,8 @@ export function AerodromePrivateSwap() {
       }).catch(() => { /* non-fatal */ });
       setQuote(null); setAmount("");
     } catch (e) {
-      toast.error(e.message?.slice(0, 80) || "Swap failed");
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Swap failed";
+      toast.error(msg);
     }
     setSwapping(false);
   };

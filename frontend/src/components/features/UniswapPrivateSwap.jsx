@@ -42,20 +42,49 @@ export function UniswapPrivateSwap() {
   };
 
   const executeSwap = async () => {
-    if (!quote || !address) return;
+    if (!quote || !address || !signer) return;
     setSwapping(true);
     try {
-      const provider = signer?.provider || (window.ethereum ? new ethers.BrowserProvider(window.ethereum) : null);
-      const activeSigner = signer || (provider ? await provider.getSigner() : null);
-      if (!activeSigner) { toast.error("No wallet connected"); return; }
-      const tx = await activeSigner.sendTransaction({ to: stealthRecipient, value: ethers.parseEther(amount) });
-      setTxHash(tx.hash);
-      await axios.post(`${API}/uniswap/record-swap`, { tx_hash: tx.hash, from_address: address, token_in: tokenIn, token_out: tokenOut, amount_in: amount, amount_out: quote.amount_out_human, chain, stealth_recipient: stealthRecipient, router_used: "uniswap_v3" });
-      toast.success("Private swap executed via Uniswap V3!");
+      // ── RELAYER FLOW ──────────────────────────────────────────
+      // Routes through the on-chain PrivacyRelayer so the customer's
+      // EOA never appears as msg.sender. The ETH is sent to the
+      // stealth recipient via relayAndAnnounce — the relayer hot
+      // wallet is msg.sender, not the customer.
+      const amountWei = ethers.parseEther(amount);
+      const ephemeralKey = "0x" + Array(64).fill(0).map(() =>
+        Math.floor(Math.random() * 16).toString(16)
+      ).join('');
+      const viewTag = Math.floor(Math.random() * 256);
+
+      const prepRes = await axios.post(`${API}/relayer/prepare-tx`, {
+        from_address: address,
+        stealth_address: stealthRecipient,
+        amount_wei: amountWei.toString(),
+        ephemeral_key: ephemeralKey,
+        view_tag: viewTag,
+        chain,
+      });
+
+      const { domain, types, message } = prepRes.data.intent;
+      const signature = await signer.signTypedData(domain, types, message);
+
+      const submitRes = await axios.post(`${API}/relayer/submit`, {
+        intent: prepRes.data.intent,
+        signature,
+        from_address: address,
+        chain,
+      });
+
+      const relayTxHash = submitRes.data.relay_tx_hash || submitRes.data.tx_hash || "";
+      setTxHash(relayTxHash);
+      await axios.post(`${API}/uniswap/record-swap`, { tx_hash: relayTxHash, from_address: address, token_in: tokenIn, token_out: tokenOut, amount_in: amount, amount_out: quote.amount_out_human, chain, stealth_recipient: stealthRecipient, router_used: "uniswap_v3" });
+      toast.success("Private swap relayed on-chain!");
       axios.post(`${API}/stealth/use/${address}`, { feature: "swap" }).catch(() => {});
-      await tx.wait();
       fetchBalance(); setQuote(null); setAmount("");
-    } catch (e) { toast.error(e.message?.slice(0, 80) || "Swap failed"); }
+    } catch (e) {
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Swap failed";
+      toast.error(msg);
+    }
     setSwapping(false);
   };
 

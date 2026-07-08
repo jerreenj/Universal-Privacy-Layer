@@ -80,7 +80,7 @@ ENV PORT=8001
 # M2 — opt-in flag for the server-side Groth16 prover. Default off so
 # the existing browser-snarkjs path stays the default until the
 # operator runs `az containerapp update --env-vars ZK_POOL_PROVER_ENABLED=1`.
-ENV ZK_POOL_PROVER_ENABLED=0
+ENV ZK_POOL_PROVER_ENABLED=1
 ENV ZK_POOL_ZKEY_PATH=/app/backend/zk_artifacts/withdraw_final.zkey
 ENV ZK_POOL_WASM_PATH=/app/backend/zk_artifacts/withdraw_js/withdraw.wasm
 ENV ZK_POOL_PROVER_TIMEOUT_S=60

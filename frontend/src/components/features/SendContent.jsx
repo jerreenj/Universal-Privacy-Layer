@@ -18,18 +18,48 @@ export function SendContent() {
     if (!address) return toast.error("Connect wallet first");
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
     if (!ethers.isAddress(to)) return toast.error("Invalid address");
+    if (!signer) return toast.error("Wallet not connected");
     setSending(true);
     try {
-      const tx = await signer.sendTransaction({ to, value: ethers.parseEther(amount) });
-      setTxHash(tx.hash);
-      // Seal the metadata: server stores ciphertext only — never sees
-      // to_address, amount_wei, etc. Wallet-derived seal key keeps
-      // the record unreadable without the user's wallet signature.
+      // ── RELAYER FLOW ──────────────────────────────────────────
+      // Routes through the on-chain PrivacyRelayer so the customer's
+      // EOA never appears as msg.sender on BaseScan. Same EIP-712
+      // intent → signTypedData → /relayer/submit pattern as
+      // StealthSend and OnChainRelayer.
+      const amountWei = ethers.parseEther(amount);
+      const ephemeralKey = "0x" + Array(64).fill(0).map(() =>
+        Math.floor(Math.random() * 16).toString(16)
+      ).join('');
+      const viewTag = Math.floor(Math.random() * 256);
+
+      const prepRes = await axios.post(`${API}/relayer/prepare-tx`, {
+        from_address: address,
+        stealth_address: to,
+        amount_wei: amountWei.toString(),
+        ephemeral_key: ephemeralKey,
+        view_tag: viewTag,
+        chain: chain || "base",
+      });
+
+      const { domain, types, message } = prepRes.data.intent;
+      const signature = await signer.signTypedData(domain, types, message);
+
+      const submitRes = await axios.post(`${API}/relayer/submit`, {
+        intent: prepRes.data.intent,
+        signature,
+        from_address: address,
+        chain: chain || "base",
+      });
+
+      const relayTxHash = submitRes.data.relay_tx_hash || submitRes.data.tx_hash || "";
+      setTxHash(relayTxHash);
+
+      // Seal the metadata: server stores ciphertext only.
       const envelope = await seal({
-        tx_hash:      tx.hash,
+        tx_hash:      relayTxHash,
         from_address: address,
         to_address:   to,
-        amount_wei:   ethers.parseEther(amount).toString(),
+        amount_wei:   amountWei.toString(),
         chain:        chain || "base",
         tx_type:      "private_send",
         status:       "pending",
@@ -41,12 +71,13 @@ export function SendContent() {
         status: "pending",
         chain: chain || "base",
       });
-      toast.success("Transaction sent!");
-      await tx.wait();
-      toast.success("Confirmed on-chain");
+      toast.success("Transaction relayed on-chain!");
       fetchBalance();
       setTo(""); setAmount("");
-    } catch (e) { toast.error(e.message?.slice(0, 80) || "Failed"); }
+    } catch (e) {
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Failed";
+      toast.error(msg);
+    }
     setSending(false);
   };
 
@@ -54,7 +85,7 @@ export function SendContent() {
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-xs text-white/40 bg-white/5 border border-white/10 px-3 py-2">
         <Lock className="w-3 h-3" />
-        Signing with MetaMask on {CHAINS[chain]?.name}
+        Routed through PrivacyRelayer on {CHAINS[chain]?.name} - your wallet never appears as sender
       </div>
       <div>
         <label className="block text-xs text-gray-500 uppercase mb-2">Recipient (stealth address)</label>
