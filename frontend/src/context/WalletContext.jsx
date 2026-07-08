@@ -2,6 +2,7 @@ import { useState, useEffect, createContext, useContext, useCallback } from "rea
 import axios from "axios";
 import { toast } from "sonner";
 import { CHAINS, VM, API } from "@/config/chains";
+import { formatExactBalance } from "@/lib/utils";
 
 // NOTE: `ethers` and `@solana/web3.js` are NOT statically imported here. Both are
 // large (ethers bundles lots of crypto; @solana/web3.js pulls in bs58/secp256k1/
@@ -190,19 +191,23 @@ export function WalletProvider({ children }) {
         const { ethers } = await import("ethers");
         const provider = new ethers.JsonRpcProvider(CHAINS[chain].rpcUrl);
         const bal = await provider.getBalance(address);
-        setBalance({ formatted: parseFloat(ethers.formatEther(bal)).toFixed(6), symbol: CHAINS[chain].symbol });
+        setBalance({
+          formatted: formatExactBalance(bal, 18),
+          symbol: CHAINS[chain].symbol,
+        });
       } else if (vm === VM.SOLANA) {
         const { Connection, PublicKey } = await import("@solana/web3.js");
         const conn = solConn || new Connection(CHAINS.solana.rpcUrl, "confirmed");
         const bal = await conn.getBalance(new PublicKey(address));
-        setBalance({ formatted: (bal / LAMPORTS_PER_SOL).toFixed(6), symbol: "SOL" });
+        setBalance({ formatted: formatExactBalance(bal, 9), symbol: "SOL" });
       } else if (vm === VM.SUI) {
         const res = await fetch(CHAINS.sui.rpcUrl, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "suix_getBalance", params: [address, "0x2::sui::SUI"] })
         });
         const data = await res.json();
-        setBalance({ formatted: ((parseInt(data?.result?.totalBalance ?? "0")) / 1e9).toFixed(6), symbol: "SUI" });
+        const rawSui = data?.result?.totalBalance ?? "0";
+        setBalance({ formatted: formatExactBalance(rawSui, 9), symbol: "SUI" });
       }
     } catch {}
   }, [address, chain, vm, solConn]);
@@ -210,6 +215,14 @@ export function WalletProvider({ children }) {
   // Fetch USDC stablecoin balance — the PRIMARY number shown in the
   // Dashboard hero. Stablecoin balances are what people actually hold,
   // so we surface them above the volatile native-token balance.
+  //
+  // SIDE NOTE on precision: this used to call
+  //   parseFloat(formatted).toFixed(2)
+  // which truncated `6.789012 USDC` to `6.79` and rendered sub-cent
+  // dust as zero — customers with $0.005 USDC thought their wallet
+  // was empty. Now we use `formatExactBalance(raw, decimals)` which
+  // keeps all 6 decimals (or 18 on BNB BEP20) and trims only trailing
+  // zeros, so the dashboard shows whatever the chain actually holds.
   const fetchUsdcBalance = useCallback(async () => {
     if (!address) { setUsdcBalance(null); return; }
     try {
@@ -227,8 +240,12 @@ export function WalletProvider({ children }) {
         // default to 6 for safety (the common case).
         let decimals = 6;
         try { decimals = Number(await erc20.decimals()); } catch {}
-        const formatted = ethers.formatUnits(raw, decimals);
-        setUsdcBalance({ formatted: parseFloat(formatted).toFixed(2), symbol: "USDC", address: usdcAddr, chain });
+        setUsdcBalance({
+          formatted: formatExactBalance(raw, decimals),
+          symbol: "USDC",
+          address: usdcAddr,
+          chain,
+        });
       } else if (vm === VM.SOLANA) {
         // USDC on Solana is an SPL token. We do a lightweight getTokenAccountsByOwner.
         const usdcMint = CHAINS.solana?.contracts?.usdc;
@@ -238,16 +255,25 @@ export function WalletProvider({ children }) {
         try {
           const resp = await conn.getTokenAccountsByOwner(new PublicKey(address), { mint: new PublicKey(usdcMint) });
           // Sum the lamport amounts across all USDC token accounts.
-          let total = 0;
+          // Keep the raw amount as a string (u64) so formatExactBalance
+          // can decode it without precision loss.
+          let totalRaw = "0";
           for (const ta of resp.value) {
-            //.data.parsed.info.tokenAmount.amount is a string of u64; convert to Number defensively.
             const amt = ta.account.data?.parsed?.info?.tokenAmount?.amount;
-            if (amt) total += Math.floor(Number(amt) / 1e6); // USDC SPL has 6 decimals
+            if (amt) {
+              // Big-int addition to avoid Number overflow on large u64.
+              totalRaw = (BigInt(totalRaw) + BigInt(amt)).toString();
+            }
           }
-          setUsdcBalance({ formatted: total.toFixed(2), symbol: "USDC", address: usdcMint, chain: "solana" });
+          setUsdcBalance({
+            formatted: formatExactBalance(totalRaw, 6),
+            symbol: "USDC",
+            address: usdcMint,
+            chain: "solana",
+          });
         } catch {
           // If the wallet has no USDC ATA on this RPC, just show 0.
-          setUsdcBalance({ formatted: "0.00", symbol: "USDC", address: usdcMint, chain: "solana" });
+          setUsdcBalance({ formatted: "0", symbol: "USDC", address: usdcMint, chain: "solana" });
         }
       } else {
         setUsdcBalance(null);
