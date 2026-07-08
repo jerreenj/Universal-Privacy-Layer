@@ -10,6 +10,13 @@ env/
 frontend/build/
 *.tsbuildinfo
 
+# ─── ZK circuit build artifacts (generated, 7MB — don't bloat git) ──
+# The zkey + wasm are produced by the circom + snarkjs toolchain under
+# contracts/circuits/build/. The backend copies them to
+# backend/zk_artifacts/ at deploy time (see scripts/sync_zk_artifacts.sh).
+contracts/circuits/build/
+backend/zk_artifacts/
+
 # ─── Environment & secrets — NEVER commit ───────────────────────
 .env
 .env.*

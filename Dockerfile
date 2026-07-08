@@ -50,26 +50,15 @@ COPY scripts/zk_pool_prover.js ./scripts/zk_pool_prover.js
 
 # OPTIONAL: snarkjs artefacts (withdraw_final.zkey +
 # withdraw_js/withdraw.wasm) for the M2 server-side prover.
-# These files are gitignored — the public-CI build context does
-# NOT contain them. The DEFAULT backend image ships WITHOUT the
-# artefacts; /api/zk-pool/prove-options then reports
-# backend_kind=browser and the in-browser snarkjs WASM path takes
-# over (current customer-pilot behaviour). Operators who want the
-# server prover flip should:
-#   1. Build locally:  cd contracts && bash scripts/zk_powers_of_tau.sh
-#      (or `forge build circuits` for a fresh ceremony).
-#   2. tar + upload to private Azure blob storage.
-#   3. Add a late Dockerfile layer (BEFORE the user cuts an image):
-#      COPY zk_artifacts/withdraw_final.zkey \
-#           /app/backend/zk_artifacts/withdraw_final.zkey
-#      COPY zk_artifacts/withdraw_js \
-#           /app/backend/zk_artifacts/withdraw_js
-#   4. Set ZK_POOL_PROVER_ENABLED=1 env on the Container App.
-# The COPY lines are intentionally absent from the public image so
-# the public-CI docker build does NOT fail on missing files.
-# We pre-create the directory so server.py's missing-file check
-# returns a clean 503 (not a 500 stacktrace) on Day 1.
-RUN mkdir -p /app/backend/zk_artifacts/withdraw_js
+# These are copied from frontend/public/zk-pool/ — the same
+# artifacts the browser uses for in-browser proof generation.
+# They're tracked in git (not gitignored) so the CI build context
+# always has them. The server-side prover (ZK_POOL_PROVER_ENABLED=1,
+# the new default) reads them at the paths configured in server.py.
+COPY frontend/public/zk-pool/withdraw_final.zkey \
+     /app/backend/zk_artifacts/withdraw_final.zkey
+COPY frontend/public/zk-pool/withdraw.wasm \
+     /app/backend/zk_artifacts/withdraw_js/withdraw.wasm
 
 
 
