@@ -64,23 +64,9 @@ contract ConfidentialVault is Ownable, ReentrancyGuard {
     mapping(bytes32 => bytes32) public noteEncryptedAmounts;
 
     // ─── Events (minimal data, no plaintext amounts) ────────────
-    event NoteDeposited(
-        bytes32 indexed commitment,
-        bytes32 encryptedAmount,
-        uint32 indexed leafIndex,
-        bytes32 root
-    );
-    event NoteWithdrawn(
-        address indexed recipient,
-        uint256 nullifierHash,
-        bytes32 root
-    );
-    event NoteTransferred(
-        bytes32 indexed newCommitment,
-        bytes32 encryptedAmount,
-        uint256 nullifierHash,
-        bytes32 root
-    );
+    event NoteDeposited(bytes32 indexed commitment, bytes32 encryptedAmount, uint32 indexed leafIndex, bytes32 root);
+    event NoteWithdrawn(address indexed recipient, uint256 nullifierHash, bytes32 root);
+    event NoteTransferred(bytes32 indexed newCommitment, bytes32 encryptedAmount, uint256 nullifierHash, bytes32 root);
     event UsdcFunded(address indexed funder, uint256 amount);
     event UsdcWithdrawn(address indexed to, uint256 amount);
 
@@ -95,20 +81,14 @@ contract ConfidentialVault is Ownable, ReentrancyGuard {
     error CommitmentAlreadyExists();
 
     // ─── Constructor ────────────────────────────────────────────
-    constructor(
-        address _usdc,
-        address _verifier,
-        address _owner
-    ) Ownable(_owner) {
+    constructor(address _usdc, address _verifier, address _owner) Ownable(_owner) {
         USDC = IERC20(_usdc);
         verifier = ConfidentialTransferVerifier(_verifier);
 
         // Precompute zero subtrees (same as PrivacyPool.sol).
         zeros[0] = bytes32(0);
         for (uint32 l = 1; l <= MERKLE_DEPTH; l++) {
-            zeros[l] = bytes32(
-                PoseidonT3.poseidon(uint256(zeros[l - 1]), uint256(zeros[l - 1]))
-            );
+            zeros[l] = bytes32(PoseidonT3.poseidon(uint256(zeros[l - 1]), uint256(zeros[l - 1])));
         }
         currentRoot = zeros[MERKLE_DEPTH];
         roots[0] = currentRoot;
@@ -126,12 +106,7 @@ contract ConfidentialVault is Ownable, ReentrancyGuard {
      * @param amount       USDC amount (6 decimals) — visible at this boundary
      * @param blindingFactor Random 32-byte field element (note randomness)
      */
-    function deposit(
-        uint256 nullifier,
-        uint256 secret,
-        uint256 amount,
-        uint256 blindingFactor
-    ) external nonReentrant {
+    function deposit(uint256 nullifier, uint256 secret, uint256 amount, uint256 blindingFactor) external nonReentrant {
         if (amount == 0) revert AmountZero();
 
         // Pull USDC from the depositor.
@@ -143,20 +118,13 @@ contract ConfidentialVault is Ownable, ReentrancyGuard {
         // Compute encryptedAmount = Poseidon(amount, blindingFactor).
         // The recipient learns (amount, blindingFactor) off-chain and
         // can verify this matches.
-        bytes32 encAmount = bytes32(
-            PoseidonT3.poseidon(amount, blindingFactor)
-        );
+        bytes32 encAmount = bytes32(PoseidonT3.poseidon(amount, blindingFactor));
 
         // Insert commitment into the Merkle tree.
         bytes32 newRoot = _insert(commitment);
         noteEncryptedAmounts[bytes32(commitment)] = encAmount;
 
-        emit NoteDeposited(
-            bytes32(commitment),
-            encAmount,
-            nextLeafIndex - 1,
-            newRoot
-        );
+        emit NoteDeposited(bytes32(commitment), encAmount, nextLeafIndex - 1, newRoot);
     }
 
     // ─── Withdraw ───────────────────────────────────────────────
@@ -217,9 +185,7 @@ contract ConfidentialVault is Ownable, ReentrancyGuard {
         // Verify the plaintext amount matches the encrypted amount.
         // encryptedAmount = Poseidon(amount, recipient) from the circuit.
         // If the caller passes a wrong amount, this check fails.
-        bytes32 expectedEnc = bytes32(
-            PoseidonT3.poseidon(amount, uint256(uint160(recipient)))
-        );
+        bytes32 expectedEnc = bytes32(PoseidonT3.poseidon(amount, uint256(uint160(recipient))));
         if (expectedEnc != encryptedAmount) revert InvalidProof();
 
         // Check reserves.
