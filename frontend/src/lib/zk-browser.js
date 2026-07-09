@@ -106,6 +106,48 @@ export async function generateWithdrawProof({
   return { proof, publicSignals };
 }
 
+// ─── P2: Confidential transfer proof ───────────────────────────
+// Generates a Groth16 proof for the confidential_transfer circuit.
+// The amount is a PRIVATE input — it never appears in the public
+// signals. The EVM verifies the proof without seeing the amount.
+//
+// Private inputs: nullifier, secret, amount, blindingFactor,
+//                 merklePathElements[20], merklePathIndices[20]
+// Public inputs:  root, recipient
+// Public outputs: nullifierHash, newCommitment, encryptedAmount
+//
+// snarkjs publicSignals order: [nullifierHash, newCommitment,
+// encryptedAmount, root, recipient]
+export async function generateConfidentialTransferProof({
+  nullifier,
+  secret,
+  amount,
+  blindingFactor,
+  root,
+  recipient,
+  merklePathElements,
+  merklePathIndices,
+}) {
+  const snarkjs = await loadSnarkjs();
+  const input = {
+    root: String(root),
+    recipient: BigInt(recipient).toString(),
+    nullifier: String(nullifier),
+    secret: String(secret),
+    amount: String(amount),
+    blindingFactor: String(blindingFactor),
+    merklePathElements: merklePathElements.map(String),
+    merklePathIndices: merklePathIndices.map(String),
+  };
+
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    input,
+    `${ZK_ASSETS_BASE}/confidential_transfer.wasm`,
+    `${ZK_ASSETS_BASE}/confidential_final.zkey`
+  );
+  return { proof, publicSignals };
+}
+
 // Helper to fetch the pool state (root, denomination, recent roots) from
 // the backend. Pass an optional `denomination` (wei string) to scope the
 // response to a specific sub-pool — same query semantics as the backend
