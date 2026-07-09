@@ -58,6 +58,9 @@
     "confidential_swap_reserve_usdc": "0",
     "confidential_reverse_swap": "0xbb983a6222966e3e552bdbcb5fb7620dd34c9526",
     "confidential_reverse_swap_tx": "0x241fe605f8c2b6b1f3c4316abf2ea639de838dbcd876932835c7c5b504fe46d6",
-    "confidential_reverse_swap_reserve_eth": "0"
+    "confidential_reverse_swap_reserve_eth": "0",
+    "confidential_vault": "0x5fC8608ae28D493DBF7088822C48DeCBd20cCFBa",
+    "confidential_transfer_verifier": "0x1eCbB3C1cB39Fd2125D12f566dB91Cc055A80CdD",
+    "confidential_vault_usdc_reserve": "500000"
   }
 }

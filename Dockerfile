@@ -59,6 +59,10 @@ COPY frontend/public/zk-pool/withdraw_final.zkey \
      /app/backend/zk_artifacts/withdraw_final.zkey
 COPY frontend/public/zk-pool/withdraw.wasm \
      /app/backend/zk_artifacts/withdraw_js/withdraw.wasm
+COPY frontend/public/zk-pool/confidential_final.zkey \
+     /app/backend/zk_artifacts/confidential_final.zkey
+COPY frontend/public/zk-pool/confidential_transfer.wasm \
+     /app/backend/zk_artifacts/confidential_transfer_js/confidential_transfer.wasm
 
 
 
