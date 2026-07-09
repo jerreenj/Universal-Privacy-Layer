@@ -175,8 +175,8 @@ export async function deriveMetaAddress(signer, chainId) {
   const spendPriv = await deriveSpendKeyFromWallet(signer, chainId);
   const viewPriv = await deriveViewKeyFromWallet(signer, chainId);
   // secp256k1 privkey → pubkey via ethers HDNode / SigningKey helpers.
-  const spendNode = new ethers.SigningKey(spendPriv);
-  const viewNode = new ethers.SigningKey(viewPriv);
+  const spendNode = new ethers.SigningKey("0x" + spendPriv.toString(16).padStart(64, "0"));
+  const viewNode = new ethers.SigningKey("0x" + viewPriv.toString(16).padStart(64, "0"));
   const spendPub = "0x" + spendNode.publicKey.slice(4); // uncompressed, 64 bytes (no 0x04 prefix)
   const viewPub = "0x" + viewNode.publicKey.slice(4);
   return {
@@ -218,7 +218,7 @@ export async function deriveStealthEOA(signer) {
     const n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
     const pkSecp = BigInt("0x" + bytesToHex(bytes)) % n;
     if (pkSecp === 0n) throw new Error("zero stealth key — re-attempt");
-    const sk = new ethers.SigningKey(pkSecp);
+    const sk = new ethers.SigningKey("0x" + pkSecp.toString(16).padStart(64, "0"));
     const address = ethers.computeAddress("0x" + sk.publicKey.slice(4));
     return {
         address,
