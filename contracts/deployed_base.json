@@ -61,6 +61,7 @@
     "confidential_reverse_swap_reserve_eth": "0",
     "confidential_vault": "0x5fC8608ae28D493DBF7088822C48DeCBd20cCFBa",
     "confidential_transfer_verifier": "0x1eCbB3C1cB39Fd2125D12f566dB91Cc055A80CdD",
-    "confidential_vault_usdc_reserve": "500000"
+    "confidential_vault_usdc_reserve": "500000",
+    "batch_swap_router": "0x0b80fD06A73bDA4f0B76aBB94B48fFd59d137aA5"
   }
 }
