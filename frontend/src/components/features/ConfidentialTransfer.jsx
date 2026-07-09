@@ -17,7 +17,7 @@
  *   - Recipient (stealth address)
  *   - Amount (encrypted in ZK proof, never plaintext)
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import axios from "axios";
 import { ethers } from "ethers";
 import { Lock, Send, Loader2, Check, Download, Upload } from "lucide-react";
@@ -61,7 +61,7 @@ export function ConfidentialTransfer() {
   const [vaultInfo, setVaultInfo] = useState(null);
 
   // Fetch vault info on mount
-  useState(() => {
+  useEffect(() => {
     fetchVaultInfo();
   }, []);
 
@@ -97,7 +97,6 @@ export function ConfidentialTransfer() {
 
       // Approve USDC for the vault
       const usdc = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-      const decimals = await usdc.decimals();
       const approveTx = await usdc.approve(VAULT_ADDRESS, ethers.MaxUint256);
       await approveTx.wait();
 
@@ -191,7 +190,7 @@ export function ConfidentialTransfer() {
       setTxHash(submitRes.data.tx_hash || submitRes.data.relay_tx_hash || "");
       toast.success("Confidential transfer relayed — amount hidden on BaseScan");
 
-      // Save recipient note for demo purposes
+      // Store recipient note in localStorage (not console — privacy leak)
       const recipientNote = {
         chain: "base",
         vault: VAULT_ADDRESS,
@@ -201,10 +200,14 @@ export function ConfidentialTransfer() {
         commitment: publicSignals[1],
         encryptedAmount: publicSignals[2],
         recipient,
-        txHash: submitRes.data.tx_hash,
+        txHash: submitRes.data.tx_hash || submitRes.data.relay_tx_hash || "",
         createdAt: new Date().toISOString(),
       };
-      console.log("Recipient note (share off-chain):", recipientNote);
+      try {
+        const notes = JSON.parse(localStorage.getItem("upl:confidential-received") || "[]");
+        notes.push(recipientNote);
+        localStorage.setItem("upl:confidential-received", JSON.stringify(notes));
+      } catch {}
     } catch (e) {
       const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Transfer failed";
       toast.error(msg);
@@ -260,7 +263,9 @@ export function ConfidentialTransfer() {
   function loadNote() {
     try {
       const parsed = JSON.parse(noteInput);
-      if (!parsed.nullifier || !parsed.secret) throw new Error("Invalid note");
+      if (!parsed.nullifier || !parsed.secret || !parsed.commitment || !parsed.amount) {
+        throw new Error("Note must have nullifier, secret, commitment, and amount");
+      }
       setNote(parsed);
       toast.success("Note loaded");
     } catch {

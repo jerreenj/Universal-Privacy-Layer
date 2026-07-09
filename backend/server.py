@@ -2989,19 +2989,20 @@ _CONFIDENTIAL_VAULT_ABI = json.loads(
 async def confidential_state():
     """Return the current vault state — root, note count, reserve."""
     try:
-        vault = _w3.eth.contract(
-            address=_to_checksum(_CONFIDENTIAL_VAULT),
+        w3 = get_w3("base")
+        vault = w3.eth.contract(
+            address=Web3.to_checksum_address(_CONFIDENTIAL_VAULT),
             abi=_CONFIDENTIAL_VAULT_ABI,
         )
         root = vault.functions.currentRootOf().call()
         count = vault.functions.depositCount().call()
-        usdc = _w3.eth.contract(
-            address=_to_checksum("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
+        usdc = w3.eth.contract(
+            address=Web3.to_checksum_address("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
             abi=json.loads('[{"inputs":[{"internalType":"address","name":"","type":"address"}],'
                            '"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],'
                            '"stateMutability":"view","type":"function"}]'),
         )
-        reserve = usdc.functions.balanceOf(_to_checksum(_CONFIDENTIAL_VAULT)).call()
+        reserve = usdc.functions.balanceOf(Web3.to_checksum_address(_CONFIDENTIAL_VAULT)).call()
         return {
             "live": True,
             "chain": "base",
@@ -3019,43 +3020,82 @@ async def confidential_state():
 async def confidential_path(req: dict = Body(default={})):
     """Return the Merkle path for a given commitment.
     Rebuilds the incremental Poseidon Merkle tree from on-chain
-    Deposit events and returns the path elements + indices.
+    NoteDeposited events and returns the path elements + indices.
+
+    Uses the same IncrementalMerkleTree from zk_merkle.py that the
+    PrivacyPool path endpoint uses — same Poseidon hash, same depth 20.
     """
     commitment = req.get("commitment")
     if not commitment:
         raise HTTPException(status_code=400, detail="commitment required")
 
-    # For now, return a placeholder path — the real implementation
-    # rebuilds the tree from Deposit events. This will be wired
-    # when the frontend deposit flow is fully tested.
-    # The tree is depth 20, and for the first deposit (index 0),
-    # all path elements are the zero hashes and all indices are 0.
     try:
-        # Fetch the current root on-chain
-        vault = _w3.eth.contract(
-            address=_to_checksum(_CONFIDENTIAL_VAULT),
+        # Lazy-load the IncrementalMerkleTree (same as /zk-pool/path)
+        _IMT, _p2, _p1, _cc, _nh = _try_import_zk_merkle()
+        if _IMT is None:
+            raise HTTPException(status_code=503, detail="zk_merkle unavailable")
+
+        # Parse the commitment to an integer
+        commit_hex = commitment
+        commit_int = int(commit_hex, 16) if commit_hex.startswith("0x") else int(commit_hex)
+
+        # Fetch NoteDeposited events from the vault contract on-chain
+        w3 = get_w3("base")
+        vault = w3.eth.contract(
+            address=Web3.to_checksum_address(_CONFIDENTIAL_VAULT),
             abi=_CONFIDENTIAL_VAULT_ABI,
         )
-        root = vault.functions.currentRootOf().call()
 
-        # TODO: rebuild the full tree from Deposit events to get
-        # the actual path. For now, return zeros (works for
-        # index-0 deposits only — the common case for the first
-        # pilot deposit).
-        zeros = [0]
-        # These would be computed via Poseidon — the frontend
-        # can compute them client-side via circomlibjs.
-        merkle_path_elements = ["0"] * 20
-        merkle_path_indices = ["0"] * 20
+        # Read the current root for verification
+        current_root = vault.functions.currentRootOf().call()
+
+        # Fetch all NoteDeposited events to rebuild the tree
+        # Event signature: NoteDeposited(bytes32 indexed commitment, bytes32 encryptedAmount, uint32 indexed leafIndex, bytes32 root)
+        deposit_event_sig = w3.keccak(text="NoteDeposited(bytes32,bytes32,uint32,bytes32)")
+        logs = w3.eth.get_logs({
+            "address": Web3.to_checksum_address(_CONFIDENTIAL_VAULT),
+            "fromBlock": 0,
+            "toBlock": "latest",
+        })
+
+        # Rebuild the tree and find the path for our commitment
+        temp_tree = _IMT()
+        found = False
+        leaf_index = -1
+        elements = []
+        indices = []
+
+        for log in logs:
+            try:
+                # The commitment is the first indexed topic (topic 1,
+                # topic 0 is the event signature)
+                leaf = int(log["topics"][1].hex(), 16)
+                if leaf == commit_int:
+                    leaf_index, elements, indices = temp_tree.get_path(leaf)
+                    found = True
+                    break
+                temp_tree.insert(leaf)
+            except Exception:
+                continue
+
+        if not found:
+            raise HTTPException(
+                status_code=404,
+                detail="Commitment not found in vault deposit events",
+            )
 
         return {
             "ready": True,
-            "root": hex(root),
-            "merklePathElements": merkle_path_elements,
-            "merklePathIndices": merkle_path_indices,
+            "root": str(temp_tree.root),
+            "leafIndex": leaf_index,
+            "merklePathElements": [str(x) for x in elements],
+            "merklePathIndices": [str(x) for x in indices],
             "merkleDepth": 20,
         }
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"confidential/path error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -3080,8 +3120,9 @@ async def confidential_transfer_relay(req: dict = Body(default={})):
             raise HTTPException(status_code=503, detail="No relayer key configured")
 
         acct = Account.from_key(relayer_key)
-        vault = _w3.eth.contract(
-            address=_to_checksum(_CONFIDENTIAL_VAULT),
+        w3 = get_w3("base")
+        vault = w3.eth.contract(
+            address=Web3.to_checksum_address(_CONFIDENTIAL_VAULT),
             abi=_CONFIDENTIAL_VAULT_ABI,
         )
 
@@ -3094,14 +3135,14 @@ async def confidential_transfer_relay(req: dict = Body(default={})):
             [int(ps) for ps in pub_signals],
         ).build_transaction({
             "from": acct.address,
-            "nonce": _w3.eth.get_transaction_count(acct.address),
+            "nonce": w3.eth.get_transaction_count(acct.address),
             "gas": 600000,
-            "gasPrice": _w3.eth.gas_price,
+            "gasPrice": w3.eth.gas_price,
         })
 
         signed = acct.sign_transaction(tx)
-        tx_hash = _w3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt = _w3.eth.wait_for_transaction_receipt(tx_hash)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
         return {
             "status": "relayed",
@@ -3138,8 +3179,9 @@ async def confidential_withdraw_relay(req: dict = Body(default={})):
             raise HTTPException(status_code=503, detail="No relayer key configured")
 
         acct = Account.from_key(relayer_key)
-        vault = _w3.eth.contract(
-            address=_to_checksum(_CONFIDENTIAL_VAULT),
+        w3 = get_w3("base")
+        vault = w3.eth.contract(
+            address=Web3.to_checksum_address(_CONFIDENTIAL_VAULT),
             abi=_CONFIDENTIAL_VAULT_ABI,
         )
 
@@ -3152,14 +3194,14 @@ async def confidential_withdraw_relay(req: dict = Body(default={})):
             int(amount),
         ).build_transaction({
             "from": acct.address,
-            "nonce": _w3.eth.get_transaction_count(acct.address),
+            "nonce": w3.eth.get_transaction_count(acct.address),
             "gas": 600000,
-            "gasPrice": _w3.eth.gas_price,
+            "gasPrice": w3.eth.gas_price,
         })
 
         signed = acct.sign_transaction(tx)
-        tx_hash = _w3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt = _w3.eth.wait_for_transaction_receipt(tx_hash)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
         return {
             "status": "relayed",
@@ -3193,8 +3235,9 @@ async def confidential_batch_swap(req: dict = Body(default={})):
         raise HTTPException(status_code=400, detail="total_amount required")
 
     try:
-        router_contract = _w3.eth.contract(
-            address=_to_checksum(_BATCH_SWAP_ROUTER),
+        w3 = get_w3("base")
+        router_contract = w3.eth.contract(
+            address=Web3.to_checksum_address(_BATCH_SWAP_ROUTER),
             abi=_BATCH_SWAP_ABI,
         )
         # For the MVP, we just initiate the flash loan with the total
@@ -3205,17 +3248,17 @@ async def confidential_batch_swap(req: dict = Body(default={})):
             int(total_amount),
             b"",  # params — will be populated with swap routing data
         ).build_transaction({
-            "from": _to_checksum(os.environ.get("RELAYER_ADDRESS", "0x2d82E56f56e4483032fEf8248c2EB75C45A68D2d")),
-            "nonce": _w3.eth.get_transaction_count(_to_checksum(os.environ.get("RELAYER_ADDRESS", "0x2d82E56f56e4483032fEf8248c2EB75C45A68D2d"))),
+            "from": Web3.to_checksum_address(os.environ.get("RELAYER_ADDRESS", "0x2d82E56f56e4483032fEf8248c2EB75C45A68D2d")),
+            "nonce": w3.eth.get_transaction_count(Web3.to_checksum_address(os.environ.get("RELAYER_ADDRESS", "0x2d82E56f56e4483032fEf8248c2EB75C45A68D2d"))),
             "gas": 500000,
-            "gasPrice": _w3.eth.gas_price,
+            "gasPrice": w3.eth.gas_price,
         })
         relayer_key = os.environ.get("RELAYER_PRIVATE_KEY") or _read_hot_wallet_keyfile()
         if not relayer_key:
             raise HTTPException(status_code=503, detail="No relayer key configured")
         acct = Account.from_key(relayer_key)
         signed = acct.sign_transaction(tx)
-        tx_hash = _w3.eth.send_raw_transaction(signed.raw_transaction)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         return {
             "status": "initiated",
             "tx_hash": tx_hash.hex(),
