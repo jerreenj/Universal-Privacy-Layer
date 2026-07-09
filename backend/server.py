@@ -5644,9 +5644,9 @@ async def get_recent_errors(limit: int = 50):
 
 class MetaAddressRegister(BaseModel):
     wallet_address: str
-    spend_pub: str       # compressed 33-byte hex pubkey
-    view_pub: str        # compressed 33-byte hex pubkey
-    meta_address: str    # st:eth:0x<spend><view>
+    spend_pub: str = ""       # compressed 33-byte hex pubkey (optional)
+    view_pub: str = ""        # compressed 33-byte hex pubkey (optional)
+    meta_address: str         # st:eth:0x<spend><view> or just 0x...
     chain: str = "all"
 
 class StealthAnnouncement(BaseModel):
