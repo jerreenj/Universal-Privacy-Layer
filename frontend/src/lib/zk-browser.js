@@ -106,44 +106,43 @@ export async function generateWithdrawProof({
   return { proof, publicSignals };
 }
 
-// ─── P2: Confidential transfer proof ───────────────────────────
-// Generates a Groth16 proof for the confidential_transfer circuit.
-// The amount is a PRIVATE input — it never appears in the public
-// signals. The EVM verifies the proof without seeing the amount.
+// ─── P2 v2: Confidential Notes proof (zero-leak) ──────────────
+// Generates a Groth16 proof for the confidential_notes circuit.
+// recipientViewKey is a PRIVATE input — it NEVER appears on-chain.
+// Only 4 public signals: [nullifierHash, newCommitment,
+// encryptedAmount, root]. NO recipient address anywhere.
 //
 // Private inputs: nullifier, secret, amount, blindingFactor,
-//                 merklePathElements[20], merklePathIndices[20]
-// Public inputs:  root, recipient
+//                 recipientViewKey, merklePathElements[20],
+//                 merklePathIndices[20]
+// Public inputs:  root (ONLY)
 // Public outputs: nullifierHash, newCommitment, encryptedAmount
-//
-// snarkjs publicSignals order: [nullifierHash, newCommitment,
-// encryptedAmount, root, recipient]
-export async function generateConfidentialTransferProof({
+export async function generateNoteProof({
   nullifier,
   secret,
   amount,
   blindingFactor,
+  recipientViewKey,
   root,
-  recipient,
   merklePathElements,
   merklePathIndices,
 }) {
   const snarkjs = await loadSnarkjs();
   const input = {
     root: String(root),
-    recipient: BigInt(recipient).toString(),
     nullifier: String(nullifier),
     secret: String(secret),
     amount: String(amount),
     blindingFactor: String(blindingFactor),
+    recipientViewKey: String(recipientViewKey),
     merklePathElements: merklePathElements.map(String),
     merklePathIndices: merklePathIndices.map(String),
   };
 
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(
     input,
-    `${ZK_ASSETS_BASE}/confidential_transfer.wasm`,
-    `${ZK_ASSETS_BASE}/confidential_final.zkey`
+    `${ZK_ASSETS_BASE}/confidential_notes.wasm`,
+    `${ZK_ASSETS_BASE}/notes_final.zkey`
   );
   return { proof, publicSignals };
 }

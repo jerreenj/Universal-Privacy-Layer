@@ -49,7 +49,6 @@ const ZKCommitments             = lazy(() => import("@/components/features/ZKCom
 const StealthSendSVM            = lazy(() => import("@/components/features/StealthSendSVM").then(m => ({ default: m.StealthSendSVM })));
 const ScannerSVM                = lazy(() => import("@/components/features/ScannerSVM").then(m => ({ default: m.ScannerSVM })));
 const SwapSVM                    = lazy(() => import("@/components/features/SwapSVM").then(m => ({ default: m.SwapSVM })));
-const ConfidentialTransfer      = lazy(() => import("@/components/features/ConfidentialTransfer").then(m => ({ default: m.ConfidentialTransfer })));
 
 /* Page metadata – references the lazy Component *type*, not a rendered element. The `key` field is passed to ChunkErrorBoundary so it can show what failed.
  *
@@ -92,7 +91,6 @@ const pages = {
   zkcommit:    { title: "ZK Commitments",              Component: ZKCommitments,           key: "zkcommit" },
   svmSend:     { title: "Stealth Send",                Component: StealthSendSVM,          key: "svm-send" },
   svmScan:     { title: "Scanner (All Chains)",     Component: ScannerSVM,         key: "svm-scanner" },
-  confidential: { title: "Confidential Transfer",     Component: ConfidentialTransfer,    key: "confidential" },
 };
 
 function LoadingFallback() {
@@ -518,7 +516,6 @@ export function Dashboard() {
               { id: "contract",icon: <FileCode className="w-5 h-5" />, title: "Contracts", color: "text-cyan-400" },
               { id: "developer", icon: <FileCode className="w-5 h-5" />, title: "Developer API", color: "text-emerald-400" },
               { id: "zkp",       icon: <Fingerprint className="w-5 h-5" />, title: "ZKP Proofs", color: "text-indigo-400" },
-              { id: "confidential", icon: <Lock className="w-5 h-5" />, title: "Confidential Transfer", color: "text-blue-400" },
             ].map(({ id, icon, title, color }) => (
               <button key={id} onClick={() => setPage(id)}
                 className="bg-white/5 border border-white/10 p-4 text-left hover:border-white/30 transition-all">
