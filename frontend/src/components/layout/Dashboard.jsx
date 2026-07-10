@@ -313,7 +313,9 @@ export function Dashboard() {
           <div className="bg-white/5 border border-white/10 p-5 md:p-8 mb-6">
             {/* Top row: two labels side by side + eye/refresh on the right.
                 "Wallet balance" (left) and "Private" (right) are on the
-                same line, same size, same weight — just different colors. */}
+                same line, same size, same weight. The Private label has
+                md:pl-6 to sit AFTER the divider line — same padding as
+                the right column below it. */}
             <div className="flex items-center justify-between mb-4">
               <div className="grid grid-cols-2 gap-6 flex-1">
                 <span className="text-xs uppercase tracking-wider text-white/70 font-semibold">
@@ -342,9 +344,10 @@ export function Dashboard() {
                     {(() => {
                       if (!showBal) return "••••••";
                       if (focusedToken === "usdc") {
-                        if (usdcBalance === null) return "0.0";
+                        if (usdcBalance === null) return "0";
                         return usdcBalance.formatted;
                       }
+                      // ETH shows 0.0 when empty
                       if (balance === null) return "0.0";
                       return balance.formatted;
                     })()}
@@ -387,7 +390,7 @@ export function Dashboard() {
                   )}
                 </div>
                 {(() => {
-                  const other = focusedToken === "usdc" ? (balance ? balance.formatted : "0") : (usdcBalance ? usdcBalance.formatted : "0");
+                  const other = focusedToken === "usdc" ? (balance ? balance.formatted : "0.0") : (usdcBalance ? usdcBalance.formatted : "0");
                   const otherSymbol = focusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC";
                   const otherKey = focusedToken === "usdc" ? "native" : "usdc";
                   return (
@@ -405,8 +408,8 @@ export function Dashboard() {
               </div>
 
               {/* ── RIGHT COLUMN: Private (stealth) balance ──────────
-                  Always shows — even if 0. Same layout/flip as the left.
-                  Thin divider line between columns. Label is in the top row. */}
+                  Mirror of the left column. md:border-l + md:pl-6 creates
+                  the divider. Label is in the top row. Same structure. */}
               <div className="md:border-l md:border-white/10 md:pl-6">
                 <div className="flex items-end gap-2">
                   <span className={`text-4xl md:text-6xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
@@ -414,9 +417,11 @@ export function Dashboard() {
                     {(() => {
                       if (!showBal) return "••••••";
                       if (stealthFocusedToken === "usdc") {
+                        // USDC zero shows "0" (whole number only)
                         const v = parseFloat(stealthBal?.usdc || "0");
-                        return v > 0 ? stealthBal.usdc : "0.0";
+                        return v > 0 ? stealthBal.usdc : "0";
                       }
+                      // ETH zero shows "0.0"
                       const v = parseFloat(stealthBal?.eth || "0");
                       return v > 0 ? stealthBal.eth : "0.0";
                     })()}
@@ -440,7 +445,9 @@ export function Dashboard() {
                   <span className="text-white/30">+</span>
                   <button onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
                     className="inline-flex items-center gap-1.5 hover:text-white transition-colors">
-                    <span className="font-mono">{stealthFocusedToken === "usdc" ? (parseFloat(stealthBal?.eth || "0") > 0 ? stealthBal.eth : "0.0") : (parseFloat(stealthBal?.usdc || "0") > 0 ? stealthBal.usdc : "0.0")}</span>
+                    <span className="font-mono">{stealthFocusedToken === "usdc"
+                      ? (parseFloat(stealthBal?.eth || "0") > 0 ? stealthBal.eth : "0.0")
+                      : (parseFloat(stealthBal?.usdc || "0") > 0 ? stealthBal.usdc : "0")}</span>
                     <span>{stealthFocusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC"}</span>
                     <ChevronDown className="w-3 h-3 text-white/30" />
                   </button>
