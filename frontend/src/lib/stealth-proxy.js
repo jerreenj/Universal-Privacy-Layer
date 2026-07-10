@@ -142,31 +142,62 @@ export async function checkProxyBalance(proxyAddress, provider, usdcAddress) {
 export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
     if (!ownerAddress || !provider) return { eth: "0", usdc: "0", address: null };
     try {
-        // Read the cached stealth address — no signature needed.
-        const cached = localStorage.getItem(lsKey(ownerAddress));
-        if (!cached) return { eth: "0", usdc: "0", address: null };
-        const parsed = JSON.parse(cached);
-        if (!parsed.address) return { eth: "0", usdc: "0", address: null };
+        let stealthAddr = null;
 
-        // Also check the stealth EOA key (from wallet-stealth deriveStealthEOA)
-        // which may be cached under a different key.
-        const stealthPkKey = `upl:stealth-pk:${ownerAddress.toLowerCase()}`;
-        let stealthAddr = parsed.address;
+        // Check THREE possible cache keys for the stealth address:
+        // 1. upl:stealth-pk:<address> — set by StealthMeta.jsx (the
+        //    "generate" button that creates the receive link). This is
+        //    the primary stealth receive address.
+        // 2. upl:stealth-proxy:<address> — set by getOrCreateProxyWallet
+        //    (the proxy wallet used for swaps). Different address but
+        //    also a stealth-derived address that may hold funds.
+        // 3. upl:stealth-meta:<address> — set by StealthReceive.jsx
+        //    (the scan/derive flow). Another possible cache location.
+        const addrLower = ownerAddress.toLowerCase();
+
+        // Try stealth-pk first (the receive address).
         try {
-            const stealthPk = localStorage.getItem(stealthPkKey);
+            const stealthPk = localStorage.getItem(`upl:stealth-pk:${addrLower}`);
             if (stealthPk) {
                 const w = new ethers.Wallet(stealthPk);
-                // Use whichever address we find — both should be the same
-                // if derived from the same wallet.
                 stealthAddr = w.address;
             }
         } catch {}
 
+        // If not found, try the proxy cache.
+        if (!stealthAddr) {
+            try {
+                const cached = localStorage.getItem(lsKey(ownerAddress));
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    if (parsed.address) stealthAddr = parsed.address;
+                }
+            } catch {}
+        }
+
+        // If not found, try the scan cache.
+        if (!stealthAddr) {
+            try {
+                const scanCache = localStorage.getItem(`upl:scan:${addrLower}`);
+                if (scanCache) {
+                    const parsed = JSON.parse(scanCache);
+                    if (parsed.address || parsed.stealthAddress) {
+                        stealthAddr = parsed.address || parsed.stealthAddress;
+                    }
+                }
+            } catch {}
+        }
+
+        if (!stealthAddr) return { eth: "0", usdc: "0", address: null };
+
         // Read balances at the stealth address.
         const ethBal = await provider.getBalance(stealthAddr);
-        const usdc = new ethers.Contract(usdcAddress,
-            ["function balanceOf(address) view returns (uint256)"], provider);
-        const usdcBal = await usdc.balanceOf(stealthAddr);
+        let usdcBal = 0n;
+        if (usdcAddress) {
+            const usdc = new ethers.Contract(usdcAddress,
+                ["function balanceOf(address) view returns (uint256)"], provider);
+            usdcBal = await usdc.balanceOf(stealthAddr);
+        }
         return {
             eth: ethers.formatEther(ethBal),
             usdc: ethers.formatUnits(usdcBal, 6),

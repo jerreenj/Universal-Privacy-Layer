@@ -312,7 +312,7 @@ export function Dashboard() {
               only the main column shows. */}
           <div className="bg-white/5 border border-white/10 p-5 md:p-8 mb-6">
             <div className="flex items-center justify-between mb-4">
-              <span className="text-[10px] uppercase tracking-wider text-white/40">
+              <span className="text-xs uppercase tracking-wider text-white/70 font-semibold">
                 Wallet balance
               </span>
               <div className="flex gap-1">
@@ -331,20 +331,18 @@ export function Dashboard() {
                   sizing, original dropdown, original alternate chip.
                   Nothing changed here. */}
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-white/30 mb-1">
-                  Main
-                </div>
                 <div className="flex items-end gap-2">
                   <span className={`text-4xl md:text-6xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
                     style={!showBal ? { background: "rgba(255,255,255,0.4)", WebkitBackgroundClip: "text", color: "transparent" } : undefined}>
                     {(() => {
                       if (!showBal) return "••••••";
                       if (focusedToken === "usdc") {
-                        if (usdcBalance === null && address) return "…";
-                        if (usdcBalance === null) return "—";
+                        // Show 0 when fetch hasn't returned or balance is
+                        // null — NOT dots. Dots only when hide button is on.
+                        if (usdcBalance === null) return "0";
                         return usdcBalance.formatted;
                       }
-                      if (balance === null) return "…";
+                      if (balance === null) return "0";
                       return balance.formatted;
                     })()}
                   </span>
