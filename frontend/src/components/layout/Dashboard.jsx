@@ -311,20 +311,8 @@ export function Dashboard() {
               same USDC/ETH flip behavior. If no stealth balance exists,
               only the main column shows. */}
           <div className="bg-white/5 border border-white/10 p-5 md:p-8 mb-6">
-            {/* Top row: two labels side by side + eye/refresh on the right.
-                "Wallet balance" (left) and "Private" (right) are on the
-                same line, same size, same weight. The Private label has
-                md:pl-6 to sit AFTER the divider line — same padding as
-                the right column below it. */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="grid grid-cols-2 gap-6 flex-1">
-                <span className="text-xs uppercase tracking-wider text-white/70 font-semibold">
-                  Wallet balance
-                </span>
-                <span className="text-xs uppercase tracking-wider text-green-400 font-semibold md:pl-6">
-                  Private
-                </span>
-              </div>
+            {/* Eye/refresh buttons top-right */}
+            <div className="flex justify-end mb-4">
               <div className="flex gap-1">
                 <button onClick={() => setShowBal(!showBal)} className="p-2 hover:bg-white/10" aria-label="Toggle balance visibility">
                   {showBal ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
@@ -338,6 +326,9 @@ export function Dashboard() {
             <div className="grid gap-6 md:grid-cols-2">
               {/* ── LEFT COLUMN: Main wallet balance ───────────────── */}
               <div>
+                <div className="text-xs uppercase tracking-wider text-white/70 font-semibold mb-3">
+                  Wallet balance
+                </div>
                 <div className="flex items-end gap-2">
                   <span className={`text-4xl md:text-6xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
                     style={!showBal ? { background: "rgba(255,255,255,0.4)", WebkitBackgroundClip: "text", color: "transparent" } : undefined}>
@@ -345,10 +336,13 @@ export function Dashboard() {
                       if (!showBal) return "••••••";
                       if (focusedToken === "usdc") {
                         if (usdcBalance === null) return "0";
+                        // USDC zero shows "0" (whole number only)
+                        if (usdcBalance.formatted === "0" || usdcBalance.formatted === "0.0") return "0";
                         return usdcBalance.formatted;
                       }
-                      // ETH shows 0.0 when empty
+                      // ETH zero shows "0.0"
                       if (balance === null) return "0.0";
+                      if (balance.formatted === "0") return "0.0";
                       return balance.formatted;
                     })()}
                   </span>
@@ -390,7 +384,17 @@ export function Dashboard() {
                   )}
                 </div>
                 {(() => {
-                  const other = focusedToken === "usdc" ? (balance ? balance.formatted : "0.0") : (usdcBalance ? usdcBalance.formatted : "0");
+                  // Alternate chip: USDC shows "0" when zero, ETH shows "0.0"
+                  let other;
+                  if (focusedToken === "usdc") {
+                    // Showing USDC main, alternate is ETH
+                    other = balance ? balance.formatted : "0.0";
+                    if (other === "0") other = "0.0";
+                  } else {
+                    // Showing ETH main, alternate is USDC
+                    other = usdcBalance ? usdcBalance.formatted : "0";
+                    if (other === "0.0") other = "0";
+                  }
                   const otherSymbol = focusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC";
                   const otherKey = focusedToken === "usdc" ? "native" : "usdc";
                   return (
@@ -409,8 +413,12 @@ export function Dashboard() {
 
               {/* ── RIGHT COLUMN: Private (stealth) balance ──────────
                   Mirror of the left column. md:border-l + md:pl-6 creates
-                  the divider. Label is in the top row. Same structure. */}
+                  the divider. Label is INSIDE the column, aligned with
+                  the content below it. Same structure as the left. */}
               <div className="md:border-l md:border-white/10 md:pl-6">
+                <div className="text-xs uppercase tracking-wider text-green-400 font-semibold mb-3">
+                  Private
+                </div>
                 <div className="flex items-end gap-2">
                   <span className={`text-4xl md:text-6xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
                     style={!showBal ? { background: "rgba(255,255,255,0.4)", WebkitBackgroundClip: "text", color: "transparent" } : undefined}>
