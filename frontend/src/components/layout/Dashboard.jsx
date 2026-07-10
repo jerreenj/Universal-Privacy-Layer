@@ -326,54 +326,74 @@ export function Dashboard() {
             </div>
 
             <div className={`grid gap-6 ${stealthBal && parseFloat(stealthBal.usdc || "0") > 0 ? "md:grid-cols-2" : ""}`}>
-              {/* ── LEFT COLUMN: Main wallet balance ───────────────── */}
+              {/* ── LEFT COLUMN: Main wallet balance ─────────────────
+                  EXACTLY as it was before — original text-4xl md:text-6xl
+                  sizing, original dropdown, original alternate chip.
+                  Nothing changed here. */}
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-white/30 mb-1">
                   Main
                 </div>
                 <div className="flex items-end gap-2">
-                  <span className={`text-3xl md:text-4xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
+                  <span className={`text-4xl md:text-6xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
                     style={!showBal ? { background: "rgba(255,255,255,0.4)", WebkitBackgroundClip: "text", color: "transparent" } : undefined}>
                     {(() => {
-                      if (!showBal) return "••••";
+                      if (!showBal) return "••••••";
                       if (focusedToken === "usdc") {
-                        // Show main-only USDC (subtract stealth portion if combined)
                         if (usdcBalance === null && address) return "…";
                         if (usdcBalance === null) return "—";
-                        // If usdcBalance includes stealth portion, subtract it for the main display
-                        let val = usdcBalance.formatted;
-                        return val;
+                        return usdcBalance.formatted;
                       }
                       if (balance === null) return "…";
                       return balance.formatted;
                     })()}
                   </span>
                 </div>
-                {/* Token flip chip for main wallet */}
-                <div className="mt-1">
+                <div className="relative inline-block mt-2" ref={tokenMenuRef}>
                   <button
-                    onClick={() => setFocusedToken(focusedToken === "usdc" ? "native" : "usdc")}
-                    className="inline-flex items-center gap-1 text-sm font-semibold text-white hover:bg-white/10 px-1 py-0.5 transition-colors"
+                    onClick={() => setTokenMenuOpen((o) => !o)}
+                    aria-haspopup="listbox"
+                    aria-expanded={tokenMenuOpen}
+                    className="inline-flex items-center gap-1.5 px-2 py-1 text-base md:text-lg font-semibold text-white hover:bg-white/10 transition-colors"
                   >
-                    <span style={{ color: focusedToken === "usdc" ? undefined : CHAINS[safeChain].color }}>
+                    <span>
                       {focusedToken === "usdc" ? "USDC" : (CHAINS[safeChain]?.symbol || "Native")}
                     </span>
-                    <span className="text-white/40 text-xs">on {CHAINS[safeChain]?.name}</span>
-                    <ChevronDown className="w-3 h-3 text-white/40" />
+                    <span className="text-white/40 text-sm font-normal" style={{ color: CHAINS[safeChain].color }}>
+                      on {CHAINS[safeChain]?.name}
+                    </span>
+                    <ChevronDown className={`w-4 h-4 text-white/60 transition-transform ${tokenMenuOpen ? "rotate-180" : ""}`} />
                   </button>
+                  {tokenMenuOpen && (
+                    <div role="listbox" className="absolute top-full left-0 mt-2 z-20 bg-black border border-white/20 min-w-[260px] shadow-2xl">
+                      {[
+                        { key: "usdc", label: "USDC", sub: "Stablecoin — same contract on every supported chain", available: !!usdcBalance && usdcBalance.formatted !== "—" },
+                        { key: "native", label: CHAINS[safeChain]?.symbol || "Native", sub: `Chain native token (${CHAINS[safeChain]?.name || "—"})`, available: !!balance },
+                      ].map((opt) => {
+                        const isFocused = focusedToken === opt.key;
+                        return (
+                          <button key={opt.key} role="option" aria-selected={isFocused} disabled={!opt.available}
+                            onClick={() => { setFocusedToken(opt.key); setTokenMenuOpen(false); }}
+                            className={`w-full text-left px-3 py-2.5 flex items-center justify-between text-xs hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent border-b border-white/5 last:border-b-0 ${isFocused ? "bg-white/5" : ""}`}>
+                            <div>
+                              <div className={`font-semibold ${isFocused ? "text-white" : "text-white/80"}`}>{opt.label}</div>
+                              <div className="text-[10px] text-white/40">{opt.sub}</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-                {/* Alternate token chip */}
                 {(() => {
-                  const other = focusedToken === "usdc"
-                    ? (balance ? balance.formatted : null)
-                    : (usdcBalance ? usdcBalance.formatted : null);
+                  const other = focusedToken === "usdc" ? (balance ? balance.formatted : null) : (usdcBalance ? usdcBalance.formatted : null);
                   const otherSymbol = focusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC";
                   const otherKey = focusedToken === "usdc" ? "native" : "usdc";
                   if (other === null) return null;
                   return (
-                    <div className="flex items-center gap-2 text-xs text-white/40 mt-2">
+                    <div className="flex items-center gap-2 text-xs text-white/40 mt-3 pt-3 border-t border-white/10">
                       <span className="text-white/30">+</span>
-                      <button onClick={() => setFocusedToken(otherKey)}
+                      <button onClick={() => setFocusedToken(otherKey)} data-testid="alternate-token-chip"
                         className="inline-flex items-center gap-1.5 hover:text-white transition-colors">
                         <span className="font-mono">{other}</span>
                         <span>{otherSymbol}</span>
@@ -385,36 +405,38 @@ export function Dashboard() {
               </div>
 
               {/* ── RIGHT COLUMN: Stealth balance (only if > 0) ──────
-                  No middle line. Same sizing/alignment as the left
-                  column — uses the exact same class names. */}
+                  Same sizing as the left. A thin divider line separates
+                  the two columns. Only shows when stealth USDC > 0. */}
               {stealthBal && parseFloat(stealthBal.usdc || "0") > 0 ? (
-                <div>
+                <div className="md:border-l md:border-white/10 md:pl-6">
                   <div className="text-[10px] uppercase tracking-wider text-green-400/50 mb-1">
                     Private
                   </div>
                   <div className="flex items-end gap-2">
-                    <span className={`text-3xl md:text-4xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
+                    <span className={`text-4xl md:text-6xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
                       style={!showBal ? { background: "rgba(255,255,255,0.4)", WebkitBackgroundClip: "text", color: "transparent" } : undefined}>
                       {(() => {
-                        if (!showBal) return "••••";
+                        if (!showBal) return "••••••";
                         if (stealthFocusedToken === "usdc") return stealthBal.usdc || "0";
                         return stealthBal.eth || "0";
                       })()}
                     </span>
                   </div>
-                  <div className="mt-1">
+                  <div className="mt-2">
                     <button
                       onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
-                      className="inline-flex items-center gap-1 text-sm font-semibold text-white hover:bg-white/10 px-1 py-0.5 transition-colors"
+                      className="inline-flex items-center gap-1.5 px-2 py-1 text-base md:text-lg font-semibold text-white hover:bg-white/10 transition-colors"
                     >
-                      <span style={{ color: stealthFocusedToken === "usdc" ? undefined : CHAINS[safeChain].color }}>
+                      <span>
                         {stealthFocusedToken === "usdc" ? "USDC" : (CHAINS[safeChain]?.symbol || "Native")}
                       </span>
-                      <span className="text-white/40 text-xs">on {CHAINS[safeChain]?.name}</span>
-                      <ChevronDown className="w-3 h-3 text-white/40" />
+                      <span className="text-white/40 text-sm font-normal" style={{ color: CHAINS[safeChain].color }}>
+                        on {CHAINS[safeChain]?.name}
+                      </span>
+                      <ChevronDown className="w-4 h-4 text-white/60" />
                     </button>
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-white/40 mt-2">
+                  <div className="flex items-center gap-2 text-xs text-white/40 mt-3 pt-3 border-t border-white/10">
                     <span className="text-white/30">+</span>
                     <button onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
                       className="inline-flex items-center gap-1.5 hover:text-white transition-colors">
