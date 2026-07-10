@@ -325,11 +325,8 @@ export function Dashboard() {
               </div>
             </div>
 
-            <div className={`grid gap-6 ${stealthBal && parseFloat(stealthBal.usdc || "0") > 0 ? "md:grid-cols-2" : ""}`}>
-              {/* ── LEFT COLUMN: Main wallet balance ─────────────────
-                  EXACTLY as it was before — original text-4xl md:text-6xl
-                  sizing, original dropdown, original alternate chip.
-                  Nothing changed here. */}
+            <div className="grid gap-6 md:grid-cols-2">
+              {/* ── LEFT COLUMN: Main wallet balance ───────────────── */}
               <div>
                 <div className="flex items-end gap-2">
                   <span className={`text-4xl md:text-6xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
@@ -337,8 +334,6 @@ export function Dashboard() {
                     {(() => {
                       if (!showBal) return "••••••";
                       if (focusedToken === "usdc") {
-                        // Show 0 when fetch hasn't returned or balance is
-                        // null — NOT dots. Dots only when hide button is on.
                         if (usdcBalance === null) return "0";
                         return usdcBalance.formatted;
                       }
@@ -365,14 +360,14 @@ export function Dashboard() {
                   {tokenMenuOpen && (
                     <div role="listbox" className="absolute top-full left-0 mt-2 z-20 bg-black border border-white/20 min-w-[260px] shadow-2xl">
                       {[
-                        { key: "usdc", label: "USDC", sub: "Stablecoin — same contract on every supported chain", available: !!usdcBalance && usdcBalance.formatted !== "—" },
-                        { key: "native", label: CHAINS[safeChain]?.symbol || "Native", sub: `Chain native token (${CHAINS[safeChain]?.name || "—"})`, available: !!balance },
+                        { key: "usdc", label: "USDC", sub: "Stablecoin — same contract on every supported chain" },
+                        { key: "native", label: CHAINS[safeChain]?.symbol || "Native", sub: `Chain native token (${CHAINS[safeChain]?.name || "—"})` },
                       ].map((opt) => {
                         const isFocused = focusedToken === opt.key;
                         return (
-                          <button key={opt.key} role="option" aria-selected={isFocused} disabled={!opt.available}
+                          <button key={opt.key} role="option" aria-selected={isFocused}
                             onClick={() => { setFocusedToken(opt.key); setTokenMenuOpen(false); }}
-                            className={`w-full text-left px-3 py-2.5 flex items-center justify-between text-xs hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent border-b border-white/5 last:border-b-0 ${isFocused ? "bg-white/5" : ""}`}>
+                            className={`w-full text-left px-3 py-2.5 flex items-center justify-between text-xs hover:bg-white/10 border-b border-white/5 last:border-b-0 ${isFocused ? "bg-white/5" : ""}`}>
                             <div>
                               <div className={`font-semibold ${isFocused ? "text-white" : "text-white/80"}`}>{opt.label}</div>
                               <div className="text-[10px] text-white/40">{opt.sub}</div>
@@ -384,10 +379,9 @@ export function Dashboard() {
                   )}
                 </div>
                 {(() => {
-                  const other = focusedToken === "usdc" ? (balance ? balance.formatted : null) : (usdcBalance ? usdcBalance.formatted : null);
+                  const other = focusedToken === "usdc" ? (balance ? balance.formatted : "0") : (usdcBalance ? usdcBalance.formatted : "0");
                   const otherSymbol = focusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC";
                   const otherKey = focusedToken === "usdc" ? "native" : "usdc";
-                  if (other === null) return null;
                   return (
                     <div className="flex items-center gap-2 text-xs text-white/40 mt-3 pt-3 border-t border-white/10">
                       <span className="text-white/30">+</span>
@@ -402,49 +396,47 @@ export function Dashboard() {
                 })()}
               </div>
 
-              {/* ── RIGHT COLUMN: Stealth balance (only if > 0) ──────
-                  Same sizing as the left. A thin divider line separates
-                  the two columns. Only shows when stealth USDC > 0. */}
-              {stealthBal && parseFloat(stealthBal.usdc || "0") > 0 ? (
-                <div className="md:border-l md:border-white/10 md:pl-6">
-                  <div className="text-[10px] uppercase tracking-wider text-green-400/50 mb-1">
-                    Private
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <span className={`text-4xl md:text-6xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
-                      style={!showBal ? { background: "rgba(255,255,255,0.4)", WebkitBackgroundClip: "text", color: "transparent" } : undefined}>
-                      {(() => {
-                        if (!showBal) return "••••••";
-                        if (stealthFocusedToken === "usdc") return stealthBal.usdc || "0";
-                        return stealthBal.eth || "0";
-                      })()}
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    <button
-                      onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
-                      className="inline-flex items-center gap-1.5 px-2 py-1 text-base md:text-lg font-semibold text-white hover:bg-white/10 transition-colors"
-                    >
-                      <span>
-                        {stealthFocusedToken === "usdc" ? "USDC" : (CHAINS[safeChain]?.symbol || "Native")}
-                      </span>
-                      <span className="text-white/40 text-sm font-normal" style={{ color: CHAINS[safeChain].color }}>
-                        on {CHAINS[safeChain]?.name}
-                      </span>
-                      <ChevronDown className="w-4 h-4 text-white/60" />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-white/40 mt-3 pt-3 border-t border-white/10">
-                    <span className="text-white/30">+</span>
-                    <button onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
-                      className="inline-flex items-center gap-1.5 hover:text-white transition-colors">
-                      <span className="font-mono">{stealthFocusedToken === "usdc" ? (stealthBal.eth || "0") : (stealthBal.usdc || "0")}</span>
-                      <span>{stealthFocusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC"}</span>
-                      <ChevronDown className="w-3 h-3 text-white/30" />
-                    </button>
-                  </div>
+              {/* ── RIGHT COLUMN: Private (stealth) balance ──────────
+                  Always shows — even if 0. Same layout/flip as the left.
+                  Thin divider line between columns. */}
+              <div className="md:border-l md:border-white/10 md:pl-6">
+                <div className="text-[10px] uppercase tracking-wider text-green-400/50 mb-1">
+                  Private
                 </div>
-              ) : null}
+                <div className="flex items-end gap-2">
+                  <span className={`text-4xl md:text-6xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
+                    style={!showBal ? { background: "rgba(255,255,255,0.4)", WebkitBackgroundClip: "text", color: "transparent" } : undefined}>
+                    {(() => {
+                      if (!showBal) return "••••••";
+                      if (stealthFocusedToken === "usdc") return stealthBal?.usdc || "0";
+                      return stealthBal?.eth || "0";
+                    })()}
+                  </span>
+                </div>
+                <div className="mt-2">
+                  <button
+                    onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
+                    className="inline-flex items-center gap-1.5 px-2 py-1 text-base md:text-lg font-semibold text-white hover:bg-white/10 transition-colors"
+                  >
+                    <span>
+                      {stealthFocusedToken === "usdc" ? "USDC" : (CHAINS[safeChain]?.symbol || "Native")}
+                    </span>
+                    <span className="text-white/40 text-sm font-normal" style={{ color: CHAINS[safeChain].color }}>
+                      on {CHAINS[safeChain]?.name}
+                    </span>
+                    <ChevronDown className="w-4 h-4 text-white/60" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-white/40 mt-3 pt-3 border-t border-white/10">
+                  <span className="text-white/30">+</span>
+                  <button onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
+                    className="inline-flex items-center gap-1.5 hover:text-white transition-colors">
+                    <span className="font-mono">{stealthFocusedToken === "usdc" ? (stealthBal?.eth || "0") : (stealthBal?.usdc || "0")}</span>
+                    <span>{stealthFocusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC"}</span>
+                    <ChevronDown className="w-3 h-3 text-white/30" />
+                  </button>
+                </div>
+              </div>
             </div>
 
             {hiddenBalance && (
