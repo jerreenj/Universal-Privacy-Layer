@@ -184,14 +184,17 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
         // format is st:eth:0x<addr>. Extract the address.
         if (!stealthAddr) {
             try {
-                const axios = (await import("axios")).default;
-                const { API } = await import("@/config/chains");
-                const res = await axios.get(`${API}/stealth/meta/${ownerAddress}`);
-                if (res.data && res.data.meta_address) {
-                    const meta = res.data.meta_address;
-                    // Format: st:eth:0x<addr>
-                    const match = meta.match(/0x[a-fA-F0-9]{40}/);
-                    if (match) stealthAddr = match[0];
+                // Use relative URL — the frontend and backend are on
+                // the same domain (BACKEND_URL is empty = relative).
+                const resp = await fetch(`/api/stealth/meta/${ownerAddress}`);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data && data.meta_address) {
+                        const meta = data.meta_address;
+                        // Format: st:eth:0x<addr>
+                        const match = meta.match(/0x[a-fA-F0-9]{40}/);
+                        if (match) stealthAddr = match[0];
+                    }
                 }
             } catch {}
         }
