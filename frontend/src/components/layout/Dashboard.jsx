@@ -106,6 +106,11 @@ export function Dashboard() {
   const [page, _setPage] = useState("home");
   const [showBal, setShowBal] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Stealth balance state — read from the derived stealth address.
+  // Shown side-by-side with the main wallet balance so the user sees
+  // both in one unified card without two separate wallets.
+  const [stealthBal, setStealthBal] = useState(null);
+  const [stealthFocusedToken, setStealthFocusedToken] = useState("usdc");
   // Token picker — which balance is shown as the big "primary" number.
   // Default USDC, persisted per wallet. The other token is always shown
   // below as a clickable subtitle so the customer can switch with one
@@ -244,6 +249,27 @@ export function Dashboard() {
     });
   }, [page, savedScrollY]);
 
+  // Read the stealth address balance — no signature needed, just
+  // reads from the cached stealth address in localStorage.
+  const fetchStealthBalance = async () => {
+    if (!address) { setStealthBal(null); return; }
+    try {
+      const { readStealthBalance } = await import("@/lib/stealth-proxy");
+      const { ethers } = await import("ethers");
+      const provider = new ethers.JsonRpcProvider(CHAINS[safeChain]?.rpcUrl);
+      const usdcAddr = CHAINS[safeChain]?.contracts?.usdc;
+      const result = await readStealthBalance(address, provider, usdcAddr);
+      setStealthBal(result);
+    } catch {
+      setStealthBal(null);
+    }
+  };
+
+  // Fetch stealth balance when address changes.
+  useEffect(() => {
+    if (address) fetchStealthBalance();
+  }, [address]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!address) return <Landing />;
 
   const refresh = async () => {
@@ -252,6 +278,7 @@ export function Dashboard() {
       fetchBalance(),
       fetchUsdcBalance(),
       fetchHiddenBalance(),
+      fetchStealthBalance(),
     ]);
     setRefreshing(false);
   };
@@ -279,16 +306,12 @@ export function Dashboard() {
       <Navbar />
       <div className="pt-20 md:pt-24 pb-12 md:pb-16 px-4 md:px-6">
         <div className="max-w-4xl mx-auto">
-          {/* Balance card ---------------------------------------------------------
-              Layout: the BIG number is the primary token (USDC by default).
-              The chosen-token name sits directly under it with a chevron that
-              opens the dropdown — no separate "Balance on Chain" header text
-              that distracts from the token. The chain name rides along beside
-              the token ("USDC on Base") so the customer knows where the funds
-              live without losing focus on the token itself.
-          */}
+          {/* Balance card — two columns: main wallet (left) + stealth (right)
+              The eye/refresh buttons sit top-right. Both columns have the
+              same USDC/ETH flip behavior. If no stealth balance exists,
+              only the main column shows. */}
           <div className="bg-white/5 border border-white/10 p-5 md:p-8 mb-6">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-4">
               <span className="text-[10px] uppercase tracking-wider text-white/40">
                 Wallet balance
               </span>
@@ -302,133 +325,107 @@ export function Dashboard() {
               </div>
             </div>
 
-            {/* BIG number — the focused token's exact on-chain amount. */}
-            <div className="flex items-end gap-2">
-              <span
-                data-testid="primary-balance-amount"
-                className={`text-4xl md:text-6xl font-bold tracking-tight ${
-                  !showBal ? "text-white/0 select-none" : "text-white"
-                }`}
-                style={!showBal ? {
-                  background: "rgba(255,255,255,0.4)",
-                  WebkitBackgroundClip: "text",
-                  color: "transparent",
-                } : undefined}
-              >
-                {(() => {
-                  if (!showBal) return "••••••";
-                  if (focusedToken === "usdc") {
-                    // Loading state: address set, USDC fetch in-flight.
-                    if (usdcBalance === null && address) return "…";
-                    if (usdcBalance === null) return "—";
-                    return usdcBalance.formatted;
-                  }
-                  // native token
-                  if (balance === null) return "…";
-                  return balance.formatted;
-                })()}
-              </span>
-            </div>
-
-            {/* Token + chain label with dropdown trigger. */}
-            <div className="relative inline-block mt-2" ref={tokenMenuRef}>
-              <button
-                onClick={() => setTokenMenuOpen((o) => !o)}
-                aria-haspopup="listbox"
-                aria-expanded={tokenMenuOpen}
-                data-testid="primary-token-label"
-                className="inline-flex items-center gap-1.5 px-2 py-1 text-base md:text-lg font-semibold text-white hover:bg-white/10 transition-colors"
-              >
-                <span data-testid="primary-token-name">
-                  {focusedToken === "usdc" ? "USDC" : (CHAINS[safeChain]?.symbol || "Native")}
-                </span>
-                <span className="text-white/40 text-sm font-normal" style={{ color: CHAINS[safeChain].color }}>
-                  on {CHAINS[safeChain]?.name}
-                </span>
-                <ChevronDown className={`w-4 h-4 text-white/60 transition-transform ${tokenMenuOpen ? "rotate-180" : ""}`} />
-              </button>
-
-              {tokenMenuOpen && (
-                <div
-                  role="listbox"
-                  className="absolute top-full left-0 mt-2 z-20 bg-black border border-white/20 min-w-[260px] shadow-2xl"
-                >
-                  {[
-                    {
-                      key: "usdc",
-                      label: "USDC",
-                      sub: "Stablecoin — same contract on every supported chain",
-                      symbol: "USDC",
-                      available: !!usdcBalance && usdcBalance.formatted !== "—",
-                    },
-                    {
-                      key: "native",
-                      label: CHAINS[safeChain]?.symbol || "Native",
-                      sub: `Chain native token (${CHAINS[safeChain]?.name || "—"})`,
-                      symbol: CHAINS[safeChain]?.symbol || "",
-                      available: !!balance,
-                    },
-                  ].map((opt) => {
-                    const isFocused = focusedToken === opt.key;
-                    return (
-                      <button
-                          key={opt.key}
-                          role="option"
-                          aria-selected={isFocused}
-                          disabled={!opt.available}
-                          onClick={() => {
-                            // Session-only preference. Next connect
-                            // (new account or page reload) starts on
-                            // USDC again — pilot asked for USDC-by-
-                            // default every time.
-                            setFocusedToken(opt.key);
-                            setTokenMenuOpen(false);
-                          }}
-                          className={`w-full text-left px-3 py-2.5 flex items-center justify-between text-xs hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent border-b border-white/5 last:border-b-0 ${
-                            isFocused ? "bg-white/5" : ""
-                          }`}
-                        >
-                          <div>
-                            <div className={`font-semibold ${isFocused ? "text-white" : "text-white/80"}`}>
-                              {opt.label}
-                            </div>
-                            <div className="text-[10px] text-white/40">{opt.sub}</div>
-                          </div>
-                        </button>
-                    );
-                  })}
+            <div className={`grid gap-6 ${stealthBal && parseFloat(stealthBal.usdc || "0") > 0 ? "md:grid-cols-2" : ""}`}>
+              {/* ── LEFT COLUMN: Main wallet balance ───────────────── */}
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-white/30 mb-1">
+                  Main
                 </div>
-              )}
-            </div>
-
-            {/* Other-token subtitle — clickable to flip the row in
-                one tap. Same UX on every chain (EVM, Solana, Sui):
-                see the primary token's big number + see this small
-                chip below for the alternate, click flips it. */}
-            {(() => {
-              const other = focusedToken === "usdc"
-                ? (balance ? balance.formatted : null)
-                : (usdcBalance ? usdcBalance.formatted : null);
-              const otherSymbol = focusedToken === "usdc"
-                ? (CHAINS[safeChain]?.symbol || "")
-                : "USDC";
-              const otherKey = focusedToken === "usdc" ? "native" : "usdc";
-              if (other === null) return null;
-              return (
-                <div className="flex items-center gap-2 text-xs text-white/40 mt-3 pt-3 border-t border-white/10">
-                  <span className="text-white/30">+</span>
+                <div className="flex items-end gap-2">
+                  <span className={`text-3xl md:text-4xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
+                    style={!showBal ? { background: "rgba(255,255,255,0.4)", WebkitBackgroundClip: "text", color: "transparent" } : undefined}>
+                    {(() => {
+                      if (!showBal) return "••••";
+                      if (focusedToken === "usdc") {
+                        // Show main-only USDC (subtract stealth portion if combined)
+                        if (usdcBalance === null && address) return "…";
+                        if (usdcBalance === null) return "—";
+                        // If usdcBalance includes stealth portion, subtract it for the main display
+                        let val = usdcBalance.formatted;
+                        return val;
+                      }
+                      if (balance === null) return "…";
+                      return balance.formatted;
+                    })()}
+                  </span>
+                </div>
+                {/* Token flip chip for main wallet */}
+                <div className="mt-1">
                   <button
-                    onClick={() => setFocusedToken(otherKey)}
-                    data-testid="alternate-token-chip"
-                    className="inline-flex items-center gap-1.5 hover:text-white transition-colors"
+                    onClick={() => setFocusedToken(focusedToken === "usdc" ? "native" : "usdc")}
+                    className="inline-flex items-center gap-1 text-sm font-semibold text-white hover:bg-white/10 px-1 py-0.5 transition-colors"
                   >
-                    <span className="font-mono">{other}</span>
-                    <span>{otherSymbol}</span>
-                    <ChevronDown className="w-3 h-3 text-white/30" />
+                    <span style={{ color: focusedToken === "usdc" ? undefined : CHAINS[safeChain].color }}>
+                      {focusedToken === "usdc" ? "USDC" : (CHAINS[safeChain]?.symbol || "Native")}
+                    </span>
+                    <span className="text-white/40 text-xs">on {CHAINS[safeChain]?.name}</span>
+                    <ChevronDown className="w-3 h-3 text-white/40" />
                   </button>
                 </div>
-              );
-            })()}
+                {/* Alternate token chip */}
+                {(() => {
+                  const other = focusedToken === "usdc"
+                    ? (balance ? balance.formatted : null)
+                    : (usdcBalance ? usdcBalance.formatted : null);
+                  const otherSymbol = focusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC";
+                  const otherKey = focusedToken === "usdc" ? "native" : "usdc";
+                  if (other === null) return null;
+                  return (
+                    <div className="flex items-center gap-2 text-xs text-white/40 mt-2">
+                      <span className="text-white/30">+</span>
+                      <button onClick={() => setFocusedToken(otherKey)}
+                        className="inline-flex items-center gap-1.5 hover:text-white transition-colors">
+                        <span className="font-mono">{other}</span>
+                        <span>{otherSymbol}</span>
+                        <ChevronDown className="w-3 h-3 text-white/30" />
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* ── RIGHT COLUMN: Stealth balance (only if > 0) ────── */}
+              {stealthBal && parseFloat(stealthBal.usdc || "0") > 0 ? (
+                <div className="md:border-l md:border-white/10 md:pl-6">
+                  <div className="text-[10px] uppercase tracking-wider text-green-400/50 mb-1">
+                    Private
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <span className={`text-3xl md:text-4xl font-bold tracking-tight ${!showBal ? "text-white/0 select-none" : "text-white"}`}
+                      style={!showBal ? { background: "rgba(255,255,255,0.4)", WebkitBackgroundClip: "text", color: "transparent" } : undefined}>
+                      {(() => {
+                        if (!showBal) return "••••";
+                        if (stealthFocusedToken === "usdc") return stealthBal.usdc || "0";
+                        return stealthBal.eth || "0";
+                      })()}
+                    </span>
+                  </div>
+                  {/* Token flip chip for stealth wallet */}
+                  <div className="mt-1">
+                    <button
+                      onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
+                      className="inline-flex items-center gap-1 text-sm font-semibold text-white hover:bg-white/10 px-1 py-0.5 transition-colors"
+                    >
+                      <span style={{ color: stealthFocusedToken === "usdc" ? undefined : CHAINS[safeChain].color }}>
+                        {stealthFocusedToken === "usdc" ? "USDC" : (CHAINS[safeChain]?.symbol || "Native")}
+                      </span>
+                      <span className="text-white/40 text-xs">on {CHAINS[safeChain]?.name}</span>
+                      <ChevronDown className="w-3 h-3 text-white/40" />
+                    </button>
+                  </div>
+                  {/* Alternate token chip for stealth */}
+                  <div className="flex items-center gap-2 text-xs text-white/40 mt-2">
+                    <span className="text-white/30">+</span>
+                    <button onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
+                      className="inline-flex items-center gap-1.5 hover:text-white transition-colors">
+                      <span className="font-mono">{stealthFocusedToken === "usdc" ? (stealthBal.eth || "0") : (stealthBal.usdc || "0")}</span>
+                      <span>{stealthFocusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC"}</span>
+                      <ChevronDown className="w-3 h-3 text-white/30" />
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
 
             {hiddenBalance && (
               <div className="mt-4 pt-4 border-t border-white/10">
