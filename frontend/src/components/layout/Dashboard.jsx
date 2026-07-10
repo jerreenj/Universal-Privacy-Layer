@@ -384,9 +384,11 @@ export function Dashboard() {
                 })()}
               </div>
 
-              {/* ── RIGHT COLUMN: Stealth balance (only if > 0) ────── */}
+              {/* ── RIGHT COLUMN: Stealth balance (only if > 0) ──────
+                  No middle line. Same sizing/alignment as the left
+                  column — uses the exact same class names. */}
               {stealthBal && parseFloat(stealthBal.usdc || "0") > 0 ? (
-                <div className="md:border-l md:border-white/10 md:pl-6">
+                <div>
                   <div className="text-[10px] uppercase tracking-wider text-green-400/50 mb-1">
                     Private
                   </div>
@@ -400,7 +402,6 @@ export function Dashboard() {
                       })()}
                     </span>
                   </div>
-                  {/* Token flip chip for stealth wallet */}
                   <div className="mt-1">
                     <button
                       onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
@@ -413,7 +414,6 @@ export function Dashboard() {
                       <ChevronDown className="w-3 h-3 text-white/40" />
                     </button>
                   </div>
-                  {/* Alternate token chip for stealth */}
                   <div className="flex items-center gap-2 text-xs text-white/40 mt-2">
                     <span className="text-white/30">+</span>
                     <button onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
