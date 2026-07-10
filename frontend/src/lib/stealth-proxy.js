@@ -124,6 +124,60 @@ export async function checkProxyBalance(proxyAddress, provider, usdcAddress) {
 }
 
 /**
+ * Read the USDC + ETH balance at the user's stealth address WITHOUT
+ * requiring a signature. The stealth address is cached in localStorage
+ * from the first deriveStealthEOA call — if it exists, we just read
+ * the balance. If not cached, return 0 (the stealth address hasn't
+ * been generated yet).
+ *
+ * This lets the dashboard show a COMBINED balance (main + stealth)
+ * as one number, so the user sees a single unified balance without
+ * knowing there are two addresses behind it.
+ *
+ * @param {string} ownerAddress — the main wallet address (for cache key)
+ * @param {object} provider — ethers v6 provider (Base)
+ * @param {string} usdcAddress — USDC contract address on the chain
+ * @returns {Promise<{eth: string, usdc: string, address: string|null}>}
+ */
+export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
+    if (!ownerAddress || !provider) return { eth: "0", usdc: "0", address: null };
+    try {
+        // Read the cached stealth address — no signature needed.
+        const cached = localStorage.getItem(lsKey(ownerAddress));
+        if (!cached) return { eth: "0", usdc: "0", address: null };
+        const parsed = JSON.parse(cached);
+        if (!parsed.address) return { eth: "0", usdc: "0", address: null };
+
+        // Also check the stealth EOA key (from wallet-stealth deriveStealthEOA)
+        // which may be cached under a different key.
+        const stealthPkKey = `upl:stealth-pk:${ownerAddress.toLowerCase()}`;
+        let stealthAddr = parsed.address;
+        try {
+            const stealthPk = localStorage.getItem(stealthPkKey);
+            if (stealthPk) {
+                const w = new ethers.Wallet(stealthPk);
+                // Use whichever address we find — both should be the same
+                // if derived from the same wallet.
+                stealthAddr = w.address;
+            }
+        } catch {}
+
+        // Read balances at the stealth address.
+        const ethBal = await provider.getBalance(stealthAddr);
+        const usdc = new ethers.Contract(usdcAddress,
+            ["function balanceOf(address) view returns (uint256)"], provider);
+        const usdcBal = await usdc.balanceOf(stealthAddr);
+        return {
+            eth: ethers.formatEther(ethBal),
+            usdc: ethers.formatUnits(usdcBal, 6),
+            address: stealthAddr,
+        };
+    } catch {
+        return { eth: "0", usdc: "0", address: null };
+    }
+}
+
+/**
  * Fund the proxy wallet from the customer's main wallet.
  * One-time setup. After this, the customer never touches the
  * proxy directly — swaps route through it.

@@ -711,6 +711,30 @@ export function WalletProvider({ children }) {
             raw = 0n;
           }
         }
+        // ── Combine main + stealth balance into one unified number ──
+        // The stealth address is derived from the wallet signature and
+        // cached in localStorage. We read its USDC balance and add it
+        // to the main balance so the user sees ONE total. They never
+        // need to know there are two addresses behind it.
+        try {
+          const { readStealthBalance } = await import("@/lib/stealth-proxy");
+          const provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
+          const stealthBal = await readStealthBalance(address, provider, usdcAddr);
+          if (stealthBal.usdc && parseFloat(stealthBal.usdc) > 0) {
+            // Add stealth USDC to the main balance.
+            const stealthRaw = BigInt(ethers.parseUnits(stealthBal.usdc, 6));
+            const combinedRaw = BigInt(raw) + stealthRaw;
+            setUsdcBalance({
+              formatted: formatExactBalance(combinedRaw, decimals),
+              symbol: "USDC",
+              address: usdcAddr,
+              chain,
+              stealthAddress: stealthBal.address,
+              stealthUsdc: stealthBal.usdc,
+            });
+            return;
+          }
+        } catch {}
         setUsdcBalance({
           formatted: formatExactBalance(raw, decimals),
           symbol: "USDC",
