@@ -143,19 +143,12 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
     if (!ownerAddress || !provider) return { eth: "0", usdc: "0", address: null };
     try {
         let stealthAddr = null;
-
-        // Check THREE possible cache keys for the stealth address:
-        // 1. upl:stealth-pk:<address> — set by StealthMeta.jsx (the
-        //    "generate" button that creates the receive link). This is
-        //    the primary stealth receive address.
-        // 2. upl:stealth-proxy:<address> — set by getOrCreateProxyWallet
-        //    (the proxy wallet used for swaps). Different address but
-        //    also a stealth-derived address that may hold funds.
-        // 3. upl:stealth-meta:<address> — set by StealthReceive.jsx
-        //    (the scan/derive flow). Another possible cache location.
         const addrLower = ownerAddress.toLowerCase();
 
-        // Try stealth-pk first (the receive address).
+        // Check THREE possible cache keys for the stealth address:
+        // 1. upl:stealth-pk:<address> — StealthMeta generate button
+        // 2. upl:stealth-proxy:<address> — getOrCreateProxyWallet
+        // 3. upl:scan:<address> — StealthReceive derive flow
         try {
             const stealthPk = localStorage.getItem(`upl:stealth-pk:${addrLower}`);
             if (stealthPk) {
@@ -164,7 +157,6 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
             }
         } catch {}
 
-        // If not found, try the proxy cache.
         if (!stealthAddr) {
             try {
                 const cached = localStorage.getItem(lsKey(ownerAddress));
@@ -175,7 +167,6 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
             } catch {}
         }
 
-        // If not found, try the scan cache.
         if (!stealthAddr) {
             try {
                 const scanCache = localStorage.getItem(`upl:scan:${addrLower}`);
@@ -184,6 +175,23 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
                     if (parsed.address || parsed.stealthAddress) {
                         stealthAddr = parsed.address || parsed.stealthAddress;
                     }
+                }
+            } catch {}
+        }
+
+        // 4. Backend fallback: check if there's a stealth meta-address
+        // registered on the backend for this wallet. The meta-address
+        // format is st:eth:0x<addr>. Extract the address.
+        if (!stealthAddr) {
+            try {
+                const axios = (await import("axios")).default;
+                const { API } = await import("@/config/chains");
+                const res = await axios.get(`${API}/stealth/meta/${ownerAddress}`);
+                if (res.data && res.data.meta_address) {
+                    const meta = res.data.meta_address;
+                    // Format: st:eth:0x<addr>
+                    const match = meta.match(/0x[a-fA-F0-9]{40}/);
+                    if (match) stealthAddr = match[0];
                 }
             } catch {}
         }
