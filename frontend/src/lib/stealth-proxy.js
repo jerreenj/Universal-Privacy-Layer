@@ -141,67 +141,102 @@ export async function checkProxyBalance(proxyAddress, provider, usdcAddress) {
  */
 export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
     if (!ownerAddress || !provider) return { eth: "0", usdc: "0", address: null };
+    let stealthAddr = null;
+    const addrLower = ownerAddress.toLowerCase();
+
+    // 1. Check localStorage upl:stealth-pk:<address>
     try {
-        let stealthAddr = null;
-        const addrLower = ownerAddress.toLowerCase();
+        const stealthPk = localStorage.getItem(`upl:stealth-pk:${addrLower}`);
+        if (stealthPk) {
+            const w = new ethers.Wallet(stealthPk);
+            stealthAddr = w.address;
+            console.log("[stealth] Found address from stealth-pk cache:", stealthAddr);
+        }
+    } catch (e) { console.warn("[stealth] stealth-pk lookup failed:", e); }
 
-        // Check THREE possible cache keys for the stealth address:
-        // 1. upl:stealth-pk:<address> — StealthMeta generate button
-        // 2. upl:stealth-proxy:<address> — getOrCreateProxyWallet
-        // 3. upl:scan:<address> — StealthReceive derive flow
+    // 2. Check localStorage upl:stealth-proxy:<address>
+    if (!stealthAddr) {
         try {
-            const stealthPk = localStorage.getItem(`upl:stealth-pk:${addrLower}`);
-            if (stealthPk) {
-                const w = new ethers.Wallet(stealthPk);
-                stealthAddr = w.address;
+            const cached = localStorage.getItem(lsKey(ownerAddress));
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                if (parsed.address) {
+                    stealthAddr = parsed.address;
+                    console.log("[stealth] Found address from proxy cache:", stealthAddr);
+                }
             }
-        } catch {}
+        } catch (e) { console.warn("[stealth] proxy cache lookup failed:", e); }
+    }
 
-        if (!stealthAddr) {
-            try {
-                const cached = localStorage.getItem(lsKey(ownerAddress));
-                if (cached) {
-                    const parsed = JSON.parse(cached);
-                    if (parsed.address) stealthAddr = parsed.address;
+    // 3. Check localStorage upl:scan:<address>
+    if (!stealthAddr) {
+        try {
+            const scanCache = localStorage.getItem(`upl:scan:${addrLower}`);
+            if (scanCache) {
+                const parsed = JSON.parse(scanCache);
+                if (parsed.address || parsed.stealthAddress) {
+                    stealthAddr = parsed.address || parsed.stealthAddress;
+                    console.log("[stealth] Found address from scan cache:", stealthAddr);
                 }
-            } catch {}
-        }
+            }
+        } catch (e) { console.warn("[stealth] scan cache lookup failed:", e); }
+    }
 
-        if (!stealthAddr) {
-            try {
-                const scanCache = localStorage.getItem(`upl:scan:${addrLower}`);
-                if (scanCache) {
-                    const parsed = JSON.parse(scanCache);
-                    if (parsed.address || parsed.stealthAddress) {
-                        stealthAddr = parsed.address || parsed.stealthAddress;
+    // 4. Check ALL localStorage keys starting with upl:stealth-pk:
+    //    (handles wallet address mismatch — the stealth address was
+    //    cached under a different wallet address than the one currently
+    //    connected)
+    if (!stealthAddr) {
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith("upl:stealth-pk:")) {
+                    const pk = localStorage.getItem(key);
+                    if (pk) {
+                        const w = new ethers.Wallet(pk);
+                        // Check if this address has any USDC balance
+                        if (usdcAddress) {
+                            const usdc = new ethers.Contract(usdcAddress,
+                                ["function balanceOf(address) view returns (uint256)"], provider);
+                            const bal = await usdc.balanceOf(w.address);
+                            if (bal > 0n) {
+                                stealthAddr = w.address;
+                                console.log("[stealth] Found address with balance from global scan:", stealthAddr);
+                                break;
+                            }
+                        }
                     }
                 }
-            } catch {}
-        }
+            }
+        } catch (e) { console.warn("[stealth] global scan failed:", e); }
+    }
 
-        // 4. Backend fallback: check if there's a stealth meta-address
-        // registered on the backend for this wallet. The meta-address
-        // format is st:eth:0x<addr>. Extract the address.
-        if (!stealthAddr) {
-            try {
-                // Use relative URL — the frontend and backend are on
-                // the same domain (BACKEND_URL is empty = relative).
-                const resp = await fetch(`/api/stealth/meta/${ownerAddress}`);
-                if (resp.ok) {
-                    const data = await resp.json();
-                    if (data && data.meta_address) {
-                        const meta = data.meta_address;
-                        // Format: st:eth:0x<addr>
-                        const match = meta.match(/0x[a-fA-F0-9]{40}/);
-                        if (match) stealthAddr = match[0];
+    // 5. Backend fallback
+    if (!stealthAddr) {
+        try {
+            const resp = await fetch(`/api/stealth/meta/${ownerAddress}`);
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data && data.meta_address) {
+                    const match = data.meta_address.match(/0x[a-fA-F0-9]{40}/);
+                    if (match) {
+                        stealthAddr = match[0];
+                        console.log("[stealth] Found address from backend:", stealthAddr);
                     }
                 }
-            } catch {}
-        }
+            } else {
+                console.warn("[stealth] Backend returned:", resp.status);
+            }
+        } catch (e) { console.warn("[stealth] Backend lookup failed:", e); }
+    }
 
-        if (!stealthAddr) return { eth: "0", usdc: "0", address: null };
+    if (!stealthAddr) {
+        console.log("[stealth] No stealth address found — showing 0");
+        return { eth: "0.0", usdc: "0", address: null };
+    }
 
-        // Read balances at the stealth address.
+    // Read balances
+    try {
         const ethBal = await provider.getBalance(stealthAddr);
         let usdcBal = 0n;
         if (usdcAddress) {
@@ -209,13 +244,16 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
                 ["function balanceOf(address) view returns (uint256)"], provider);
             usdcBal = await usdc.balanceOf(stealthAddr);
         }
-        return {
+        const result = {
             eth: ethers.formatEther(ethBal),
             usdc: ethers.formatUnits(usdcBal, 6),
             address: stealthAddr,
         };
-    } catch {
-        return { eth: "0", usdc: "0", address: null };
+        console.log("[stealth] Balance at", stealthAddr, ":", result);
+        return result;
+    } catch (e) {
+        console.error("[stealth] Balance read failed:", e);
+        return { eth: "0.0", usdc: "0", address: stealthAddr };
     }
 }
 
