@@ -43,6 +43,11 @@ export function WalletProvider({ children }) {
   const [usdcBalance, setUsdcBalance] = useState(null);
   const [hiddenBalance, setHiddenBalance] = useState(null);
   const [hiddenBalanceError, setHiddenBalanceError] = useState(null);
+  // Stealth balance — moved from Dashboard.jsx local state to here
+  // so it can be refreshed from any feature component (e.g.
+  // SendContent triggers fetchStealthBalance after a successful tx
+  // so the dashboard's "Private" column updates).
+  const [stealthBalance, setStealthBalance] = useState(null);
   const [signer, setSigner] = useState(null);
   const [solConn, setSolConn] = useState(null);
   const [connecting, setConnecting] = useState(false);
@@ -749,7 +754,31 @@ export function WalletProvider({ children }) {
     }
   }, [address]);
 
-  useEffect(() => { if (address) { fetchBalance(); fetchUsdcBalance(); fetchHiddenBalance(); } }, [address, chain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance]);
+  /**
+   * fetchStealthBalance — reads USDC + ETH across every address in
+   * the user's local stealth archive. Lifted from Dashboard.jsx so
+   * SendContent can also call it (after a successful tx the
+   * dashboard's "Private" column auto-updates).
+   *
+   * The function uses lib/balance-reader.js (raw fetch) so it
+   * works under browser CORS preflight rules. Sum across all
+   * archived addresses so the customer sees their TOTAL private
+   * balance, not just one.
+   */
+  const fetchStealthBalance = useCallback(async () => {
+    if (!address) { setStealthBalance(null); return; }
+    try {
+      const { readStealthBalance } = await import("@/lib/stealth-proxy");
+      const usdcAddr = CHAINS[chain]?.contracts?.usdc ||
+        "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+      const result = await readStealthBalance(address, null, usdcAddr);
+      setStealthBalance(result);
+    } catch {
+      setStealthBalance(null);
+    }
+  }, [address, chain]);
+
+  useEffect(() => { if (address) { fetchBalance(); fetchUsdcBalance(); fetchHiddenBalance(); fetchStealthBalance(); } }, [address, chain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance, fetchStealthBalance]);
 
   useEffect(() => {
     if (window.ethereum) {
@@ -758,7 +787,7 @@ export function WalletProvider({ children }) {
   }, [disconnect]);
 
   return (
-    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, hiddenBalanceError, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, availableWallets, connectWallet, connectEVM, connectRabby, connectSolana, connectSui, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance }}>
+    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, hiddenBalanceError, stealthBalance, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, availableWallets, connectWallet, connectEVM, connectRabby, connectSolana, connectSui, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance, fetchStealthBalance }}>
       {children}
     </WalletContext.Provider>
   );

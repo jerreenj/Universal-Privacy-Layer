@@ -102,14 +102,13 @@ function LoadingFallback() {
 }
 
 export function Dashboard() {
-  const { address, balance, usdcBalance, chain, fetchBalance, fetchHiddenBalance, fetchUsdcBalance, hiddenBalance } = useWallet();
+  const { address, balance, usdcBalance, stealthBalanceance, chain, fetchBalance, fetchHiddenBalance, fetchUsdcBalance, fetchStealthBalance, hiddenBalance } = useWallet();
   const [page, _setPage] = useState("home");
   const [showBal, setShowBal] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  // Stealth balance state — read from the derived stealth address.
-  // Shown side-by-side with the main wallet balance so the user sees
-  // both in one unified card without two separate wallets.
-  const [stealthBal, setStealthBal] = useState(null);
+  // Stealth balance now lives in WalletContext so any feature
+  // component (e.g. SendContent) can refresh it after a complete
+  // transaction. The dashboard reads from context directly.
   const [stealthFocusedToken, setStealthFocusedToken] = useState("usdc");
   // Token picker — which balance is shown as the big "primary" number.
   // Default USDC, persisted per wallet. The other token is always shown
@@ -249,26 +248,9 @@ export function Dashboard() {
     });
   }, [page, savedScrollY]);
 
-  // Read the stealth address balance — no signature needed, just
-  // reads from the cached stealth address in localStorage.
-  const fetchStealthBalance = async () => {
-    if (!address) { setStealthBal(null); return; }
-    try {
-      const { readStealthBalance } = await import("@/lib/stealth-proxy");
-      const { ethers } = await import("ethers");
-      const provider = new ethers.JsonRpcProvider(CHAINS[safeChain]?.rpcUrl);
-      const usdcAddr = CHAINS[safeChain]?.contracts?.usdc;
-      const result = await readStealthBalance(address, provider, usdcAddr);
-      setStealthBal(result);
-    } catch {
-      setStealthBal(null);
-    }
-  };
-
-  // Fetch stealth balance when address changes.
-  useEffect(() => {
-    if (address) fetchStealthBalance();
-  }, [address]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (stealth balance is fetched in WalletContext — see
+  //  fetchStealthBalance in the provider value. The dashboard's
+  //  refresh button calls it via the context.)
 
   if (!address) return <Landing />;
 
@@ -426,12 +408,12 @@ export function Dashboard() {
                       if (!showBal) return "••••••";
                       if (stealthFocusedToken === "usdc") {
                         // USDC zero shows "0" (whole number only)
-                        const v = parseFloat(stealthBal?.usdc || "0");
-                        return v > 0 ? stealthBal.usdc : "0";
+                        const v = parseFloat(stealthBalance?.usdc || "0");
+                        return v > 0 ? stealthBalance.usdc : "0";
                       }
                       // ETH zero shows "0.0"
-                      const v = parseFloat(stealthBal?.eth || "0");
-                      return v > 0 ? stealthBal.eth : "0.0";
+                      const v = parseFloat(stealthBalance?.eth || "0");
+                      return v > 0 ? stealthBalance.eth : "0.0";
                     })()}
                   </span>
                 </div>
@@ -454,8 +436,8 @@ export function Dashboard() {
                   <button onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
                     className="inline-flex items-center gap-1.5 hover:text-white transition-colors">
                     <span className="font-mono">{stealthFocusedToken === "usdc"
-                      ? (parseFloat(stealthBal?.eth || "0") > 0 ? stealthBal.eth : "0.0")
-                      : (parseFloat(stealthBal?.usdc || "0") > 0 ? stealthBal.usdc : "0")}</span>
+                      ? (parseFloat(stealthBalance?.eth || "0") > 0 ? stealthBalance.eth : "0.0")
+                      : (parseFloat(stealthBalance?.usdc || "0") > 0 ? stealthBalance.usdc : "0")}</span>
                     <span>{stealthFocusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC"}</span>
                     <ChevronDown className="w-3 h-3 text-white/30" />
                   </button>
