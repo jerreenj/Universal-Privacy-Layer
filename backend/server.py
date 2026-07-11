@@ -596,6 +596,11 @@ def _load_deployed_addresses(static_contracts: Dict[str, Dict[str, Any]]) -> Dic
         # it to the frontend Privacy-Mode toggle.
         "confidential_swap_wrapper",
         "confidential_reverse_swap",
+        # Sender-hiding USDC forwarder — PrivacyUSDCForwarder.sol. Lets the
+        # customer route USDC through a contract so their main wallet never
+        # appears as `from` on BaseScan. Each user funds their own balance;
+        # not a Tornado-Cash-style mixer pool.
+        "privacy_usdc_forwarder",
         "deployer", "fee_recipient", "pool_owner",
     )
     provenance_keys = ("chainId", "deployedAt", "commit", "redeployedNote")
@@ -648,6 +653,7 @@ _UPL_CONTRACTS_STATIC = {
         "privacy_relayer": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "stealth_registry": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
+        "privacy_usdc_forwarder": "0x0000000000000000000000000000000000000000",  # USDC sender-hiding forwarder; placeholder until deploy
         "explorer": "https://basescan.org"
     },
     "arbitrum": {
@@ -3795,6 +3801,314 @@ async def submit_relayer_intent(request: RelayerSubmitRequest):
         raise
     except Exception as e:
         logger.error(f"Relayer submit error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+# ─── PrivacyUSDCForwarder — sender-hiding USDC routes ───────────────────
+# Mirrors the /relayer/* flow but for ERC20 (USDC). The customer pre-funds
+# the forwarder on-chain (`deposit(token, amount)`), then signs an EIP-712
+# intent (`forward(...)` equivalent of `relay()`) off-chain. The relayer
+# hot wallet submits the `forward()` call, paying gas from its own balance,
+# and the on-chain USDC `Transfer` event has `from = forwarder`, never
+# from the customer's public wallet.
+#
+# Architectural note: each customer only ever holds their own balance in
+# this contract. There's no pooling with other users — this is a personal
+# privacy wallet, NOT a Tornado-Cash-style mixer. Privacy comes from
+# sender-hiding on every `forward()` call, not from anonymity-set maths.
+
+USDC_FORWARDER_ABI = [
+    {"inputs": [{"name": "token", "type": "address"}, {"name": "amount", "type": "uint256"}],
+     "name": "deposit", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"name": "token", "type": "address"}, {"name": "amount", "type": "uint256"}],
+     "name": "withdraw", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [
+        {"name": "user", "type": "address"},
+        {"name": "token", "type": "address"},
+        {"name": "recipient", "type": "address"},
+        {"name": "amount", "type": "uint256"},
+        {"name": "ephemeralKey", "type": "bytes32"},
+        {"name": "viewTag", "type": "uint8"},
+        {"name": "nonce", "type": "uint256"},
+        {"name": "deadline", "type": "uint256"}
+    ], "name": "forward", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [
+        {"name": "user", "type": "address"},
+        {"name": "token", "type": "address"}
+    ], "name": "prepaid", "outputs": [{"name": "", "type": "uint256"}],
+     "stateMutability": "view", "type": "function"},
+    {"inputs": [{"name": "user", "type": "address"}],
+     "name": "nonces", "outputs": [{"name": "", "type": "uint256"}],
+     "stateMutability": "view", "type": "function"},
+]
+
+USDC_FORWARD_INTENT_NAME = "UPL PrivacyUSDCForwarder"
+USDC_FORWARD_INTENT_VERSION = "1"
+
+USDC_FORWARD_INTENT_TYPE = {
+    "Forward": [
+        {"name": "token", "type": "address"},
+        {"name": "recipient", "type": "address"},
+        {"name": "amount", "type": "uint256"},
+        {"name": "ephemeralKey", "type": "bytes32"},
+        {"name": "viewTag", "type": "uint8"},
+        {"name": "nonce", "type": "uint256"},
+        {"name": "deadline", "type": "uint256"}
+    ]
+}
+
+
+def _usdc_forwarder_address_for(chain: str) -> Optional[str]:
+    """Resolve the deployed PrivacyUSDCForwarder address for a chain.
+    Mirrors _relayer_address_for. Returns None if the chain has no
+    deployment yet (so the caller can 503 cleanly)."""
+    cfg = UPL_CONTRACTS.get(chain)
+    if not cfg:
+        return None
+    addr = cfg.get("privacy_usdc_forwarder")
+    return addr if addr and addr.lower() not in ("0x0", "0x0000000000000000000000000000000000000000") else None
+
+
+class USDCForwardIntentRequest(BaseModel):
+    from_address: str            # user's main wallet (sender in the deposit tx; never seen on USDC.send txs)
+    stealth_address: str         # stealth recipient
+    amount: str                  # human-readable amount, e.g. "0.10" (USDC = 6 decimals on Base)
+    token: str = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"  # USDC on Base
+    ephemeral_key: str
+    view_tag: int
+    chain: str = "base"
+
+
+@api_router.post("/usdc-forwarder/prepare-tx")
+async def prepare_usdc_forward_intent(request: USDCForwardIntentRequest):
+    """Prepare an EIP-712 Forward intent the user signs.
+
+    Mirrors /relayer/prepare-tx. Returns the typed-data payload, the
+    forwarder contract address, and a unique nonce so the customer
+    signs once and the relayer hot wallet submits `forward()` on their
+    behalf. The customer's wallet never appears as msg.sender on the
+    resulting USDC Transfer event."""
+    try:
+        config = CHAIN_CONFIG.get(request.chain)
+        if not config:
+            raise HTTPException(status_code=400, detail="Invalid chain")
+
+        fwd_address = _usdc_forwarder_address_for(request.chain)
+        if not fwd_address:
+            raise HTTPException(
+                status_code=503,
+                detail=f"PrivacyUSDCForwarder not deployed on chain '{request.chain}'. "
+                       "Deploy with: forge script script/DeployPrivacyUSDCForwarder.s.sol "
+                       "--rpc-url $BASE_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY --broadcast"
+            )
+
+        token_addr = Web3.to_checksum_address(request.token)
+        # Hardcode USDC decimals = 6 on Base. BNB USDC uses 18; if we ever ship
+        # BNB add the lookup. For now the customer's "0.10" amount is converted
+        # to 6-decimal raw here.
+        decimals = 6
+        amount_raw = int(float(request.amount) * (10 ** decimals))
+        if amount_raw <= 0:
+            raise HTTPException(status_code=400, detail="amount must be > 0")
+
+        ephemeral_bytes32 = _hex_to_bytes32(request.ephemeral_key)
+        nonce = int.from_bytes(secrets.token_bytes(32), "big")
+        deadline = int(_time.time()) + RELAY_INTENT_TTL_SECONDS
+
+        domain = {
+            "name": USDC_FORWARD_INTENT_NAME,
+            "version": USDC_FORWARD_INTENT_VERSION,
+            "chainId": config["chain_id"],
+            "verifyingContract": Web3.to_checksum_address(fwd_address),
+        }
+        message = {
+            "token": token_addr,
+            "recipient": Web3.to_checksum_address(request.stealth_address),
+            "amount": str(amount_raw),
+            "ephemeralKey": "0x" + ephemeral_bytes32.hex(),
+            "viewTag": int(request.view_tag) & 0xFF,
+            "nonce": str(nonce),
+            "deadline": str(deadline),
+        }
+
+        return {
+            "chain": request.chain,
+            "chainId": config["chain_id"],
+            "forwarder_contract": fwd_address,
+            "token": token_addr,
+            "amount_raw": str(amount_raw),
+            "decimals": decimals,
+            "intent": {
+                "domain": domain,
+                "types": USDC_FORWARD_INTENT_TYPE,
+                "primaryType": "Forward",
+                "message": message,
+            },
+            "submission": {
+                "mode": "forwarder-submit",
+                "signed_by": request.from_address,
+                "expires_at": deadline,
+                "note": (
+                    "Sign the intent with your wallet. The relayer service verifies "
+                    "your signature and submits forward() on-chain — your wallet never "
+                    "appears as the USDC Transfer from-address."
+                ),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"USDC forwarder intent preparation error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+class USDCForwardSubmitRequest(BaseModel):
+    intent: Dict[str, Any]
+    signature: str
+    from_address: str
+    chain: str = "base"
+
+
+@api_router.post("/usdc-forwarder/submit")
+async def submit_usdc_forward_intent(request: USDCForwardSubmitRequest):
+    """Validate the EIP-712 signature and submit a single `forward()` tx
+    on-chain. The relayer wallet is `msg.sender` of the forward() call;
+    on-chain USDC Transfer has `from = forwarder` (NOT the customer)."""
+    try:
+        config = CHAIN_CONFIG.get(request.chain)
+        if not config:
+            raise HTTPException(status_code=400, detail="Invalid chain")
+
+        fwd_address = _usdc_forwarder_address_for(request.chain)
+        if not fwd_address:
+            raise HTTPException(
+                status_code=503,
+                detail=f"PrivacyUSDCForwarder not deployed on chain '{request.chain}'"
+            )
+
+        relayer_key = (
+            os.environ.get("RELAYER_PRIVATE_KEY")
+            or _read_hot_wallet_keyfile()
+            or os.environ.get("DEPLOYER_PRIVATE_KEY")
+        )
+        if not relayer_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Relayer wallet not configured. Set RELAYER_PRIVATE_KEY env "
+                       "OR drop the gitignored scripts/.relayer-hot-wallet.txt."
+            )
+
+        intent = request.intent
+        domain = intent.get("domain", {})
+        types = intent.get("types", {})
+        message = intent.get("message", {})
+
+        full_message = {
+            "types": {**types, "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"},
+            ]},
+            "primaryType": "Forward",
+            "domain": domain,
+            "message": message,
+        }
+
+        try:
+            from eth_account.messages import encode_typed_data
+            encoded = encode_typed_data(full_message=full_message)
+            recovered = Account.recover_message(encoded, signature=request.signature)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Signature validation failed: {e}")
+
+        if recovered.lower() != request.from_address.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Signature recovered {recovered} != claimed {request.from_address}"
+            )
+
+        w3 = get_w3(request.chain)
+        fwd_contract = w3.eth.contract(
+            address=Web3.to_checksum_address(fwd_address),
+            abi=USDC_FORWARDER_ABI,
+        )
+
+        # Build the forward() transaction.
+        # Parameters: user, token, recipient, amount, ephemeralKey, viewTag, nonce, deadline
+        forward_fn = fwd_contract.functions.forward(
+            Web3.to_checksum_address(request.from_address),
+            Web3.to_checksum_address(message["token"]),
+            Web3.to_checksum_address(message["recipient"]),
+            int(message["amount"]),
+            bytes.fromhex(message["ephemeralKey"][2:]) if message["ephemeralKey"].startswith("0x") else bytes.fromhex(message["ephemeralKey"]),
+            int(message["viewTag"]),
+            int(message["nonce"]),
+            int(message["deadline"]),
+        )
+
+        relayer_addr = Account.from_key(relayer_key).address
+        nonce_tx = w3.eth.get_transaction_count(relayer_addr)
+
+        tx = forward_fn.build_transaction({
+            "from": relayer_addr,
+            "nonce": nonce_tx,
+            "gas": 250000,
+            "gasPrice": w3.eth.gas_price,
+            "chainId": config["chain_id"],
+        })
+        signed = w3.eth.account.sign_transaction(tx, relayer_key)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+
+        return {
+            "tx_hash": tx_hash.hex(),
+            "block_number": receipt["blockNumber"],
+            "status": "success" if receipt["status"] == 1 else "reverted",
+            "from_address": request.from_address,           # user's main wallet — NOT the on-chain `from`
+            "forwarder_contract": fwd_address,
+            "recipient": message["recipient"],
+            "amount": message["amount"],
+            "token": message["token"],
+            "explorer": f"{config.get('explorer', 'https://basescan.org')}/tx/{tx_hash.hex()}",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"USDC forwarder submit error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+@api_router.get("/usdc-forwarder/prepaid/{chain}/{user}/{token}")
+async def get_prepaid_balance(chain: str, user: str, token: str):
+    """Read the user's prepaid USDC balance in the PrivacyUSDCForwarder
+    contract. Returns 0 if the forwarder isn't deployed yet OR the user
+    hasn't deposited."""
+    try:
+        fwd_address = _usdc_forwarder_address_for(chain)
+        if not fwd_address:
+            return {"chain": chain, "user": user.lower(), "token": token.lower(), "prepaid": "0",
+                    "forwarder_deployed": False}
+        w3 = get_w3(chain)
+        fwd = w3.eth.contract(address=Web3.to_checksum_address(fwd_address), abi=USDC_FORWARDER_ABI)
+        balance = fwd.functions.prepaid(
+            Web3.to_checksum_address(user),
+            Web3.to_checksum_address(token),
+        ).call()
+        return {
+            "chain": chain,
+            "user": user.lower(),
+            "token": token.lower(),
+            "prepaid": str(balance),
+            "decimals": 6,
+            "prepaid_formatted": str(int(balance) / (10 ** 6)),
+            "forwarder_deployed": True,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Prepaid balance read error: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
 
 
