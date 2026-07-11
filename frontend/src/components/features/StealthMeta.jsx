@@ -155,7 +155,7 @@ export function StealthMeta({ address, signer }) {
       // This is the directory listing so other wallets know
       // where to send payments to. Safe to call; safe if
       // it fails (we still have the local archive).
-      const metaAddress = `st:eth:${stealthAddr}`;
+      const metaAddress = stealthAddr;
       try {
         await axios.post(`${API}/stealth/meta/register`, {
           wallet_address: address,
@@ -196,7 +196,7 @@ export function StealthMeta({ address, signer }) {
     </div>
   );
 
-  const metaAddress = active ? `st:eth:${active.address}` : null;
+  const metaAddress = active ? active.address : null;
 
   return (
     <div className="space-y-4">
@@ -275,7 +275,7 @@ export function StealthMeta({ address, signer }) {
                         <div className="flex items-center gap-2">
                           {isActive && <span className="text-[10px] text-green-400 uppercase tracking-wider">Active</span>}
                           <span className="font-mono text-white/70 truncate">
-                            st:eth:{entry.address}
+                            {entry.address}
                           </span>
                         </div>
                         <div className="text-[10px] text-white/30 mt-0.5">
@@ -283,7 +283,7 @@ export function StealthMeta({ address, signer }) {
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
-                        <CopyBtn text={`st:eth:${entry.address}`} label="Address" />
+                        <CopyBtn text={entry.address} label="Address" />
                         {!isActive && (
                           <button
                             onClick={() => { setActive(entry); toast.success("Switched active receive address"); }}
