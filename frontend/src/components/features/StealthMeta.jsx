@@ -1,9 +1,14 @@
 import { useState, useEffect } from "react";
-import { Copy, Check, Shield } from "lucide-react";
+import { Copy, Check, Shield, RefreshCw, ChevronDown, ChevronUp, History } from "lucide-react";
 import { toast } from "sonner";
-import { API } from "../../config/chains";
 import axios from "axios";
-import { deriveStealthEOA } from "@/lib/wallet-stealth";
+import { ethers } from "ethers";
+import { API } from "../../config/chains";
+import {
+  deriveStealthEOA,
+  getAddressArchive,
+  addAddressToArchive,
+} from "@/lib/wallet-stealth";
 
 function CopyBtn({ text, label }) {
   const [copied, setCopied] = useState(false);
@@ -22,59 +27,86 @@ function CopyBtn({ text, label }) {
 }
 
 /**
- * StealthMeta — the customer's ONE private receive address.
+ * StealthMeta — the customer's PRIVATE receive address(es).
  *
- * One per connected wallet. Same address works across every chain
- * (Base, Arbitrum, Optimism, anywhere EVM). Share it once. Anyone
- * who has it can pay you. Nobody else can link it to your main
- * wallet.
+ * ONE primary address (the latest) is displayed front-and-centre
+ * with a recycling icon on the right so the customer can mint a
+ * FRESH receive address on demand. Every address the customer has
+ * minted is stored LOCALLY in `localStorage` —
+ * `upl:stealth-archive:<wallet>` — and NEVER leaves the browser
  *
- * The customer only sees:
- *   - Their st:eth link (one line of plaintext).
- *   - Copy button.
- *   - Save button.
+ * Self-custodial guarantee:
+ *   - No backend call stores a private key.
+ *   - No backend call returns a private key.
+ *   - `deriveStealthEOA(walletSignature)` is computed in the
+ *     browser from a HKDF over a wallet-signed domain string.
+ *   - The backend's `/stealth/meta/register` only sees the
+ *     PUBLIC address (the `0x...` part) — useful for the
+ *     stealth directory so others can announce payments to the
+ *     customer. The backend never sees the private key.
  *
- * The customer never sees:
- *   - Spend / view key (those only exist if you opt into EIP-5564
- *     meta format elsewhere — the consumer-grade flow just uses ONE
- *     address, derived from your wallet signature, used across
- *     every chain).
- *
- * The internal browser keeps enough state to do inbound streaming:
- * when something arrives at this address, the wallet app watches
- * and surfaces the activity. The customer's main wallet balance
- * grows in their normal place.
+ * The customer sees:
+ *   - Their `st:eth:0x...` link (current active address).
+ *   - A recycling icon: click → mint a fresh address derived
+ *     from the same wallet signature with new entropy. Old
+ *     addresses drop into a local archive the customer can
+ *     sweep from but the dashboard stops tracking them.
+ *   - An expandable "Archive" panel listing every address the
+ *     customer has minted.
  */
 export function StealthMeta({ address, signer }) {
-  const [existing, setExisting] = useState(null);
+  const [active, setActive] = useState(null);             // currently-shown receive address
+  const [archive, setArchive] = useState([]);              // every address the customer has minted
   const [step, setStep] = useState("check");
   const [loading, setLoading] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
 
+  // On mount + on address change: pull local archive FIRST. The
+  // archive is the source of truth (offline, self-custodial).
+  // Backend is a secondary lookup for the meta_address display.
   useEffect(() => {
     if (!address) return;
+    const local = getAddressArchive(address);
+    if (local.length > 0) {
+      setArchive(local);
+      setActive(local[0]);
+      setStep("done");
+      return;
+    }
+    // No local archive — check the backend for the public
+    // meta_address only (NOT looking for private keys there).
     axios.get(`${API}/stealth/meta/${address}`)
-      .then(r => { setExisting(r.data); setStep("done"); })
+      .then((r) => {
+        const meta = r?.data?.meta_address || "";
+        const match = meta.match(/0x[a-fA-F0-9]{40}/);
+        if (match) {
+          // We have a public address but no private key. The user
+          // can't sign for it from this device — prompt them to
+          // generate one (will mint a fresh address).
+          setStep("generate");
+        } else {
+          setStep("generate");
+        }
+      })
       .catch(() => setStep("generate"));
   }, [address]);
 
   /**
-   * Generate the ONE address. Same wallet → same address every
-   * time, regardless of chain. We keep the st:eth: ERC-5564 prefix
-   * so other wallets recognise it; we paste it IN FULL.
+   * Generate the FIRST address (when the customer has none) OR
+   * generate a NEW fresh address on click of the recycling icon.
+   * Same wallet signature → different entropy →
+   * different secp256k1 private key → independent stealth address.
    *
    * Always re-fetch the signer from the provider before signing.
    * The cached signer in React state goes stale when the user
    * switches MetaMask accounts; ethers v6 then errors with
-   * 'from should be same as current address'. Catch it explicitly
-   * and retry by reconnecting the wallet.
+   * 'from should be same as current address'.
    */
-  const generate = async () => {
+  const generate = async (opts = {}) => {
     if (!signer) { toast.error("Connect a wallet first"); return; }
     setLoading(true);
+    const isRefresh = !!opts.refresh;
     try {
-      // Pull a FRESH signer from the provider every time. If the
-      // user switched accounts in MetaMask after the initial
-      // connect, the cached signer is stale.
       const provider =
         signer.provider ||
         (typeof window !== "undefined" && window.ethereum
@@ -83,15 +115,12 @@ export function StealthMeta({ address, signer }) {
       if (!provider) { toast.error("No wallet provider"); setLoading(false); return; }
       const freshSigner = await provider.getSigner();
 
-      // Sanity: MetaMask's currently-selected account must match
-      // what we think it is. If it doesn't, surface a clear message
-      // and stop — we won't sign with a mismatched address.
       try {
         const accounts = await provider.listAccounts();
         if (accounts && accounts[0] &&
             accounts[0].toLowerCase() !== freshSigner.address.toLowerCase()) {
           toast.error(
-            "MetaMask account changed. Reconnect your wallet and try again.",
+            "Wallet account changed. Reconnect and try again.",
             { duration: 6000 }
           );
           setLoading(false);
@@ -99,28 +128,60 @@ export function StealthMeta({ address, signer }) {
         }
       } catch { /* listAccounts not supported in older wallets */ }
 
-      const { address: stealthAddr, privateKey } = await deriveStealthEOA(freshSigner);
-      try {
-        localStorage.setItem(`upl:stealth-pk:${address.toLowerCase()}`, privateKey);
-      } catch {}
-      const metaAddress = `st:eth:${stealthAddr}`;
-      await axios.post(`${API}/stealth/meta/register`, {
-        wallet_address: address,
-        meta_address: metaAddress,
-        chain: "all",
+      // For a refresh (recycling icon click), use fresh entropy.
+      // For the initial generate, entropy is undefined → the
+      // canonical "upl-stealth:wallet-2" derivation runs.
+      const entropy = isRefresh
+        ? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
+        : undefined;
+      const { address: stealthAddr, privateKey } =
+        await deriveStealthEOA(freshSigner, entropy);
+      // Append to the customer's LOCAL archive. Self-custodial —
+      // only the user's browser holds the keys.
+      addAddressToArchive(address, {
+        address: stealthAddr,
+        privateKey,
+        entropy,
+        createdAt: Date.now(),
       });
-      setExisting({ meta_address: metaAddress });
+      // Update the UI from the on-disk archive so all counts
+      // are consistent.
+      const refreshed = getAddressArchive(address);
+      setArchive(refreshed);
+      setActive(refreshed[0]);
+
+      // The backend's /stealth/meta/register endpoint stores
+      // ONLY the public meta-address — never any private key.
+      // This is the directory listing so other wallets know
+      // where to send payments to. Safe to call; safe if
+      // it fails (we still have the local archive).
+      const metaAddress = `st:eth:${stealthAddr}`;
+      try {
+        await axios.post(`${API}/stealth/meta/register`, {
+          wallet_address: address,
+          meta_address: metaAddress,
+          chain: "all",
+        });
+      } catch {
+        // Non-fatal — the customer's local copy is the source
+        // of truth. Backend presence would just let other
+        // wallets discover us; we can retry later.
+      }
       setStep("done");
-      toast.success("Done");
+      toast.success(
+        isRefresh
+          ? `New receive address minted (${refreshed.length} total)`
+          : "Stealth address ready"
+      );
     } catch (e) {
       const msg = (e?.message || "").toLowerCase();
       if (msg.includes("from should be same")) {
         toast.error(
-          "MetaMask account changed. Reconnect your wallet and try again.",
+          "Wallet account changed. Reconnect your wallet and try again.",
           { duration: 6000 }
         );
       } else if (msg.includes("user rejected") || msg.includes("user denied")) {
-        toast.error("Signature rejected in MetaMask. Click again and approve.");
+        toast.error("Signature rejected in wallet. Click again and approve.");
       } else {
         toast.error(`Could not generate: ${e.message || "Unknown error"}`);
       }
@@ -135,41 +196,122 @@ export function StealthMeta({ address, signer }) {
     </div>
   );
 
+  const metaAddress = active ? `st:eth:${active.address}` : null;
+
   return (
     <div className="space-y-4">
       <div>
         <h3 className="font-semibold text-white">Your Receive Link</h3>
-        <p className="text-xs text-white/40">One address. Works on every chain. Share once.</p>
+        <p className="text-xs text-white/40">
+          One address per recycle. Works on every chain. Click the recycle icon
+          to mint a fresh address — old ones stay in your local archive forever.
+        </p>
       </div>
 
-      {step === "done" && existing && (
-        <div className="bg-green-400/5 border border-green-400/20 p-4 space-y-2">
-          <p className="text-xs text-white/50">
-            Anyone with this link can pay you on any chain.
-          </p>
-          <div className="flex items-start gap-2">
-            <button
-              data-testid="meta-address-display"
-              onClick={() => { navigator.clipboard.writeText(existing.meta_address); toast.success("Link copied"); }}
-              className="text-xs font-mono text-white/70 break-all text-left flex-1 hover:text-white cursor-pointer bg-black/30 p-3 border border-white/10"
-            >
-              {existing.meta_address}
-            </button>
-            <CopyBtn text={existing.meta_address} label="Link" />
+      {step === "done" && active && metaAddress && (
+        <>
+          <div className="bg-green-400/5 border border-green-400/20 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-white/50">
+                Share this. Anyone with this link pays you on any chain.
+              </p>
+              <span className="text-[10px] uppercase tracking-wider text-white/30">
+                #{archive.length} of {archive.length}
+              </span>
+            </div>
+            <div className="flex items-start gap-2">
+              <button
+                data-testid="meta-address-display"
+                onClick={() => { navigator.clipboard.writeText(metaAddress); toast.success("Link copied"); }}
+                className="text-xs font-mono text-white/70 break-all text-left flex-1 hover:text-white cursor-pointer bg-black/30 p-3 border border-white/10"
+              >
+                {metaAddress}
+              </button>
+              <CopyBtn text={metaAddress} label="Link" />
+              {/* RECYCLE BUTTON: clicking mints a brand-new stealth
+                  address derived from the SAME wallet signature but
+                  with fresh entropy. Old addresses drop into the
+                  archive below. Self-custodial — the new private
+                  key is computed and stored only in the browser. */}
+              <button
+                data-testid="recycle-stealth-btn"
+                onClick={() => generate({ refresh: true })}
+                disabled={loading}
+                title="Mint a fresh stealth address"
+                className="flex items-center justify-center w-10 h-10 border border-white/20 hover:border-white/60 hover:bg-white/5 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
           </div>
-        </div>
+
+          {/* ARCHIVE PANEL — every address the customer has minted,
+              locally stored, scrollable. Clicking an archive row
+              makes it the active receive address (the private key
+              is still in the browser, so the customer can sweep
+              from any of them later). */}
+          <div className="border border-white/10">
+            <button
+              data-testid="archive-toggle"
+              onClick={() => setArchiveOpen(o => !o)}
+              className="w-full flex items-center justify-between px-3 py-2.5 text-xs uppercase tracking-wider text-white/60 hover:text-white hover:bg-white/5 transition-colors"
+            >
+              <span className="flex items-center gap-2">
+                <History className="w-3.5 h-3.5" />
+                Local archive ({archive.length})
+              </span>
+              {archiveOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+            {archiveOpen && (
+              <div className="border-t border-white/10 max-h-64 overflow-y-auto">
+                {archive.map((entry, idx) => {
+                  const isActive = entry.address === active.address;
+                  return (
+                    <div
+                      key={entry.address}
+                      className={`flex items-center justify-between px-3 py-2 text-xs border-b border-white/5 last:border-b-0 ${isActive ? "bg-white/5" : ""}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          {isActive && <span className="text-[10px] text-green-400 uppercase tracking-wider">Active</span>}
+                          <span className="font-mono text-white/70 truncate">
+                            st:eth:{entry.address}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-white/30 mt-0.5">
+                          {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "—"}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <CopyBtn text={`st:eth:${entry.address}`} label="Address" />
+                        {!isActive && (
+                          <button
+                            onClick={() => { setActive(entry); toast.success("Switched active receive address"); }}
+                            className="px-2 py-1 text-[10px] uppercase tracking-wider border border-white/20 hover:border-white/60 hover:bg-white/5 transition-colors"
+                          >
+                            Use
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {step === "generate" && (
         <div className="space-y-4">
           <div className="bg-blue-400/5 border border-blue-400/20 p-4">
             <p className="text-xs text-white/60">
-              No link yet.
+              No link yet on this device.
             </p>
           </div>
           <button
             data-testid="generate-meta-btn"
-            onClick={generate}
+            onClick={() => generate({ refresh: false })}
             disabled={loading}
             className="w-full py-3 bg-white text-black font-semibold text-sm hover:bg-white/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
           >
