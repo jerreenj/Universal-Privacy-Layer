@@ -102,7 +102,7 @@ function LoadingFallback() {
 }
 
 export function Dashboard() {
-  const { address, balance, usdcBalance, stealthBalanceance, chain, fetchBalance, fetchHiddenBalance, fetchUsdcBalance, fetchStealthBalance, hiddenBalance } = useWallet();
+  const { address, balance, usdcBalance, stealthBalance, chain, fetchBalance, fetchHiddenBalance, fetchUsdcBalance, fetchStealthBalance, hiddenBalance } = useWallet();
   const [page, _setPage] = useState("home");
   const [showBal, setShowBal] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
