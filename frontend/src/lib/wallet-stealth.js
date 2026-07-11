@@ -190,13 +190,12 @@ export async function deriveMetaAddress(signer, chainId) {
 }
 
 /**
- * deriveStealthEOA(signer) → { address, privateKey }
- * The customer's SINGLE private receive address. Derived once per
- * connected wallet — chain-independent (the same address works on
- * Base, Arbitrum, Optimism, etc.). Used in the consumer-grade
- * StealthMeta.jsx UI; non-cryptographer customers do NOT see
- * spend/view=true. THIS is "your stealth address" — you give it out
- * once, anyone sends to it.
+ * deriveStealthEOA(signer, entropy?) → { address, privateKey }
+ * The customer's PRIVATE receive address, derived from a wallet
+ * signature. Chain-independent — the same derivation works on
+ * Base, Arbitrum, Optimism, anywhere EVM. This is the address the
+ * customer shares; payments to it land in the browser's locally
+ * controlled private key.
  *
  * Same signature flow as the meta-derivative above, but the
  * HKDF info string is "upl-stealth:wallet-2" so the output is
@@ -204,17 +203,35 @@ export async function deriveMetaAddress(signer, chainId) {
  * domainFor(chainId)). The customer sees ONE address they share
  * across multiple chains — different from their main wallet EOA.
  *
- * NOTE: The private key still lives in browser storage (encrypted
- * with personal_sign-wallet-derived seal) so the FE can sign sweep
- * transactions; the customer never has to interact with it
- * manually. Auto-sweep on inbound payment.
+ * When `entropy` is provided, the HKDF info string is
+ * `"upl-stealth:wallet-2:<entropy>"` instead, which derives a
+ * DIFFERENT stealth address from the same wallet signature. This
+ * is how the customer mints a fresh receive address on demand
+ * (clicking the recycling icon in the UI) without rotating
+ * wallets: same wallet, same signature, different entropy →
+ * different secp256k1 private key → different stealth address.
+ *
+ * ENTROPY STRATEGY:
+ *   Pass a string the user can't predict (e.g.
+ *   `${Date.now()}-${Math.random()}`). The HKDF produces a
+ *   uniformly random secp256k1 scalar from it, so even adjacent
+ *   entropy values produce independent addresses (no
+ *   birthday-attack cheap relationship).
+ *
+ * SELF-CUSTODIAL: the private key NEVER leaves the browser. We
+ * write it to localStorage (per-wallet cache) and update the
+ * archive list (see getAddressArchive / addAddressToArchive
+ * below) so the user can cycle/view/sweep old addresses without
+ * touching a backend.
  */
-export async function deriveStealthEOA(signer) {
-    // Chain-independent signature. The customer seeds this once and
-    // reuses across every chain — matches their mental model of
-    // 'one address per wallet for life'.
+export async function deriveStealthEOA(signer, entropy) {
+    // Same wallet signature — the entropy is what makes the
+    // derived private key different every time.
     const sig = await signer.signMessage("UPL-Stealth-Wallet-2");
-    const bytes = await hkdfFromSignature(sig, "upl-stealth:wallet-2", 32);
+    const infoStr = entropy
+        ? `upl-stealth:wallet-2:${entropy}`
+        : "upl-stealth:wallet-2";
+    const bytes = await hkdfFromSignature(sig, infoStr, 32);
     const n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
     const pkSecp = BigInt("0x" + bytesToHex(bytes)) % n;
     if (pkSecp === 0n) throw new Error("zero stealth key — re-attempt");
@@ -223,7 +240,70 @@ export async function deriveStealthEOA(signer) {
     return {
         address,
         privateKey: pkSecp.toString(16).padStart(64, "0"),
+        entropy: entropy || null,
     };
+}
+
+/**
+ * getAddressArchive(ownerAddress) → Array<{address, privateKey, entropy, createdAt}>
+ * Returns the FULL list of stealth addresses the customer has ever
+ * minted under this wallet. Most-recent first. Stored ONLY in
+ * localStorage — no server, no telemetry. The customer owns the
+ * list and can sweep from any of these addresses using the
+ * matching privateKey.
+ *
+ * The old singleton `upl:stealth-pk:<address>` cache is kept as
+ * the "active" receive address (most recent) for backward
+ * compatibility — this archive list is the source of truth for
+ * all historical addresses.
+ */
+export function getAddressArchive(ownerAddress) {
+    if (!ownerAddress) return [];
+    try {
+        const raw = localStorage.getItem(
+            `upl:stealth-archive:${ownerAddress.toLowerCase()}`
+        );
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed;
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * addAddressToArchive(ownerAddress, entry) → void
+ * Append a new stealth address to the per-wallet archive. Also
+ * updates the singleton `upl:stealth-pk:<wallet>` cache to point
+ * at the new address so readStealthBalance() picks it up
+ * immediately without needing a refresh.
+ *
+ * Self-custodial — writes to localStorage only.
+ */
+export function addAddressToArchive(ownerAddress, entry) {
+    if (!ownerAddress || !entry?.address || !entry?.privateKey) return;
+    try {
+        const key = ownerAddress.toLowerCase();
+        const archive = getAddressArchive(ownerAddress);
+        // De-dupe by address — re-clicking the recycle button with
+        // the same entropy shouldn't bloat the archive.
+        const filtered = archive.filter(e => e.address !== entry.address);
+        filtered.unshift({
+            address: entry.address,
+            privateKey: entry.privateKey,
+            entropy: entry.entropy || null,
+            createdAt: entry.createdAt || Date.now(),
+        });
+        localStorage.setItem(
+            `upl:stealth-archive:${key}`,
+            JSON.stringify(filtered)
+        );
+        // Keep the singleton cache pointing at the new active
+        // address so the dashboard's readStealthBalance() picks
+        // it up immediately on the next tick.
+        localStorage.setItem(`upl:stealth-pk:${key}`, entry.privateKey);
+    } catch {}
 }
 
 /**
