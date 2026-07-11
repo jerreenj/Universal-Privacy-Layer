@@ -160,9 +160,8 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
                     stealthAddrs.push(entry.address);
                 }
             }
-            console.log("[stealth] Archive has", stealthAddrs.length, "addresses");
         }
-    } catch (e) { console.warn("[stealth] archive lookup failed:", e); }
+    } catch (e) { /* silent */ }
 
     // 2. Per-wallet singleton cache upl:stealth-pk:<address>
     if (stealthAddrs.length === 0) {
@@ -171,9 +170,8 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
             if (stealthPk) {
                 const w = new ethers.Wallet(stealthPk);
                 stealthAddrs.push(w.address);
-                console.log("[stealth] Found address from stealth-pk cache:", w.address);
             }
-        } catch (e) { console.warn("[stealth] stealth-pk lookup failed:", e); }
+        } catch (e) { /* silent */ }
     }
 
     // 3. Proxy cache upl:stealth-proxy:<address>
@@ -184,10 +182,9 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
                 const parsed = JSON.parse(cached);
                 if (parsed.address && !stealthAddrs.includes(parsed.address)) {
                     stealthAddrs.push(parsed.address);
-                    console.log("[stealth] Found address from proxy cache:", parsed.address);
                 }
             }
-        } catch (e) { console.warn("[stealth] proxy cache lookup failed:", e); }
+        } catch (e) { /* silent */ }
     }
 
     // 4. Scan cache upl:scan:<address>
@@ -199,10 +196,9 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
                 const candidate = parsed.address || parsed.stealthAddress;
                 if (candidate && !stealthAddrs.includes(candidate)) {
                     stealthAddrs.push(candidate);
-                    console.log("[stealth] Found address from scan cache:", candidate);
                 }
             }
-        } catch (e) { console.warn("[stealth] scan cache lookup failed:", e); }
+        } catch (e) { /* silent */ }
     }
 
     // 5. Global scan: every cached `upl:stealth-pk:` key. The
@@ -238,8 +234,7 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
                     }
                 }
             }
-            console.log("[stealth] Global scan found", stealthAddrs.length, "cached addresses");
-        } catch (e) { console.warn("[stealth] global scan failed:", e); }
+        } catch (e) { /* silent */ }
     }
 
     // 6. Backend meta_address (public-stored ONLY — no private keys)
@@ -252,15 +247,13 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
                     const match = data.meta_address.match(/0x[a-fA-F0-9]{40}/);
                     if (match && !stealthAddrs.includes(match[0])) {
                         stealthAddrs.push(match[0]);
-                        console.log("[stealth] Found address from backend:", match[0]);
                     }
                 }
             }
-        } catch (e) { console.warn("[stealth] Backend lookup failed:", e); }
+        } catch (e) { /* silent */ }
     }
 
     if (stealthAddrs.length === 0) {
-        console.log("[stealth] No stealth address found — showing 0");
         return { eth: "0.0", usdc: "0", address: null, addresses: [] };
     }
 
@@ -281,23 +274,17 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
     for (const sa of stealthAddrs) {
         try {
             totalEth += await readEthBalance(sa);
-        } catch (e) {
-            console.warn("[stealth] ETH read failed for", sa, ":", e?.message);
-        }
+        } catch (e) { /* silent */ }
         try {
             totalUsdc += await readUsdcBalance(sa);
-        } catch (e) {
-            console.warn("[stealth] USDC read failed for", sa, ":", e?.message);
-        }
+        } catch (e) { /* silent */ }
     }
-    const result = {
+    return {
         eth: ethers.formatEther(totalEth),
         usdc: ethers.formatUnits(totalUsdc, 6),
         address: stealthAddrs[0], // most recent (active)
         addresses: stealthAddrs,
     };
-    console.log("[stealth] Total balance across", stealthAddrs.length, "addresses:", result);
-    return result;
 }
 
 /**

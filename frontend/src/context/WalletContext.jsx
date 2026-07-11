@@ -298,9 +298,8 @@ export function WalletProvider({ children }) {
       if (!connectedAddress) {
         if (e?.code === 4001) toast.error("MetaMask connection request was cancelled");
         else toast.error("MetaMask connection failed");
-      } else {
-        console.warn("MetaMask connect() threw after authorization:", e);
       }
+      // Benign re-auth race is swallowed silently — connection succeeded.
     }
     setConnecting(false);
   }, [pickEvmProvider]);
@@ -364,8 +363,6 @@ export function WalletProvider({ children }) {
       if (!connectedAddress) {
         if (e?.code === 4001) toast.error("Rabby connection request was cancelled");
         else toast.error("Rabby connection failed");
-      } else {
-        console.warn("Rabby connect() threw after authorization:", e);
       }
     }
     setConnecting(false);
@@ -424,11 +421,10 @@ export function WalletProvider({ children }) {
         } else {
           // Real failure (not a benign re-auth race): surface it.
           toast.error("Phantom connection failed");
-          console.warn("Phantom connect() failed:", e);
         }
-      } else {
-        console.warn("Phantom connect() threw after auth, used publicKey fallback:", e);
       }
+      // Benign re-auth race: phantom.publicKey was recovered from
+      // window.phantom.solana even though connect() threw.
     }
     setConnecting(false);
   }, []);
@@ -496,10 +492,7 @@ export function WalletProvider({ children }) {
           // silent — user dismissed the popup
         } else {
           toast.error(`Sui wallet (${found.key}) connection failed`);
-          console.warn("Sui connect threw:", e);
         }
-      } else {
-        console.warn("Sui connect threw after auth:", e);
       }
     }
     setConnecting(false);

@@ -74,14 +74,13 @@ export async function readUsdcBalance(addr, rpcs = DEFAULT_RPCS) {
   if (!addr) return 0n;
   const calldata = encodeBalanceOfCall(addr);
   let lastErr = null;
-  for (const rpc of rpcs) {
+    for (const rpc of rpcs) {
     try {
       const result = await rawRpc(rpc, "eth_call", [
         { to: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", data: calldata },
         "latest",
       ]);
       const bal = decodeUint256(result);
-      console.log(`[usdc] ${rpc} → ${bal} (${Number(bal) / 1e6} USDC)`);
       // A non-zero return proves the RPC is on the right chain and
       // talking to the right contract. Stop trying the rest.
       if (bal > 0n) return bal;
@@ -90,12 +89,8 @@ export async function readUsdcBalance(addr, rpcs = DEFAULT_RPCS) {
       // on every dashboard refresh).
     } catch (e) {
       lastErr = e;
-      console.warn(`[usdc] ${rpc} failed:`, e?.message || e);
     }
   }
-  // All RPCs agree on zero (or failed) — return the last successful
-  // answer (which may be the legitimate zero) or 0 as fallback.
-  console.warn("[usdc] all RPCs failed, returning 0. last err:", lastErr?.message);
   return 0n;
 }
 
@@ -109,11 +104,9 @@ export async function readEthBalance(addr, rpcs = DEFAULT_RPCS) {
     try {
       const result = await rawRpc(rpc, ETH_BALANCE_METHOD, [addr, "latest"]);
       const bal = decodeUint256(result);
-      console.log(`[eth] ${rpc} → ${bal} (${Number(bal) / 1e18} ETH)`);
       if (bal > 0n) return bal;
     } catch (e) {
       lastErr = e;
-      console.warn(`[eth] ${rpc} failed:`, e?.message || e);
     }
   }
   return 0n;
