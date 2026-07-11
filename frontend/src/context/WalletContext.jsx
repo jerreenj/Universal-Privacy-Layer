@@ -62,11 +62,17 @@ export function WalletProvider({ children }) {
         const res = await axios.get(`${API}/deployments`);
         if (!mounted || !res?.data) return;
         const { evm, sui, sol } = res.data;
-        // Update each EVM chain's contracts with real addresses where deployed.
+        // Update each EVM chain's contracts with real addresses where
+        // deployed. CRITICAL: PRESERVE the existing fields (notably
+        // `usdc`) by spreading `CHAINS[key].contracts` first, then
+        // overlaying the deployment map. The previous code REPLACED
+        // the contracts object, erasing the `usdc` field — which
+        // made USDC reads return 0 even when the wallet held USDC.
         if (evm && typeof evm === "object") {
           for (const [key, info] of Object.entries(evm)) {
             if (CHAINS[key] && info?.deployed) {
               CHAINS[key].contracts = {
+                ...(CHAINS[key].contracts || {}),  // preserve usdc + everything else
                 privacyRelayer: info.privacy_relayer ?? CHAINS[key].contracts?.privacyRelayer,
                 stealthRegistry: info.stealth_registry ?? CHAINS[key].contracts?.stealthRegistry,
                 ...(info.uniswap_wrapper ? { uniswapWrapper: info.uniswap_wrapper } : {}),
@@ -678,19 +684,22 @@ export function WalletProvider({ children }) {
     try {
       if (vm === VM.EVM) {
         const usdcAddr = CHAINS[chain]?.contracts?.usdc;
-        if (!usdcAddr) { setUsdcBalance(null); return; }
+        // Don't bail out if CHAINS[chain].contracts.usdc is missing —
+        // the deploy-overwrite bug in this WalletContext can null it
+        // out. readUsdcBalance from balance-reader.js hardcodes the
+        // Base USDC contract, so we just press on.
+        if (!usdcAddr && chain !== "base") { setUsdcBalance(null); return; }
         let decimals = (chain === "bnb") ? 18 : 6;
         // Raw-fetch reads across a list of CORS-friendly Base public
         // RPCs. The first non-zero return wins.
         const { readUsdcBalance } = await import("@/lib/balance-reader");
-        // BNB USDC contract is different; use that one for bnb.
-        // Other chains reuse the same address? No — each chain has
-        // its own USDC contract. We hardcode the bnb continuation.
+        // For Base, balance-reader.js hardcodes the USDC contract —
+        // pass address to override for non-Base chains in the future.
         const erc20Balances = await readUsdcBalance(address);
         setUsdcBalance({
           formatted: formatExactBalance(erc20Balances, decimals),
           symbol: "USDC",
-          address: usdcAddr,
+          address: usdcAddr || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
           chain,
         });
       } else if (vm === VM.SOLANA) {

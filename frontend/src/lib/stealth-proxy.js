@@ -270,6 +270,11 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
     // 4s timeout. We sum balances across EVERY address in the
     // archive so the dashboard shows the user's TOTAL private
     // balance, not just the most recent address.
+    //
+    // We ALWAYS read USDC — the Base USDC contract is hardcoded in
+    // balance-reader.js (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913),
+    // so even if CHAINS[chain].contracts.usdc was nullified by the
+    // deployment-endpoint overwrite bug, this still works.
     const { readUsdcBalance, readEthBalance } = await import("@/lib/balance-reader");
     let totalEth = 0n;
     let totalUsdc = 0n;
@@ -279,12 +284,10 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
         } catch (e) {
             console.warn("[stealth] ETH read failed for", sa, ":", e?.message);
         }
-        if (usdcAddress) {
-            try {
-                totalUsdc += await readUsdcBalance(sa);
-            } catch (e) {
-                console.warn("[stealth] USDC read failed for", sa, ":", e?.message);
-            }
+        try {
+            totalUsdc += await readUsdcBalance(sa);
+        } catch (e) {
+            console.warn("[stealth] USDC read failed for", sa, ":", e?.message);
         }
     }
     const result = {
