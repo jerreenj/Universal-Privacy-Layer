@@ -12,6 +12,7 @@
     "aerodrome_wrapper": "0xe896e6f51af137c32db7eb4e3b2de795d392a646",
     "privacy_verifier": "0x838b7c20b1a97cAA6379542d03983b4571275679",
     "privacy_pool": "0x3F0b23Aca0624981a503e8f042db2F3884D0C89C",
+    "privacy_usdc_forwarder": "0x0000000000000000000000000000000000000000",
     "pool_kind": "multi-denom",
     "initial_denominations_wei": "100000000000000000",
     "deploy_tx_hashes": {
