@@ -658,14 +658,14 @@ export function WalletProvider({ children }) {
   // Dashboard hero. Stablecoin balances are what people actually hold,
   // so we surface them above the volatile native-token balance.
   //
-  // Strategy: read through the CONNECTED WALLET's BrowserProvider so
-  // the eth_call is on whatever chain MetaMask/Rabby is currently
-  // pointed at (which is usually correct). If the wallet provider
-  // fails (e.g. it was disconnected mid-session), fall back to a
-  // CORS-friendly public RPC. The fallback path DOES lose to a
-  // wallet-on-Ethereum vs state-on-Base mismatch, but that's a
-  // degraded path we surface loudly so the customer knows to switch
-  // wallets.
+  // We use a RAW `fetch()` JSON-RPC call (see lib/balance-reader.js)
+  // to read ERC-20 balanceOf. ethers v6's JsonRpcProvider has been
+  // observed silently failing on browser CORS preflights for some
+  // Base RPCs (returning null/0 instead of throwing), which is why
+  // a raw fetch — using the browser's native HTTP layer — is more
+  // reliable. We try 4 CORS-friendly RPCs in sequence, and the FIRST
+  // one that returns a non-zero balance wins (proves it's on the
+  // right chain and talking to the right contract).
   //
   // SIDE NOTE on precision: this used to call
   //   parseFloat(formatted).toFixed(2)
@@ -679,46 +679,16 @@ export function WalletProvider({ children }) {
       if (vm === VM.EVM) {
         const usdcAddr = CHAINS[chain]?.contracts?.usdc;
         if (!usdcAddr) { setUsdcBalance(null); return; }
-        const { ethers } = await import("ethers");
-        // Hardcode decimals = 6 for USDC (the common case on Base,
-        // Arbitrum, Polygon, Optimism, Avalanche). Only BNB uses 18.
         let decimals = (chain === "bnb") ? 18 : 6;
-        // RPC PROVIDER LIST — tried IN ORDER until one returns a
-        // non-trivial balance. We list multiple CORS-friendly Base
-        // public RPCs because browsers can't talk to
-        // mainnet.base.org from many deployments — CORS-preflight
-        // requests to the JSON-RPC endpoint either fail or get
-        // rate-limited. PublicNode and BlastAPI are reliable for
-        // browser-based reads (no API key required).
-        const rpcList = [
-          CHAINS[chain]?.rpcUrl,
-          "https://base.publicnode.com",
-          "https://base-mainnet.public.blastapi.io",
-          "https://1rpc.io/base",
-        ].filter(Boolean);
-        let raw = 0n;
-        for (const rpc of rpcList) {
-          try {
-            const p = new ethers.JsonRpcProvider(rpc);
-            const erc20 = new ethers.Contract(usdcAddr,
-              ["function balanceOf(address) view returns (uint256)"],
-              p);
-            const r = await Promise.race([
-              erc20.balanceOf(address),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 4000)),
-            ]);
-            // Use the FIRST positive value we see — non-zero means
-            // the RPC is alive and on the right chain. If a later
-            // RPC returns 0 (transient cache miss), keep the bigger
-            // number.
-            if (r > 0n || raw === 0n) raw = r;
-            if (raw > 0n) break;
-          } catch {
-            // try the next RPC
-          }
-        }
+        // Raw-fetch reads across a list of CORS-friendly Base public
+        // RPCs. The first non-zero return wins.
+        const { readUsdcBalance } = await import("@/lib/balance-reader");
+        // BNB USDC contract is different; use that one for bnb.
+        // Other chains reuse the same address? No — each chain has
+        // its own USDC contract. We hardcode the bnb continuation.
+        const erc20Balances = await readUsdcBalance(address);
         setUsdcBalance({
-          formatted: formatExactBalance(raw, decimals),
+          formatted: formatExactBalance(erc20Balances, decimals),
           symbol: "USDC",
           address: usdcAddr,
           chain,

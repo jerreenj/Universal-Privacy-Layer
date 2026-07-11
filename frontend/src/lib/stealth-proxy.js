@@ -264,47 +264,28 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
         return { eth: "0.0", usdc: "0", address: null, addresses: [] };
     }
 
-    // Read balances — try MULTIPLE CORS-friendly RPCs in sequence.
-    // mainnet.base.org occasionally rejects browser CORS preflights
-    // (~5% of cases); PublicNode and BlastAPI are reliable browser-
-    // friendly alternatives we fall through to.
-    const rpcList = [
-      provider,                                                    // caller's provider (MetaMask/Rabby/JsonRpc)
-      new ethers.JsonRpcProvider("https://mainnet.base.org"),
-      new ethers.JsonRpcProvider("https://base.publicnode.com"),
-      new ethers.JsonRpcProvider("https://base-mainnet.public.blastapi.io"),
-      new ethers.JsonRpcProvider("https://1rpc.io/base"),
-    ].filter(Boolean);
+    // Use the raw-fetch reader (lib/balance-reader.js) — bypasses
+    // ethers' BrowserProvider polyfill, which silently fails on
+    // browser CORS preflights. Each RPC is tried in sequence with a
+    // 4s timeout. We sum balances across EVERY address in the
+    // archive so the dashboard shows the user's TOTAL private
+    // balance, not just the most recent address.
+    const { readUsdcBalance, readEthBalance } = await import("@/lib/balance-reader");
     let totalEth = 0n;
     let totalUsdc = 0n;
-    let lastErr = null;
-    for (const p of rpcList) {
-      try {
-        for (const sa of stealthAddrs) {
-          // ETH (native) — most reliable, can be silent 0
-          try {
-            totalEth += await p.getBalance(sa);
-          } catch (e) { /* skip this address */ }
-          // USDC (ERC20) — historically the failure point. Read
-          // with timeout; fall through to next RPC on hang.
-          if (usdcAddress) {
-            try {
-              const usdc = new ethers.Contract(usdcAddress,
-                ["function balanceOf(address) view returns (uint256)"], p);
-              const r = await Promise.race([
-                usdc.balanceOf(sa),
-                new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 4000)),
-              ]);
-              totalUsdc += r;
-            } catch (e) { lastErr = e; }
-          }
+    for (const sa of stealthAddrs) {
+        try {
+            totalEth += await readEthBalance(sa);
+        } catch (e) {
+            console.warn("[stealth] ETH read failed for", sa, ":", e?.message);
         }
-        // 0 is still a successful read. If totalUsdc > 0 we know
-        // the RPC is on the right chain and working — stop trying.
-        if (totalUsdc > 0n) break;
-      } catch (e) {
-        lastErr = e;
-      }
+        if (usdcAddress) {
+            try {
+                totalUsdc += await readUsdcBalance(sa);
+            } catch (e) {
+                console.warn("[stealth] USDC read failed for", sa, ":", e?.message);
+            }
+        }
     }
     const result = {
         eth: ethers.formatEther(totalEth),
@@ -312,9 +293,6 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
         address: stealthAddrs[0], // most recent (active)
         addresses: stealthAddrs,
     };
-    if (lastErr && totalUsdc === 0n) {
-      console.warn("[stealth] All RPCs returned USDC=0 — last error:", lastErr?.message);
-    }
     console.log("[stealth] Total balance across", stealthAddrs.length, "addresses:", result);
     return result;
 }
