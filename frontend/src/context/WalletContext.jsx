@@ -661,11 +661,11 @@ export function WalletProvider({ children }) {
   // Strategy: read through the CONNECTED WALLET's BrowserProvider so
   // the eth_call is on whatever chain MetaMask/Rabby is currently
   // pointed at (which is usually correct). If the wallet provider
-  // fails (e.g. it was disconnected mid-session), fall back to the
-  // chain's public RPC for whatever chain our local `chain` state
-  // says. The fallback path DOES lose to a wallet-on-Ethereum vs
-  // state-on-Base mismatch, but that's a degraded path we surface
-  // loudly so the customer knows to switch wallets.
+  // fails (e.g. it was disconnected mid-session), fall back to a
+  // CORS-friendly public RPC. The fallback path DOES lose to a
+  // wallet-on-Ethereum vs state-on-Base mismatch, but that's a
+  // degraded path we surface loudly so the customer knows to switch
+  // wallets.
   //
   // SIDE NOTE on precision: this used to call
   //   parseFloat(formatted).toFixed(2)
@@ -680,35 +680,41 @@ export function WalletProvider({ children }) {
         const usdcAddr = CHAINS[chain]?.contracts?.usdc;
         if (!usdcAddr) { setUsdcBalance(null); return; }
         const { ethers } = await import("ethers");
-        // Use the PUBLIC RPC directly for reads — it's faster and
-        // more reliable than routing through MetaMask's BrowserProvider
-        // (which adds a round-trip to the wallet extension + can hang
-        // if the wallet is on the wrong chain). The public RPC always
-        // reads from the correct chain.
-        const provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
-        const erc20 = new ethers.Contract(usdcAddr,
-          ["function balanceOf(address) view returns (uint256)",
-           "function decimals() view returns (uint8)"],
-          provider);
         // Hardcode decimals = 6 for USDC (the common case on Base,
         // Arbitrum, Polygon, Optimism, Avalanche). Only BNB uses 18.
-        // This saves one RPC round-trip (decimals() call) which was
-        // the main source of latency showing "…" on the dashboard.
         let decimals = (chain === "bnb") ? 18 : 6;
-        let raw;
-        try {
-          raw = await erc20.balanceOf(address);
-        } catch {
-          // If the public RPC fails, try the wallet provider as
-          // a last resort.
+        // RPC PROVIDER LIST — tried IN ORDER until one returns a
+        // non-trivial balance. We list multiple CORS-friendly Base
+        // public RPCs because browsers can't talk to
+        // mainnet.base.org from many deployments — CORS-preflight
+        // requests to the JSON-RPC endpoint either fail or get
+        // rate-limited. PublicNode and BlastAPI are reliable for
+        // browser-based reads (no API key required).
+        const rpcList = [
+          CHAINS[chain]?.rpcUrl,
+          "https://base.publicnode.com",
+          "https://base-mainnet.public.blastapi.io",
+          "https://1rpc.io/base",
+        ].filter(Boolean);
+        let raw = 0n;
+        for (const rpc of rpcList) {
           try {
-            const walletProvider = await getEvmReadProvider();
-            const erc20b = new ethers.Contract(usdcAddr,
+            const p = new ethers.JsonRpcProvider(rpc);
+            const erc20 = new ethers.Contract(usdcAddr,
               ["function balanceOf(address) view returns (uint256)"],
-              walletProvider);
-            raw = await erc20b.balanceOf(address);
+              p);
+            const r = await Promise.race([
+              erc20.balanceOf(address),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 4000)),
+            ]);
+            // Use the FIRST positive value we see — non-zero means
+            // the RPC is alive and on the right chain. If a later
+            // RPC returns 0 (transient cache miss), keep the bigger
+            // number.
+            if (r > 0n || raw === 0n) raw = r;
+            if (raw > 0n) break;
           } catch {
-            raw = 0n;
+            // try the next RPC
           }
         }
         setUsdcBalance({
@@ -747,7 +753,7 @@ export function WalletProvider({ children }) {
     } catch {
       setUsdcBalance(null);
     }
-  }, [address, chain, vm, solConn, getEvmReadProvider]);
+  }, [address, chain, vm, solConn]);
 
   const fetchHiddenBalance = useCallback(async () => {
     if (!address) {
