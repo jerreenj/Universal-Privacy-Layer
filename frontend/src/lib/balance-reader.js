@@ -113,3 +113,103 @@ export async function readEthBalance(addr, rpcs = DEFAULT_RPCS) {
 }
 
 export { DEFAULT_RPCS };
+
+// ─── EIP-2612 permit helpers ─────────────────────────────────────────────
+// Raw-fetch readers for the on-chain data EIP-2612 permit signing needs.
+// ethers JsonRpcProvider silently fails on browser CORS preflights for
+// some Base RPCs — these bypass that by using plain fetch().
+
+// nonces(address) — function selector = 0x7ecebe00
+const NONCES_SELECTOR = "0x7ecebe00";
+// DOMAIN_SEPARATOR() — function selector = 0x3644e515
+const DOMAIN_SEP_SELECTOR = "0x3644e515";
+// name() — 0x06fdde03
+const NAME_SELECTOR = "0x06fdde03";
+// version() — 0x54fd4d72
+const VERSION_SELECTOR = "0x54fd4d72";
+
+function decodeString(hexResult) {
+  // ABI-decode a string return value: skip 32-byte offset, then
+  // 32-byte length, then read `length` bytes as UTF-8.
+  if (!hexResult || hexResult === "0x") return "";
+  const bytes = hexResult.slice(2);
+  // offset (64 hex chars) + length (64 hex chars) + data
+  if (bytes.length < 128) return "";
+  const len = parseInt(bytes.slice(64, 128), 16);
+  const dataHex = bytes.slice(128, 128 + len * 2);
+  try {
+    return decodeURIComponent(
+      dataHex.replace(/../g, c => "%" + c)
+    );
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * readUsdcNonce(ownerAddr) → BigInt
+ * Reads the EIP-2612 nonce for `ownerAddr` from the USDC contract
+ * on Base. Tries multiple CORS-friendly RPCs.
+ */
+export async function readUsdcNonce(ownerAddr, rpcs = DEFAULT_RPCS) {
+  if (!ownerAddr) return 0n;
+  const usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const calldata = NONCES_SELECTOR + addrToBytes32(ownerAddr).slice(2);
+  for (const rpc of rpcs) {
+    try {
+      const result = await rawRpc(rpc, "eth_call", [
+        { to: usdc, data: calldata }, "latest",
+      ]);
+      return decodeUint256(result);
+    } catch {}
+  }
+  return 0n;
+}
+
+/**
+ * readUsdcDomainSeparator() → string (0x-prefixed bytes32)
+ */
+export async function readUsdcDomainSeparator(rpcs = DEFAULT_RPCS) {
+  const usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  for (const rpc of rpcs) {
+    try {
+      const result = await rawRpc(rpc, "eth_call", [
+        { to: usdc, data: DOMAIN_SEP_SELECTOR }, "latest",
+      ]);
+      if (result && result !== "0x") return result;
+    } catch {}
+  }
+  return "0x0000000000000000000000000000000000000000000000000000000000000000";
+}
+
+/**
+ * readUsdcName() → string
+ * readUsdcVersion() → string
+ */
+export async function readUsdcName(rpcs = DEFAULT_RPCS) {
+  const usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  for (const rpc of rpcs) {
+    try {
+      const result = await rawRpc(rpc, "eth_call", [
+        { to: usdc, data: NAME_SELECTOR }, "latest",
+      ]);
+      const s = decodeString(result);
+      if (s) return s;
+    } catch {}
+  }
+  return "USD Coin";
+}
+
+export async function readUsdcVersion(rpcs = DEFAULT_RPCS) {
+  const usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  for (const rpc of rpcs) {
+    try {
+      const result = await rawRpc(rpc, "eth_call", [
+        { to: usdc, data: VERSION_SELECTOR }, "latest",
+      ]);
+      const s = decodeString(result);
+      if (s) return s;
+    } catch {}
+  }
+  return "2";
+}

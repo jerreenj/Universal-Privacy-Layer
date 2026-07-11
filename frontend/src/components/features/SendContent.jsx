@@ -55,16 +55,15 @@ export function SendContent() {
   const [permitStep, setPermitStep] = useState(null);
 
   /**
-   * Accept BOTH forms the customer might paste:
-   *   - raw:        0x7DCB77eB30a6CD3D83cF86fd2e2F7d4e7ec5f9Df
-   *   - prefixed:   st:eth:0x7DCB77eB30a6CD3D83cF86fd2e2F7d4e7ec5f9Df
-   * Returns the raw 0x... form or null if neither matches.
+   * Accept raw 0x... Ethereum addresses only. The st:eth: prefix
+   * is gone — it was confusing the pilot user and never provided
+   * any privacy value (the stealth address itself is the privacy
+   * mechanism; the prefix is just an EIP-5564 display convention).
    */
   const parseRecipient = (raw) => {
     if (!raw) return null;
     const s = String(raw).trim();
-    const stripped = s.startsWith("st:eth:") ? s.slice(7) : s;
-    return ethers.isAddress(stripped) ? stripped : null;
+    return ethers.isAddress(s) ? s : null;
   };
 
   /**
@@ -75,10 +74,11 @@ export function SendContent() {
    * private key, so the customer's PUBLIC wallet never appears on
    * BaseScan as the Transfer `from`.
    *
-   * Note: this requires the user to have moved USDC into at least
-   * one of their archive entries first. Direct-wallet transfer is
-   * still available as a fallback when no archive entry has
-   * sufficient USDC balance.
+   * Uses the raw-fetch balance-reader (lib/balance-reader.js) so
+   * the read works under browser CORS preflight rules — ethers
+   * JsonRpcProvider silently returns 0 on some Base RPCs, which
+   * was causing the permit flow to fall back to direct transfer
+   * even when the stealth address had USDC.
    */
   useEffect(() => {
     if (!address || token !== "usdc") { setArchiveUsdc(null); return; }
@@ -87,26 +87,17 @@ export function SendContent() {
       try {
         const list = getAddressArchive(address);
         if (!list.length) { if (!cancelled) setArchiveUsdc(null); return; }
-        const usdcAddr = CHAINS[chain]?.contracts?.usdc ||
-          "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-        const provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
-        // Read every archive address's USDC balance in parallel,
-        // pick the FIRST one with positive balance as the source.
+        // Use raw-fetch reader — bypasses ethers CORS failures.
+        const { readUsdcBalance } = await import("@/lib/balance-reader");
         const probes = await Promise.all(list.map(async (entry) => {
           try {
-            const usdc = new ethers.Contract(usdcAddr,
-              ["function balanceOf(address) view returns (uint256)"], provider);
-            const bal = await usdc.balanceOf(entry.address);
-            const balNum = Number(ethers.formatUnits(bal, 6));
+            const bal = await readUsdcBalance(entry.address);
             return { entry, balance: bal };
           } catch { return { entry, balance: 0n }; }
         }));
         if (cancelled) return;
         const positive = probes.filter(p => p.balance > 0n);
         if (positive.length === 0) { setArchiveUsdc(null); return; }
-        // Pick the highest-balance stealth (max privacy at minimum
-        // number of permit calls). Storing the raw balance so we can
-        // show "from: 0x7DCB… (0.04 USDC available)" in the UI.
         positive.sort((a, b) => (b.balance > a.balance ? 1 : -1));
         setArchiveUsdc({
           address: positive[0].entry.address,
@@ -144,7 +135,7 @@ export function SendContent() {
     if (!address) return toast.error("Connect wallet first");
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
     const recipient = parseRecipient(to);
-    if (!recipient) return toast.error("Invalid address — must start with 0x or st:eth:0x");
+    if (!recipient) return toast.error("Invalid address — must be a raw 0x... address");
     if (!archiveUsdc) return toast.error("No stealth deposit yet — fund one first or use direct transfer");
     setSending(true);
     setPermitStep("signing");
@@ -165,31 +156,17 @@ export function SendContent() {
       // permit WITH THIS wallet, NOT the customer's main wallet.
       // Only the signature leaves the browser (no key, no plaintext).
       const stealthWallet = new ethers.Wallet(archiveUsdc.privateKey);
-      const provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
-      const usdcRead = new ethers.Contract(usdcAddr, [
-        "function nonces(address owner) view returns (uint256)",
-        "function DOMAIN_SEPARATOR() view returns (bytes32)",
-        "function name() view returns (string)",
-        "function version() view returns (string)",
-      ], provider);
-      let nonce, domainSeparator, name, version;
-      try {
-        [nonce, domainSeparator, name, version] = await Promise.all([
-          usdcRead.nonces(stealthWallet.address),
-          usdcRead.DOMAIN_SEPARATOR(),
-          usdcRead.name().catch(() => "USD Coin"),
-          usdcRead.version().catch(() => "2"),
-        ]);
-      } catch (e) {
-        // Fall back to the canonical EIP-712 domain fields for
-        // USDC on Base (the readier fallback in case the contract
-        // doesn't expose name()/version() — pre-FiatTokenV2_2
-        // USDC deployments omit these).
-        nonce = await usdcRead.nonces(stealthWallet.address);
-        domainSeparator = await usdcRead.DOMAIN_SEPARATOR();
-        name = "USD Coin";
-        version = "2";
-      }
+      // Read nonces + DOMAIN_SEPARATOR + name + version via raw
+      // fetch — ethers JsonRpcProvider silently fails on browser
+      // CORS preflights for some Base RPCs, which was causing the
+      // permit flow to fail and fall back to direct transfer.
+      const { readUsdcNonce, readUsdcName, readUsdcVersion } =
+        await import("@/lib/balance-reader");
+      const [nonce, name, version] = await Promise.all([
+        readUsdcNonce(stealthWallet.address),
+        readUsdcName().catch(() => "USD Coin"),
+        readUsdcVersion().catch(() => "2"),
+      ]);
 
       const deadline = Math.floor(Date.now() / 1000) + 600; // 10 min
       // The relayer's spender address isn't known to the FE, so we
@@ -316,7 +293,7 @@ export function SendContent() {
     if (!address) return toast.error("Connect wallet first");
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
     const recipient = parseRecipient(to);
-    if (!recipient) return toast.error("Invalid address — must start with 0x or st:eth:0x");
+    if (!recipient) return toast.error("Invalid address — must be a raw 0x... address");
     if (!signer) return toast.error("Wallet not connected");
     setSending(true);
     try {
@@ -401,7 +378,7 @@ export function SendContent() {
     if (!address) return toast.error("Connect wallet first");
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
     const recipient = parseRecipient(to);
-    if (!recipient) return toast.error("Invalid address — must start with 0x or st:eth:0x");
+    if (!recipient) return toast.error("Invalid address — must be a raw 0x... address");
     if (!signer) return toast.error("Wallet not connected");
     setSending(true);
     try {
