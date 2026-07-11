@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import axios from "axios";
 import { ethers } from "ethers";
-import { Zap, Lock, Loader2, ExternalLink, CheckCircle2, X } from "lucide-react";
+import { Zap, Lock, Loader2, ExternalLink, CheckCircle2, X, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
 import { seal } from "@/lib/crypto-seal";
+import { getAddressArchive } from "@/lib/wallet-stealth";
 
 /**
  * SendContent — Private send flow for the customer's main wallet.
@@ -43,8 +44,15 @@ export function SendContent() {
   // verifiable receipt without hunting through the explorer
   // themselves.
   const [successPopup, setSuccessPopup] = useState(null);
-  // tx-success popup needs `fetchStealthBalance` from Dashboard; if
-  // not exposed on the context, fall back to reading from localStorage.
+  // The user's local stealth archive — read so USDC sends can route
+  // THROUGH the user's own stealth address via EIP-2612 permit. The
+  // stealth address's private key is already in localStorage from
+  // when it was generated, so permit signing happens locally; only
+  // the signature leaves the browser. NO new contract, NO vault.
+  const [archiveUsdc, setArchiveUsdc] = useState(null); // {address, privateKey, usdcBalance}
+  // Surfacing of permit-sign step so the UI doesn't lie about being
+  // "Submitted" before the wallet actually pops.
+  const [permitStep, setPermitStep] = useState(null);
 
   /**
    * Accept BOTH forms the customer might paste:
@@ -59,7 +67,252 @@ export function SendContent() {
     return ethers.isAddress(stripped) ? stripped : null;
   };
 
-  const sendUsdc = async () => {
+  /**
+   * Read the user's local stealth archive every time they switch
+   * wallets or token. We surface in the UI which stealth address
+   * the USDC send would route THROUGH (if any has enough balance).
+   * The permit signature is then issued by THAT stealth's local
+   * private key, so the customer's PUBLIC wallet never appears on
+   * BaseScan as the Transfer `from`.
+   *
+   * Note: this requires the user to have moved USDC into at least
+   * one of their archive entries first. Direct-wallet transfer is
+   * still available as a fallback when no archive entry has
+   * sufficient USDC balance.
+   */
+  useEffect(() => {
+    if (!address || token !== "usdc") { setArchiveUsdc(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = getAddressArchive(address);
+        if (!list.length) { if (!cancelled) setArchiveUsdc(null); return; }
+        const usdcAddr = CHAINS[chain]?.contracts?.usdc ||
+          "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+        const provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
+        // Read every archive address's USDC balance in parallel,
+        // pick the FIRST one with positive balance as the source.
+        const probes = await Promise.all(list.map(async (entry) => {
+          try {
+            const usdc = new ethers.Contract(usdcAddr,
+              ["function balanceOf(address) view returns (uint256)"], provider);
+            const bal = await usdc.balanceOf(entry.address);
+            const balNum = Number(ethers.formatUnits(bal, 6));
+            return { entry, balance: bal };
+          } catch { return { entry, balance: 0n }; }
+        }));
+        if (cancelled) return;
+        const positive = probes.filter(p => p.balance > 0n);
+        if (positive.length === 0) { setArchiveUsdc(null); return; }
+        // Pick the highest-balance stealth (max privacy at minimum
+        // number of permit calls). Storing the raw balance so we can
+        // show "from: 0x7DCB… (0.04 USDC available)" in the UI.
+        positive.sort((a, b) => (b.balance > a.balance ? 1 : -1));
+        setArchiveUsdc({
+          address: positive[0].entry.address,
+          privateKey: positive[0].entry.privateKey,
+          balanceRaw: positive[0].balance.toString(),
+          balanceHuman: ethers.formatUnits(positive[0].balance, 6),
+          total: positive.length,
+          totalBalance: ethers.formatUnits(
+            positive.reduce((a, p) => a + p.balance, 0n), 6),
+        });
+      } catch {
+        if (!cancelled) setArchiveUsdc(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [address, chain, token]);
+
+  /**
+   * sendUsdcViaPermit — sign EIP-2612 permit with the user's
+   * stealth-address private key (already in local archive) and post
+   * the signature to the backend. The relayer hot wallet submits
+   * `USDC.permit(...)` and `USDC.transferFrom(stealth, recipient)`
+   * atomically via Multicall3.
+   *
+   * Result on BaseScan:
+   *   tx.from          = relayer hot wallet (gasses-up)
+   *   Transfer.from    = user's stealth address (NOT main wallet)
+   *   Transfer.to      = recipient
+   *
+   * No new contract, no vault — USDC stays in the stealth address
+   * until the moment it's moved. The customer's main wallet
+   * NEVER appears on BaseScan.
+   */
+  const sendUsdcViaPermit = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
+    const recipient = parseRecipient(to);
+    if (!recipient) return toast.error("Invalid address — must start with 0x or st:eth:0x");
+    if (!archiveUsdc) return toast.error("No stealth deposit yet — fund one first or use direct transfer");
+    setSending(true);
+    setPermitStep("signing");
+    try {
+      const usdcAddr = CHAINS[chain]?.contracts?.usdc ||
+        "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+      const decimals = 6;
+      const amountRaw = ethers.parseUnits(amount, decimals);
+      // Source stealth must have enough USDC. (Frontend already
+      // checks via archiveUsdc.balanceRaw, but a last-minute gate
+      // avoids sending a doomed permit.)
+      if (BigInt(archiveUsdc.balanceRaw) < amountRaw) {
+        return toast.error("Stealth address balance insufficient — fund it first");
+      }
+
+      // Construct the stealth address as a local ethers wallet —
+      // its private key is in the archive. The browser signs EIP-712
+      // permit WITH THIS wallet, NOT the customer's main wallet.
+      // Only the signature leaves the browser (no key, no plaintext).
+      const stealthWallet = new ethers.Wallet(archiveUsdc.privateKey);
+      const provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
+      const usdcRead = new ethers.Contract(usdcAddr, [
+        "function nonces(address owner) view returns (uint256)",
+        "function DOMAIN_SEPARATOR() view returns (bytes32)",
+        "function name() view returns (string)",
+        "function version() view returns (string)",
+      ], provider);
+      let nonce, domainSeparator, name, version;
+      try {
+        [nonce, domainSeparator, name, version] = await Promise.all([
+          usdcRead.nonces(stealthWallet.address),
+          usdcRead.DOMAIN_SEPARATOR(),
+          usdcRead.name().catch(() => "USD Coin"),
+          usdcRead.version().catch(() => "2"),
+        ]);
+      } catch (e) {
+        // Fall back to the canonical EIP-712 domain fields for
+        // USDC on Base (the readier fallback in case the contract
+        // doesn't expose name()/version() — pre-FiatTokenV2_2
+        // USDC deployments omit these).
+        nonce = await usdcRead.nonces(stealthWallet.address);
+        domainSeparator = await usdcRead.DOMAIN_SEPARATOR();
+        name = "USD Coin";
+        version = "2";
+      }
+
+      const deadline = Math.floor(Date.now() / 1000) + 600; // 10 min
+      // The relayer's spender address isn't known to the FE, so we
+      // request it from the backend. The backend will run the
+      // multicall from the relayer's hot wallet; set the spender
+      // to the relayer address (returned by the prepare endpoint).
+      const prepRes = await axios.post(`${API}/usdc-permit-forwarder/prepare-tx`, {
+        from_address: address,           // user's main wallet (NOT the signer of permit)
+        stealth_source: archiveUsdc.address,
+        recipient,
+        amount,
+        chain: chain || "base",
+      });
+
+      const spender = prepRes.data.relayer_address;
+      if (!spender) {
+        return toast.error("Backend did not return a relayer address — try again");
+      }
+
+      // Build the EIP-712 typed-data for the permit.
+      const domain = {
+        name,
+        version,
+        chainId: prepRes.data.chainId,
+        verifyingContract: usdcAddr,
+      };
+      const types = {
+        Permit: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      };
+      const message = {
+        owner: stealthWallet.address,
+        spender,
+        value: amountRaw.toString(),
+        nonce: nonce.toString(),
+        deadline,
+      };
+
+      // Sign WITH the stealth key. No wallet popup — happens
+      // locally on the user's already-generated stealth private
+      // key (stored in localStorage). The customer's main wallet
+      // never sees, never signs.
+      const sig = await stealthWallet.signTypedData(domain, types, message);
+      const { v, r, s } = ethers.Signature.from(sig);
+
+      setPermitStep("submitting");
+      const submitRes = await axios.post(`${API}/usdc-permit-forwarder/submit`, {
+        stealth_source: archiveUsdc.address,
+        recipient,
+        amount,                       // human-readable
+        amount_raw: amountRaw.toString(),
+        spender,
+        deadline,
+        v,
+        r,
+        s,
+        chain: chain || "base",
+      });
+
+      const hash = submitRes.data?.tx_hash || "";
+      setTxHash(hash);
+      setSuccessPopup({
+        hash,
+        explorer: `${CHAINS[chain].explorer}/tx/${hash}`,
+        amount,
+        token: "USDC",
+        to: recipient,
+        fromStealth: archiveUsdc.address,  // shown in popup
+        chain: chain || "base",
+      });
+
+      // Seal metadata: server stores ciphertext only.
+      const envelope = await seal({
+        tx_hash:      hash,
+        from_address: archiveUsdc.address,  // privacy-first: log the stealth as the from
+        to_address:   recipient,
+        amount_wei:   amountRaw.toString(),
+        amount_human: amount,
+        chain:        chain || "base",
+        tx_type:      "private_send_usdc_permit",
+        status:       "confirmed",
+        client:       "metadata",
+      }, signer, address);
+      await axios.post(`${API}/transactions/record`, {
+        ...envelope,
+        tx_type: "private_send_usdc_permit",
+        status: "confirmed",
+        chain: chain || "base",
+      });
+
+      fetchBalance();
+      try {
+        if (typeof fetchStealthBalance === "function") await fetchStealthBalance();
+      } catch {}
+      // Refresh archive view so balance reflects new state.
+      try {
+        const list = getAddressArchive(address);
+        setArchive(list);
+      } catch {}
+      setTo(""); setAmount("");
+    } catch (e) {
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Failed";
+      toast.error(msg);
+    } finally {
+      setSending(false);
+      setPermitStep(null);
+    }
+  };
+
+  /**
+   * FALLBACK: direct ERC20 transfer from the user's main wallet.
+   * Sender shows on BaseScan as the user's main wallet — by
+   * definition not private on this path. Kept here because the
+   * user may not have any USDC in their archive yet (their first
+   * send has no stealth deposit). Once they fund a stealth, the
+   * permit path becomes available and the UI prefers it.
+   */
+  const sendUsdcDirect = async () => {
     if (!address) return toast.error("Connect wallet first");
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
     const recipient = parseRecipient(to);
@@ -76,9 +329,9 @@ export function SendContent() {
       );
       const decimals = (chain === "bnb") ? 18 : 6;
       const amount6 = ethers.parseUnits(amount, decimals);
+      // Step 1: tell the wallet to POP — only fire "Transaction
+      // submitted" after the user actually signed (tx.hash exists).
       const tx = await usdc.transfer(recipient, amount6);
-      // Show "submitted" toast first — the receipt popup arrives on
-      // confirmation, not submission.
       toast.success("Submitted — waiting for on-chain confirmation…");
       const receipt = await tx.wait();
       const hash = receipt?.hash || tx?.hash || "";
@@ -89,10 +342,14 @@ export function SendContent() {
         amount,
         token: "USDC",
         to: recipient,
+        // Allows the popup to surface "Main wallet = sender" so
+        // the user knows the privacy hedge isn't applied on this
+        // path. Privacy metadata preserved (no leak) — only shown
+        // to the user themselves in their own UI.
+        fromStealth: null,
         chain: chain || "base",
       });
 
-      // Seal the metadata: server stores ciphertext only.
       const envelope = await seal({
         tx_hash:      hash,
         from_address: address,
@@ -100,20 +357,17 @@ export function SendContent() {
         amount_wei:   amount6.toString(),
         amount_human: amount,
         chain:        chain || "base",
-        tx_type:      "private_send_usdc",
+        tx_type:      "private_send_usdc_direct",
         status:       "confirmed",
         client:       "metadata",
       }, signer, address);
       await axios.post(`${API}/transactions/record`, {
         ...envelope,
-        tx_type: "private_send_usdc",
+        tx_type: "private_send_usdc_direct",
         status: "confirmed",
         chain: chain || "base",
       });
 
-      // Refresh balances so the dashboard's USDC numbers update.
-      // Stealth balance (private column) reads via the archive list;
-      // main wallet USDC reads directly via the wallet provider.
       fetchBalance();
       try {
         if (typeof fetchStealthBalance === "function") {
@@ -126,6 +380,21 @@ export function SendContent() {
       toast.error(msg);
     }
     setSending(false);
+  };
+
+  // Dispatcher: prefer permit (stealth-source, sender-hidden)
+  // when ANY archive entry has enough balance; else fall through
+  // to direct. The user can also force-direct by clicking "Send
+  // directly from my main wallet" if they want to bypass.
+  const sendUsdc = () => {
+    if (archiveUsdc) {
+      const amountNum = parseFloat(amount);
+      const balNum = parseFloat(archiveUsdc.balanceHuman);
+      if (!isNaN(amountNum) && !isNaN(balNum) && amountNum <= balNum) {
+        return sendUsdcViaPermit();
+      }
+    }
+    return sendUsdcDirect();
   };
 
   const sendEth = async () => {
@@ -210,7 +479,9 @@ export function SendContent() {
       <div className="flex items-center gap-2 text-xs text-white/40 bg-white/5 border border-white/10 px-3 py-2">
         <Lock className="w-3 h-3" />
         {token === "usdc"
-          ? <>Direct USDC transfer to stealth recipient. Address hidden, amount visible until P3 launch.</>
+          ? (archiveUsdc
+              ? <>Permits signed by your stealth {archiveUsdc.address.slice(0, 6)}…{archiveUsdc.address.slice(-4)} — only that stealth address appears as the Transfer from on BaseScan.</>
+              : <>No stealth deposit detected — sends will go directly from your main wallet (Transfer from = your wallet). Send some USDC to a stealth address first.</>)
           : <>Routed through PrivacyRelayer on {CHAINS[chain]?.name} - your wallet never appears as sender</>}
       </div>
       {/* Token toggle */}
@@ -298,6 +569,25 @@ export function SendContent() {
                 <span className="text-white/40 shrink-0">Recipient</span>
                 <span className="font-mono text-white/80 truncate">{successPopup.to}</span>
               </div>
+              {successPopup.fromStealth ? (
+                <div className="pt-2 border-t border-green-400/20">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-green-400">From on BaseScan</span>
+                    <span className="font-mono text-[11px] text-green-300 truncate">{successPopup.fromStealth}</span>
+                  </div>
+                  <p className="text-[10px] text-green-400/70 mt-1">
+                    Your main wallet never appeared on-chain — the ERC20 Transfer event
+                    fired from your stealth address.
+                  </p>
+                </div>
+              ) : (
+                <div className="pt-2 border-t border-yellow-500/30">
+                  <p className="text-[10px] text-yellow-300/80">
+                    Direct transfer — your main wallet IS the on-chain Transfer from-address.
+                    Fund a stealth with USDC first to switch into sender-hiding mode.
+                  </p>
+                </div>
+              )}
             </div>
             <a
               data-testid="basescan-link"

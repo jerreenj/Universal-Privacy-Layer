@@ -3806,6 +3806,180 @@ def _stealth_registry_addr(chain: str) -> Optional[str]:
     addr = cfg.get("stealth_registry")
     return addr if addr and addr.lower() != "0x0" else None
 
+
+# ─── EIP-2612 permit-based USDC sender-hiding ────────────────────────────
+# The customer signs EIP-2612 permit with their STEALTH-address
+# private key (already in browser localStorage). The relayer hot
+# wallet submits USDC.permit() + USDC.transferFrom() atomically
+# via Multicall3 (the canonical 0xcA11…CA11 on Base). Result on
+# BaseScan:
+#   tx.from       = relayer hot wallet (NOT the customer's wallet)
+#   Transfer.from = the customer's STEALTH address (NOT their wallet)
+#   Transfer.to   = recipient
+# No new contract — uses USDC's own permit() + Multicall3 helper.
+
+_USDC_PERMIT_FORWARD_ABI = [
+    {"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"},{"name":"value","type":"uint256"},{"name":"deadline","type":"uint256"},{"name":"v","type":"uint8"},{"name":"r","type":"bytes32"},{"name":"s","type":"bytes32"}],"name":"permit","outputs":[],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[{"name":"from","type":"address"},{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[{"name":"owner","type":"address"}],"name":"nonces","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"DOMAIN_SEPARATOR","outputs":[{"name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
+]
+_MULTICALL3_ABI = [
+    {"inputs":[{"name":"calls","type":"bytes[]"},{"name":"revertOnFail","type":"bool[]"}],"name":"aggregate","outputs":[{"name":"returnData","type":"bytes[]"},{"name":"blockNumber","type":"uint256"},{"name":"blockHash","type":"bytes32"}],"stateMutability":"payable","type":"function"},
+]
+MULTICALL3_ADDRESS_BASE = "0xcA11bde05977b3631167028862bE2a173976CA11"
+
+
+class USDCPermitPrepareRequest(BaseModel):
+    from_address: str            # customer's main wallet (informational)
+    stealth_source: str          # stealth address that owns the USDC + signed the permit
+    recipient: str
+    amount: str                  # human-readable ("0.10")
+    chain: str = "base"
+
+
+@api_router.post("/usdc-permit-forwarder/prepare-tx")
+async def prepare_usdc_permit_intent(request: USDCPermitPrepareRequest):
+    """Returns the relayer hot-wallet address (the `spender` for
+    the EIP-2612 permit) and USDC/multicall3 addresses. The
+    frontend uses these to build the Permit typed-data and sign
+    locally with the stealth-source private key — only the
+    signature leaves the browser."""
+    try:
+        config = CHAIN_CONFIG.get(request.chain)
+        if not config:
+            raise HTTPException(status_code=400, detail="Invalid chain")
+        relayer_key = (
+            os.environ.get("RELAYER_PRIVATE_KEY")
+            or _read_hot_wallet_keyfile()
+            or os.environ.get("DEPLOYER_PRIVATE_KEY")
+        )
+        if not relayer_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Relayer wallet not configured (set RELAYER_PRIVATE_KEY env)."
+            )
+        relayer_addr = Account.from_key(relayer_key).address
+        usdc_addr = CHAINS.get(request.chain, {}).get("usdc_addr") or "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        return {
+            "chain": request.chain,
+            "chainId": config["chain_id"],
+            "relayer_address": Web3.to_checksum_address(relayer_addr),
+            "multicall3": MULTICALL3_ADDRESS_BASE,
+            "usdc": Web3.to_checksum_address(usdc_addr),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"usdc-permit prepare error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+class USDCPermitSubmitRequest(BaseModel):
+    stealth_source: str
+    recipient: str
+    amount_raw: str              # integer string (USDC = 6 decimals on Base)
+    spender: str                 # relayer address (must match signed permit)
+    deadline: int
+    v: int
+    r: str
+    s: str
+    chain: str = "base"
+
+
+@api_router.post("/usdc-permit-forwarder/submit")
+async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
+    """Submit a single Multicall3 tx that atomically calls
+    USDC.permit(...) AND USDC.transferFrom(stealth_source -> recipient).
+    All-or-nothing: if either call reverts, the entire tx reverts
+    (no half-state where allowance is granted but no transfer
+    happened). The relayer hot wallet pays the gas."""
+    try:
+        config = CHAIN_CONFIG.get(request.chain)
+        if not config:
+            raise HTTPException(status_code=400, detail="Invalid chain")
+
+        relayer_key = (
+            os.environ.get("RELAYER_PRIVATE_KEY")
+            or _read_hot_wallet_keyfile()
+            or os.environ.get("DEPLOYER_PRIVATE_KEY")
+        )
+        if not relayer_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Relayer wallet not configured (RELAYER_PRIVATE_KEY env)."
+            )
+
+        w3 = get_w3(request.chain)
+
+        usdc_addr = Web3.to_checksum_address(
+            CHAINS.get(request.chain, {}).get("usdc_addr")
+            or "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        )
+        multicall3_addr = Web3.to_checksum_address(
+            MULTICALL3_ADDRESS_BASE if request.chain == "base" else MULTICALL3_ADDRESS_BASE
+        )
+        stealth_src = Web3.to_checksum_address(request.stealth_source)
+        recipient = Web3.to_checksum_address(request.recipient)
+        amount_int = int(request.amount_raw)
+
+        # Build the two calldatas.
+        usdc = w3.eth.contract(address=usdc_addr, abi=_USDC_PERMIT_FORWARD_ABI)
+        permit_calldata = usdc.encode_abi(
+            "permit",
+            [stealth_src,
+             Web3.to_checksum_address(request.spender),
+             amount_int,
+             int(request.deadline),
+             int(request.v),
+             bytes.fromhex(request.r[2:]) if request.r.startswith("0x") else bytes.fromhex(request.r),
+             bytes.fromhex(request.s[2:]) if request.s.startswith("0x") else bytes.fromhex(request.s)],
+        )
+        transferfrom_calldata = usdc.encode_abi(
+            "transferFrom",
+            [stealth_src, recipient, amount_int],
+        )
+
+        multicall3 = w3.eth.contract(address=multicall3_addr, abi=_MULTICALL3_ABI)
+        relayer_addr = Account.from_key(relayer_key).address
+        nonce_tx = w3.eth.get_transaction_count(relayer_addr)
+
+        # aggregate(calls[], revertOnFail[]) — both revert-together,
+        # giving us atomic permit + transferFrom.
+        tx = multicall3.functions.aggregate(
+            [permit_calldata, transferfrom_calldata],
+            [True, True],
+        ).build_transaction({
+            "from": relayer_addr,
+            "nonce": nonce_tx,
+            "gas": 250000,
+            "gasPrice": w3.eth.gas_price,
+            "chainId": config["chain_id"],
+        })
+        signed = w3.eth.account.sign_transaction(tx, relayer_key)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+
+        return {
+            "tx_hash": tx_hash.hex(),
+            "block_number": receipt["blockNumber"],
+            "status": "success" if receipt["status"] == 1 else "reverted",
+            "stealth_source": stealth_src,
+            "recipient": recipient,
+            "amount": str(amount_int),
+            "spender": request.spender,
+            "multicall3": multicall3_addr,
+            "explorer": f"{config.get('explorer', 'https://basescan.org')}/tx/{tx_hash.hex()}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"usdc-permit submit error: {e}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+# (Re-add the original _stealth_registry_addr)
+
 # --- 3. CROSS-CHAIN PRIVACY SPLITTING ---
 class CrossChainSplitRequest(BaseModel):
     from_address: str
