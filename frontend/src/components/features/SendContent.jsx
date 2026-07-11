@@ -46,10 +46,24 @@ export function SendContent() {
   // tx-success popup needs `fetchStealthBalance` from Dashboard; if
   // not exposed on the context, fall back to reading from localStorage.
 
+  /**
+   * Accept BOTH forms the customer might paste:
+   *   - raw:        0x7DCB77eB30a6CD3D83cF86fd2e2F7d4e7ec5f9Df
+   *   - prefixed:   st:eth:0x7DCB77eB30a6CD3D83cF86fd2e2F7d4e7ec5f9Df
+   * Returns the raw 0x... form or null if neither matches.
+   */
+  const parseRecipient = (raw) => {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    const stripped = s.startsWith("st:eth:") ? s.slice(7) : s;
+    return ethers.isAddress(stripped) ? stripped : null;
+  };
+
   const sendUsdc = async () => {
     if (!address) return toast.error("Connect wallet first");
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
-    if (!ethers.isAddress(to)) return toast.error("Invalid address");
+    const recipient = parseRecipient(to);
+    if (!recipient) return toast.error("Invalid address — must start with 0x or st:eth:0x");
     if (!signer) return toast.error("Wallet not connected");
     setSending(true);
     try {
@@ -62,7 +76,7 @@ export function SendContent() {
       );
       const decimals = (chain === "bnb") ? 18 : 6;
       const amount6 = ethers.parseUnits(amount, decimals);
-      const tx = await usdc.transfer(to, amount6);
+      const tx = await usdc.transfer(recipient, amount6);
       // Show "submitted" toast first — the receipt popup arrives on
       // confirmation, not submission.
       toast.success("Submitted — waiting for on-chain confirmation…");
@@ -74,7 +88,7 @@ export function SendContent() {
         explorer: `${CHAINS[chain].explorer}/tx/${hash}`,
         amount,
         token: "USDC",
-        to,
+        to: recipient,
         chain: chain || "base",
       });
 
@@ -82,7 +96,7 @@ export function SendContent() {
       const envelope = await seal({
         tx_hash:      hash,
         from_address: address,
-        to_address:   to,
+        to_address:   recipient,
         amount_wei:   amount6.toString(),
         amount_human: amount,
         chain:        chain || "base",
@@ -117,7 +131,8 @@ export function SendContent() {
   const sendEth = async () => {
     if (!address) return toast.error("Connect wallet first");
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
-    if (!ethers.isAddress(to)) return toast.error("Invalid address");
+    const recipient = parseRecipient(to);
+    if (!recipient) return toast.error("Invalid address — must start with 0x or st:eth:0x");
     if (!signer) return toast.error("Wallet not connected");
     setSending(true);
     try {
@@ -129,7 +144,7 @@ export function SendContent() {
 
       const prepRes = await axios.post(`${API}/relayer/prepare-tx`, {
         from_address: address,
-        stealth_address: to,
+        stealth_address: recipient,
         amount_wei: amountWei.toString(),
         ephemeral_key: ephemeralKey,
         view_tag: viewTag,
@@ -153,14 +168,14 @@ export function SendContent() {
         explorer: `${CHAINS[chain].explorer}/tx/${relayTxHash}`,
         amount,
         token: CHAINS[chain]?.symbol || "ETH",
-        to,
+        to: recipient,
         chain: chain || "base",
       });
 
       const envelope = await seal({
         tx_hash:      relayTxHash,
         from_address: address,
-        to_address:   to,
+        to_address:   recipient,
         amount_wei:   amountWei.toString(),
         amount_human: amount,
         chain:        chain || "base",
