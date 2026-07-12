@@ -234,6 +234,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Stealth send demo on Base — public for customer onboarding.
         "/api/stealth/announce",
         "/api/stealth/announcements",
+        # Relayer + USDC permit-forwarder endpoints — public for
+        # customer onboarding. The user signs EIP-712 / EIP-2612
+        # intents off-chain; the relayer submits on their behalf.
+        # These MUST be public or the private send flow 401s with
+        # "Authorization required" before the wallet even pops.
+        "/api/relayer/prepare-tx",
+        "/api/relayer/submit",
+        "/api/relayer/state",
+        "/api/usdc-permit-forwarder/prepare-tx",
+        "/api/usdc-permit-forwarder/submit",
         # Dynamic-path prefixes handled separately (FastAPI brace templates
         # can't be literal-listed).
     }
@@ -244,6 +254,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "/api/stealth/meta/",
         "/api/stealth/scan/",
         "/api/relayer/stats/",
+        "/api/usdc-permit-forwarder/prepaid/",
     )
 
     def _is_public(self, path: str) -> bool:
