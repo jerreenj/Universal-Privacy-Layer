@@ -136,7 +136,7 @@ export function SendContent() {
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
     const recipient = parseRecipient(to);
     if (!recipient) return toast.error("Invalid address — must be a raw 0x... address");
-    if (!archiveUsdc) return toast.error("No stealth deposit yet — fund one first or use direct transfer");
+    if (!archiveUsdc) return toast.error("No USDC in your stealth address. Send USDC to your stealth first.", { duration: 6000 });
     setSending(true);
     setPermitStep("signing");
     try {
@@ -281,97 +281,29 @@ export function SendContent() {
     }
   };
 
-  /**
-   * FALLBACK: direct ERC20 transfer from the user's main wallet.
-   * Sender shows on BaseScan as the user's main wallet — by
-   * definition not private on this path. Kept here because the
-   * user may not have any USDC in their archive yet (their first
-   * send has no stealth deposit). Once they fund a stealth, the
-   * permit path becomes available and the UI prefers it.
-   */
-  const sendUsdcDirect = async () => {
-    if (!address) return toast.error("Connect wallet first");
-    if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
-    const recipient = parseRecipient(to);
-    if (!recipient) return toast.error("Invalid address — must be a raw 0x... address");
-    if (!signer) return toast.error("Wallet not connected");
-    setSending(true);
-    try {
-      const usdcAddr = CHAINS[chain]?.contracts?.usdc || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-      const usdc = new ethers.Contract(
-        usdcAddr,
-        ["function transfer(address to, uint256 amount) returns (bool)",
-         "function decimals() view returns (uint8)"],
-        signer
-      );
-      const decimals = (chain === "bnb") ? 18 : 6;
-      const amount6 = ethers.parseUnits(amount, decimals);
-      // Step 1: tell the wallet to POP — only fire "Transaction
-      // submitted" after the user actually signed (tx.hash exists).
-      const tx = await usdc.transfer(recipient, amount6);
-      toast.success("Submitted — waiting for on-chain confirmation…");
-      const receipt = await tx.wait();
-      const hash = receipt?.hash || tx?.hash || "";
-      setTxHash(hash);
-      setSuccessPopup({
-        hash,
-        explorer: `${CHAINS[chain].explorer}/tx/${hash}`,
-        amount,
-        token: "USDC",
-        to: recipient,
-        // Allows the popup to surface "Main wallet = sender" so
-        // the user knows the privacy hedge isn't applied on this
-        // path. Privacy metadata preserved (no leak) — only shown
-        // to the user themselves in their own UI.
-        fromStealth: null,
-        chain: chain || "base",
-      });
-
-      const envelope = await seal({
-        tx_hash:      hash,
-        from_address: address,
-        to_address:   recipient,
-        amount_wei:   amount6.toString(),
-        amount_human: amount,
-        chain:        chain || "base",
-        tx_type:      "private_send_usdc_direct",
-        status:       "confirmed",
-        client:       "metadata",
-      }, signer, address);
-      await axios.post(`${API}/transactions/record`, {
-        ...envelope,
-        tx_type: "private_send_usdc_direct",
-        status: "confirmed",
-        chain: chain || "base",
-      });
-
-      fetchBalance();
-      try {
-        if (typeof fetchStealthBalance === "function") {
-          await fetchStealthBalance();
-        }
-      } catch {}
-      setTo(""); setAmount("");
-    } catch (e) {
-      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Failed";
-      toast.error(msg);
-    }
-    setSending(false);
-  };
-
-  // Dispatcher: prefer permit (stealth-source, sender-hidden)
-  // when ANY archive entry has enough balance; else fall through
-  // to direct. The user can also force-direct by clicking "Send
-  // directly from my main wallet" if they want to bypass.
+  // Dispatcher: ONLY permit flow is allowed. If the stealth
+  // doesn't have enough USDC, we BLOCK the send rather than fall
+  // back to direct transfer (which would expose the user's main
+  // wallet on BaseScan). The user must fund their stealth first.
   const sendUsdc = () => {
-    if (archiveUsdc) {
-      const amountNum = parseFloat(amount);
-      const balNum = parseFloat(archiveUsdc.balanceHuman);
-      if (!isNaN(amountNum) && !isNaN(balNum) && amountNum <= balNum) {
-        return sendUsdcViaPermit();
-      }
+    if (!archiveUsdc) {
+      return toast.error(
+        "No USDC in your stealth address. Send USDC to your stealth first, then send privately from there.",
+        { duration: 6000 }
+      );
     }
-    return sendUsdcDirect();
+    const amountNum = parseFloat(amount);
+    const balNum = parseFloat(archiveUsdc.balanceHuman);
+    if (isNaN(amountNum) || isNaN(balNum)) {
+      return toast.error("Enter a valid amount");
+    }
+    if (amountNum > balNum) {
+      return toast.error(
+        `Stealth only has ${archiveUsdc.balanceHuman} USDC. Send USDC to your stealth ${archiveUsdc.address.slice(0, 6)}…${archiveUsdc.address.slice(-4)} first.`,
+        { duration: 6000 }
+      );
+    }
+    return sendUsdcViaPermit();
   };
 
   const sendEth = async () => {
@@ -458,7 +390,7 @@ export function SendContent() {
         {token === "usdc"
           ? (archiveUsdc
               ? <>Permits signed by your stealth {archiveUsdc.address.slice(0, 6)}…{archiveUsdc.address.slice(-4)} — only that stealth address appears as the Transfer from on BaseScan.</>
-              : <>No stealth deposit detected — sends will go directly from your main wallet (Transfer from = your wallet). Send some USDC to a stealth address first.</>)
+              : <>No stealth deposit detected — USDC sends are BLOCKED until you fund a stealth. Send USDC to your stealth address first, then send privately.</>)
           : <>Routed through PrivacyRelayer on {CHAINS[chain]?.name} - your wallet never appears as sender</>}
       </div>
       {/* Token toggle */}
@@ -546,7 +478,7 @@ export function SendContent() {
                 <span className="text-white/40 shrink-0">Recipient</span>
                 <span className="font-mono text-white/80 truncate">{successPopup.to}</span>
               </div>
-              {successPopup.fromStealth ? (
+              {successPopup.fromStealth && (
                 <div className="pt-2 border-t border-green-400/20">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] text-green-400">From on BaseScan</span>
@@ -555,13 +487,6 @@ export function SendContent() {
                   <p className="text-[10px] text-green-400/70 mt-1">
                     Your main wallet never appeared on-chain — the ERC20 Transfer event
                     fired from your stealth address.
-                  </p>
-                </div>
-              ) : (
-                <div className="pt-2 border-t border-yellow-500/30">
-                  <p className="text-[10px] text-yellow-300/80">
-                    Direct transfer — your main wallet IS the on-chain Transfer from-address.
-                    Fund a stealth with USDC first to switch into sender-hiding mode.
                   </p>
                 </div>
               )}
