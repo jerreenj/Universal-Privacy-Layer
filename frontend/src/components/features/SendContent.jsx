@@ -37,6 +37,27 @@ export function SendContent() {
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [token, setToken] = useState("usdc"); // "usdc" | "eth"
+  // Send mode — controls how the USDC is routed on-chain.
+  //   "stealth" — permit flow: signs with the stealth private key,
+  //               relayer submits permit+transferFrom. On BaseScan:
+  //               from = relayer, Transfer.from = stealth. The
+  //               DEFAULT — most private.
+  //   "public"  — public→private: user's main wallet sends USDC
+  //               directly to the relayer, which forwards to the
+  //               recipient. Lets the user spend from their main
+  //               wallet but the final recipient only sees the
+  //               relayer, not the user's wallet on the recipient's
+  //               side. The user's wallet DOES appear as the
+  //               initial Transfer.from — this is the entry-point
+  //               into the privacy system.
+  //   "direct"  — direct stealth→stealth: signs with the stealth
+  //               private key, sends USDC.transfer() directly from
+  //               the stealth to the recipient. On BaseScan:
+  //               from = stealth (NOT main wallet). Faster (no
+  //               relayer round-trip) but the stealth address
+  //               appears as msg.sender. Use when you want
+  //               stealth-to-stealth without relayer involvement.
+  const [sendMode, setSendMode] = useState("stealth");
   const [sending, setSending] = useState(false);
   const [txHash, setTxHash] = useState(null);
   // Tx-success popup — appears centered over the page on success,
@@ -281,14 +302,17 @@ export function SendContent() {
     }
   };
 
-  // Dispatcher: ONLY permit flow is allowed. If the stealth
-  // doesn't have enough USDC, we BLOCK the send rather than fall
-  // back to direct transfer (which would expose the user's main
-  // wallet on BaseScan). The user must fund their stealth first.
+  // Dispatcher: routes by sendMode.
+  //   "stealth" — permit flow (most private, requires stealth USDC)
+  //   "public"  — public→private via relayer (main wallet → relayer → recipient)
+  //   "direct"  — stealth→stealth direct transfer (no relayer, stealth = msg.sender)
   const sendUsdc = () => {
+    if (sendMode === "public") return sendUsdcViaRelayer();
+    if (sendMode === "direct") return sendUsdcDirectFromStealth();
+    // default: stealth permit flow
     if (!archiveUsdc) {
       return toast.error(
-        "No USDC in your stealth address. Send USDC to your stealth first, then send privately from there.",
+        "No USDC in your stealth address. Switch to 'From public wallet' mode, or send USDC to your stealth first.",
         { duration: 6000 }
       );
     }
@@ -299,11 +323,147 @@ export function SendContent() {
     }
     if (amountNum > balNum) {
       return toast.error(
-        `Stealth only has ${archiveUsdc.balanceHuman} USDC. Send USDC to your stealth ${archiveUsdc.address.slice(0, 6)}…${archiveUsdc.address.slice(-4)} first.`,
+        `Stealth only has ${archiveUsdc.balanceHuman} USDC. Switch to 'From public wallet' mode, or fund your stealth first.`,
         { duration: 6000 }
       );
     }
     return sendUsdcViaPermit();
+  };
+
+  /**
+   * sendUsdcViaRelayer — PUBLIC → PRIVATE mode.
+   * The user's main wallet signs an EIP-712 relay intent; the
+   * relayer submits the USDC transfer on their behalf. The user's
+   * wallet appears as the initial Transfer.from (unavoidable —
+   * the USDC starts in their wallet), but the recipient sees the
+   * relayer as the party that delivered the funds, not the user's
+   * wallet directly.
+   *
+   * This is the "I want to spend from my main wallet but still
+   * get some privacy" mode. Use this when your stealth is empty
+   * and you don't want to do a separate funding tx first.
+   */
+  const sendUsdcViaRelayer = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
+    const recipient = parseRecipient(to);
+    if (!recipient) return toast.error("Invalid address — must be a raw 0x... address");
+    if (!signer) return toast.error("Wallet not connected");
+    setSending(true);
+    setPermitStep("signing");
+    try {
+      const usdcAddr = CHAINS[chain]?.contracts?.usdc ||
+        "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+      const decimals = 6;
+      const amountRaw = ethers.parseUnits(amount, decimals);
+
+      // Step 1: approve the relayer to spend the user's USDC.
+      // The user's wallet pops for this approval.
+      setPermitStep("approving");
+      const usdc = new ethers.Contract(usdcAddr,
+        ["function approve(address spender, uint256 amount) returns (bool)",
+         "function allowance(address owner, address spender) view returns (uint256)"],
+        signer);
+      const prepRes = await axios.post(`${API}/usdc-permit-forwarder/prepare-tx`, {
+        from_address: address,
+        stealth_source: address,    // the "source" is the user's main wallet here
+        recipient,
+        amount,
+        chain: chain || "base",
+      });
+      const spender = prepRes.data.relayer_address;
+      const allow = await usdc.allowance(address, spender);
+      if (allow < amountRaw) {
+        const approveTx = await usdc.approve(spender, amountRaw);
+        await approveTx.wait();
+      }
+
+      // Step 2: ask backend to relay transferFrom(user, recipient).
+      setPermitStep("submitting");
+      const submitRes = await axios.post(`${API}/usdc-permit-forwarder/submit`, {
+        stealth_source: address,    // user's main wallet is the source
+        recipient,
+        amount_raw: amountRaw.toString(),
+        spender,
+        deadline: Math.floor(Date.now() / 1000) + 600,
+        v: 0, r: "0x0", s: "0x0",   // not used — approval was on-chain, not via permit signature
+        chain: chain || "base",
+      });
+
+      const hash = submitRes.data?.tx_hash || "";
+      setTxHash(hash);
+      setSuccessPopup({
+        hash,
+        explorer: `${CHAINS[chain].explorer}/tx/${hash}`,
+        amount,
+        token: "USDC",
+        to: recipient,
+        fromStealth: address,       // user's main wallet (they know)
+        chain: chain || "base",
+      });
+
+      fetchBalance();
+      try { if (typeof fetchStealthBalance === "function") await fetchStealthBalance(); } catch {}
+      setTo(""); setAmount("");
+    } catch (e) {
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Failed";
+      toast.error(msg);
+    } finally {
+      setSending(false);
+      setPermitStep(null);
+    }
+  };
+
+  /**
+   * sendUsdcDirectFromStealth — DIRECT stealth→stealth mode.
+   * Signs USDC.transfer() with the stealth's private key locally,
+   * submits via a standard raw tx. No relayer, no permit.
+   * On BaseScan: from = stealth address (NOT main wallet), but
+   * the stealth appears as msg.sender (less private than the
+   * permit flow, but faster and no relayer dependency).
+   */
+  const sendUsdcDirectFromStealth = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
+    const recipient = parseRecipient(to);
+    if (!recipient) return toast.error("Invalid address — must be a raw 0x... address");
+    if (!archiveUsdc) return toast.error("No USDC in your stealth address for direct send.");
+    setSending(true);
+    try {
+      const usdcAddr = CHAINS[chain]?.contracts?.usdc ||
+        "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+      const decimals = 6;
+      const amountRaw = ethers.parseUnits(amount, decimals);
+      if (BigInt(archiveUsdc.balanceRaw) < amountRaw) {
+        return toast.error(`Stealth only has ${archiveUsdc.balanceHuman} USDC.`);
+      }
+      // Sign with the stealth key locally — no wallet popup.
+      const stealthWallet = new ethers.Wallet(archiveUsdc.privateKey,
+        new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl));
+      const usdc = new ethers.Contract(usdcAddr,
+        ["function transfer(address to, uint256 amount) returns (bool)"],
+        stealthWallet);
+      const tx = await usdc.transfer(recipient, amountRaw);
+      const receipt = await tx.wait();
+      const hash = receipt?.hash || tx?.hash || "";
+      setTxHash(hash);
+      setSuccessPopup({
+        hash,
+        explorer: `${CHAINS[chain].explorer}/tx/${hash}`,
+        amount,
+        token: "USDC",
+        to: recipient,
+        fromStealth: archiveUsdc.address,
+        chain: chain || "base",
+      });
+      fetchBalance();
+      try { if (typeof fetchStealthBalance === "function") await fetchStealthBalance(); } catch {}
+      setTo(""); setAmount("");
+    } catch (e) {
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Failed";
+      toast.error(msg);
+    }
+    setSending(false);
   };
 
   const sendEth = async () => {
@@ -412,6 +572,43 @@ export function SendContent() {
           ))}
         </div>
       </div>
+      {/* Send-mode toggle — only shown for USDC. Controls how the
+          USDC is routed on-chain. ETH always uses the relayer. */}
+      {token === "usdc" && (
+        <div className="space-y-2">
+          <label className="block text-xs text-gray-500 uppercase mb-1">Send mode</label>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { key: "stealth", label: "Stealth→Stealth", desc: "Most private", color: "green" },
+              { key: "public",  label: "From Public",    desc: "Main wallet → relayer", color: "yellow" },
+              { key: "direct",  label: "Direct Stealth", desc: "No relayer", color: "blue" },
+            ].map((opt) => (
+              <button
+                key={opt.key}
+                data-testid={`mode-toggle-${opt.key}`}
+                onClick={() => setSendMode(opt.key)}
+                className={`p-2 border text-center transition-colors ${sendMode === opt.key
+                  ? (opt.color === "green" ? "bg-green-500/20 border-green-400 text-green-300"
+                    : opt.color === "yellow" ? "bg-yellow-500/20 border-yellow-400 text-yellow-300"
+                    : "bg-blue-500/20 border-blue-400 text-blue-300")
+                  : "border-white/20 text-white/60 hover:bg-white/5"}`}
+              >
+                <div className="text-[11px] font-semibold leading-tight">{opt.label}</div>
+                <div className="text-[9px] opacity-70 mt-0.5">{opt.desc}</div>
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-white/40 leading-relaxed">
+            {sendMode === "stealth" && (archiveUsdc
+              ? <>Permit flow — signs with stealth key, relayer submits. Your main wallet never appears on BaseScan. Stealth balance: {archiveUsdc.balanceHuman} USDC.</>
+              : <>Permit flow needs USDC in your stealth. Switch to "From Public" or fund your stealth first.</>)}
+            {sendMode === "public" && <>Your main wallet → relayer → recipient. Your wallet appears as the initial sender, but the relayer delivers to the recipient. Use when your stealth is empty.</>}
+            {sendMode === "direct" && (archiveUsdc
+              ? <>Direct transfer from your stealth — no relayer, faster. Stealth appears as msg.sender. Stealth balance: {archiveUsdc.balanceHuman} USDC.</>
+              : <>Direct mode needs USDC in your stealth. Fund it first.</>)}
+          </p>
+        </div>
+      )}
       <div>
         <label className="block text-xs text-gray-500 uppercase mb-2">Recipient (stealth address)</label>
         <input data-testid="send-to-input" value={to} onChange={(e) => setTo(e.target.value)} placeholder="0x..."

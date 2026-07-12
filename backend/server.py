@@ -3934,32 +3934,45 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
         recipient = Web3.to_checksum_address(request.recipient)
         amount_int = int(request.amount_raw)
 
-        # Build the two calldatas.
+        # Build the calldatas. If v=0 and r/s are zero, the user
+        # already approved on-chain (public mode) — skip the permit
+        # call and only do transferFrom. Otherwise do both atomically.
         usdc = w3.eth.contract(address=usdc_addr, abi=_USDC_PERMIT_FORWARD_ABI)
-        permit_calldata = usdc.encode_abi(
-            "permit",
-            [stealth_src,
-             Web3.to_checksum_address(request.spender),
-             amount_int,
-             int(request.deadline),
-             int(request.v),
-             bytes.fromhex(request.r[2:]) if request.r.startswith("0x") else bytes.fromhex(request.r),
-             bytes.fromhex(request.s[2:]) if request.s.startswith("0x") else bytes.fromhex(request.s)],
-        )
         transferfrom_calldata = usdc.encode_abi(
             "transferFrom",
             [stealth_src, recipient, amount_int],
+        )
+
+        is_permit_mode = int(request.v) != 0 or (
+            request.r not in ("0x0", "0x", "") and int(request.r, 16) != 0
         )
 
         multicall3 = w3.eth.contract(address=multicall3_addr, abi=_MULTICALL3_ABI)
         relayer_addr = Account.from_key(relayer_key).address
         nonce_tx = w3.eth.get_transaction_count(relayer_addr)
 
-        # aggregate(calls[], revertOnFail[]) — both revert-together,
-        # giving us atomic permit + transferFrom.
+        if is_permit_mode:
+            permit_calldata = usdc.encode_abi(
+                "permit",
+                [stealth_src,
+                 Web3.to_checksum_address(request.spender),
+                 amount_int,
+                 int(request.deadline),
+                 int(request.v),
+                 bytes.fromhex(request.r[2:]) if request.r.startswith("0x") else bytes.fromhex(request.r),
+                 bytes.fromhex(request.s[2:]) if request.s.startswith("0x") else bytes.fromhex(request.s)],
+            )
+            calls = [permit_calldata, transferfrom_calldata]
+            reverts = [True, True]
+        else:
+            # Public mode — just transferFrom (user already approved).
+            calls = [transferfrom_calldata]
+            reverts = [True]
+
+        # aggregate(calls[], revertOnFail[]) — all-or-nothing.
         tx = multicall3.functions.aggregate(
-            [permit_calldata, transferfrom_calldata],
-            [True, True],
+            calls,
+            reverts,
         ).build_transaction({
             "from": relayer_addr,
             "nonce": nonce_tx,
