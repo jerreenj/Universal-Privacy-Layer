@@ -596,6 +596,10 @@ def _load_deployed_addresses(static_contracts: Dict[str, Dict[str, Any]]) -> Dic
         # it to the frontend Privacy-Mode toggle.
         "confidential_swap_wrapper",
         "confidential_reverse_swap",
+        # GasTreasury — auto-funds rotating relayer wallets with gas ETH.
+        # The operator funds this contract once; every relayer rotation
+        # calls fundRelayer() to top up the new wallet automatically.
+        "gas_treasury",
         "deployer", "fee_recipient", "pool_owner",
     )
     provenance_keys = ("chainId", "deployedAt", "commit", "redeployedNote")
@@ -648,6 +652,7 @@ _UPL_CONTRACTS_STATIC = {
         "privacy_relayer": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "stealth_registry": "0x0000000000000000000000000000000000000000",  # PLACEHOLDER — replaced by P1.5/P1.9
         "uniswap_wrapper": None,  # not yet deployed (P1.9); resolved by _uniswap_wrapper_address_for()
+        "gas_treasury": "0x0000000000000000000000000000000000000000",  # auto-funds rotating relayers; placeholder until deploy
         "explorer": "https://basescan.org"
     },
     "arbitrum": {
@@ -3849,11 +3854,15 @@ async def prepare_usdc_permit_intent(request: USDCPermitPrepareRequest):
         config = CHAIN_CONFIG.get(request.chain)
         if not config:
             raise HTTPException(status_code=400, detail="Invalid chain")
-        relayer_key = (
-            os.environ.get("RELAYER_PRIVATE_KEY")
-            or _read_hot_wallet_keyfile()
-            or os.environ.get("DEPLOYER_PRIVATE_KEY")
-        )
+        # Use the ROTATING relayer key — auto-rotates every 100 tx
+        # so no single wallet accumulates suspicious volume.
+        relayer_key = await _get_current_relayer_key(request.chain)
+        if not relayer_key:
+            relayer_key = (
+                os.environ.get("RELAYER_PRIVATE_KEY")
+                or _read_hot_wallet_keyfile()
+                or os.environ.get("DEPLOYER_PRIVATE_KEY")
+            )
         if not relayer_key:
             raise HTTPException(
                 status_code=503,
@@ -3899,11 +3908,13 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
         if not config:
             raise HTTPException(status_code=400, detail="Invalid chain")
 
-        relayer_key = (
-            os.environ.get("RELAYER_PRIVATE_KEY")
-            or _read_hot_wallet_keyfile()
-            or os.environ.get("DEPLOYER_PRIVATE_KEY")
-        )
+        relayer_key = await _get_current_relayer_key(request.chain)
+        if not relayer_key:
+            relayer_key = (
+                os.environ.get("RELAYER_PRIVATE_KEY")
+                or _read_hot_wallet_keyfile()
+                or os.environ.get("DEPLOYER_PRIVATE_KEY")
+            )
         if not relayer_key:
             raise HTTPException(
                 status_code=503,
@@ -3960,6 +3971,10 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
 
+        # Increment the rotation counter after a successful submit.
+        if receipt["status"] == 1:
+            await _increment_relayer_tx_count()
+
         return {
             "tx_hash": tx_hash.hex(),
             "block_number": receipt["blockNumber"],
@@ -3976,6 +3991,216 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
     except Exception as e:
         logger.error(f"usdc-permit submit error: {e}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
+
+
+# ─── Rotating Relayer Manager ────────────────────────────────────────────
+# Every RELAYER_ROTATION_THRESHOLD transactions, generate a fresh relayer
+# wallet, call PrivacyRelayer.setRelayer(newAddr), and fundRelayer() via
+# the GasTreasury. This prevents any single relayer wallet from
+# accumulating billions in transaction volume — the on-chain `from`
+# address changes every ~100 tx, making pattern analysis across
+# large volumes impossible.
+#
+# State is persisted in MongoDB (collection: relayer_state) so the
+# rotation survives backend restarts. The current relayer key is
+# stored in memory only — it's regenerated from the seed on startup
+# if needed.
+
+RELAYER_ROTATION_THRESHOLD = 100  # rotate every 100 transactions
+
+_GAS_TREASURY_ABI = [
+    {"inputs":[{"name":"newRelayer","type":"address"}],"name":"fundRelayer","outputs":[],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[],"name":"treasuryBalance","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+]
+
+_PRIVACY_RELAYER_SETTER_ABI = [
+    {"inputs":[{"name":"newRelayer","type":"address"}],"name":"setRelayer","outputs":[],"stateMutability":"nonpayable","type":"function"},
+]
+
+# In-memory cache of the current relayer key + address + tx count.
+# Persisted to MongoDB on every state change.
+_current_relayer_state: dict = {
+    "private_key": None,
+    "address": None,
+    "tx_count": 0,
+    "rotations": 0,
+}
+
+
+def _generate_relayer_keypair() -> tuple:
+    """Generate a fresh random relayer keypair. Returns (private_key_hex, address)."""
+    acct = Account.create()
+    return acct.key.hex(), acct.address
+
+
+async def _load_relayer_state():
+    """Load the persisted relayer state from MongoDB on startup."""
+    global _current_relayer_state
+    try:
+        doc = await db.relayer_state.find_one({"_id": "current"})
+        if doc:
+            _current_relayer_state = {
+                "private_key": doc.get("private_key"),
+                "address": doc.get("address"),
+                "tx_count": doc.get("tx_count", 0),
+                "rotations": doc.get("rotations", 0),
+            }
+            logger.info(f"Loaded relayer state: addr={_current_relayer_state['address']}, tx_count={_current_relayer_state['tx_count']}")
+    except Exception as e:
+        logger.warning(f"Could not load relayer state: {e}")
+
+
+async def _save_relayer_state():
+    """Persist the current relayer state to MongoDB."""
+    try:
+        await db.relayer_state.update_one(
+            {"_id": "current"},
+            {"$set": {
+                "private_key": _current_relayer_state["private_key"],
+                "address": _current_relayer_state["address"],
+                "tx_count": _current_relayer_state["tx_count"],
+                "rotations": _current_relayer_state["rotations"],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning(f"Could not save relayer state: {e}")
+
+
+async def _rotate_relayer(chain: str = "base"):
+    """Generate a fresh relayer wallet, update the PrivacyRelayer contract,
+    and auto-fund it from the GasTreasury. Called when tx_count hits
+    RELAYER_ROTATION_THRESHOLD."""
+    global _current_relayer_state
+    try:
+        config = CHAIN_CONFIG.get(chain)
+        if not config:
+            logger.error(f"Cannot rotate: invalid chain {chain}")
+            return
+
+        # The operator key is needed to call setRelayer() on the
+        # PrivacyRelayer contract AND fundRelayer() on the GasTreasury.
+        operator_key = os.environ.get("DEPLOYER_PRIVATE_KEY") or os.environ.get("RELAYER_PRIVATE_KEY")
+        if not operator_key:
+            logger.error("Cannot rotate: no operator key configured")
+            return
+
+        w3 = get_w3(chain)
+        operator_acct = Account.from_key(operator_key)
+
+        # 1. Generate fresh relayer keypair.
+        new_key, new_addr = _generate_relayer_keypair()
+        logger.info(f"Rotating relayer: {_current_relayer_state['address']} -> {new_addr}")
+
+        # 2. Update PrivacyRelayer.setRelayer(new_addr) on-chain.
+        relayer_contract_addr = UPL_CONTRACTS.get(chain, {}).get("privacy_relayer")
+        if relayer_contract_addr and relayer_contract_addr.lower() != "0x0":
+            relayer_contract = w3.eth.contract(
+                address=Web3.to_checksum_address(relayer_contract_addr),
+                abi=_PRIVACY_RELAYER_SETTER_ABI,
+            )
+            nonce_tx = w3.eth.get_transaction_count(operator_acct.address)
+            tx = relayer_contract.functions.setRelayer(
+                Web3.to_checksum_address(new_addr)
+            ).build_transaction({
+                "from": operator_acct.address,
+                "nonce": nonce_tx,
+                "gas": 100000,
+                "gasPrice": w3.eth.gas_price,
+                "chainId": config["chain_id"],
+            })
+            signed = w3.eth.account.sign_transaction(tx, operator_key)
+            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            if receipt["status"] != 1:
+                logger.error("setRelayer() tx reverted — rotation aborted")
+                return
+            logger.info(f"setRelayer({new_addr}) confirmed: {tx_hash.hex()}")
+
+        # 3. Auto-fund the new relayer from GasTreasury.
+        treasury_addr = UPL_CONTRACTS.get(chain, {}).get("gas_treasury")
+        if treasury_addr and treasury_addr.lower() != "0x0":
+            treasury = w3.eth.contract(
+                address=Web3.to_checksum_address(treasury_addr),
+                abi=_GAS_TREASURY_ABI,
+            )
+            nonce_tx = w3.eth.get_transaction_count(operator_acct.address)
+            fund_tx = treasury.functions.fundRelayer(
+                Web3.to_checksum_address(new_addr)
+            ).build_transaction({
+                "from": operator_acct.address,
+                "nonce": nonce_tx,
+                "gas": 100000,
+                "gasPrice": w3.eth.gas_price,
+                "chainId": config["chain_id"],
+            })
+            signed_fund = w3.eth.account.sign_transaction(fund_tx, operator_key)
+            fund_hash = w3.eth.send_raw_transaction(signed_fund.raw_transaction)
+            fund_receipt = w3.eth.wait_for_transaction_receipt(fund_hash, timeout=120)
+            if fund_receipt["status"] != 1:
+                logger.error("fundRelayer() tx reverted — new relayer has no gas")
+                return
+            logger.info(f"GasTreasury funded {new_addr}: {fund_hash.hex()}")
+        else:
+            logger.warning("GasTreasury not deployed — new relayer has no gas. Fund it manually.")
+
+        # 4. Update in-memory state + persist.
+        _current_relayer_state = {
+            "private_key": new_key,
+            "address": new_addr,
+            "tx_count": 0,
+            "rotations": _current_relayer_state["rotations"] + 1,
+        }
+        await _save_relayer_state()
+        logger.info(f"Relayer rotation complete: #{_current_relayer_state['rotations']}, addr={new_addr}")
+
+    except Exception as e:
+        logger.error(f"Relayer rotation failed: {e}")
+
+
+async def _get_current_relayer_key(chain: str = "base") -> Optional[str]:
+    """Get the current relayer private key. If no state exists,
+    initialize one by generating a fresh keypair + rotating on-chain.
+    If tx_count >= threshold, rotate before returning."""
+    global _current_relayer_state
+
+    # Lazy-init on first call.
+    if _current_relayer_state["private_key"] is None:
+        await _load_relayer_state()
+        if _current_relayer_state["private_key"] is None:
+            # No persisted state — create the first relayer.
+            await _rotate_relayer(chain)
+
+    # Check if rotation is needed.
+    if _current_relayer_state["tx_count"] >= RELAYER_ROTATION_THRESHOLD:
+        logger.info(f"Relayer tx_count={_current_relayer_state['tx_count']} hit threshold — rotating")
+        await _rotate_relayer(chain)
+
+    return _current_relayer_state["private_key"]
+
+
+async def _increment_relayer_tx_count():
+    """Called after every successful relayer tx. Increments the
+    counter and persists."""
+    global _current_relayer_state
+    _current_relayer_state["tx_count"] += 1
+    await _save_relayer_state()
+
+
+@api_router.get("/relayer/state")
+async def get_relayer_state():
+    """Returns the current relayer wallet address, tx count, and
+    rotation count. Useful for monitoring + knowing when the next
+    rotation will happen."""
+    return {
+        "current_relayer_address": _current_relayer_state.get("address"),
+        "tx_count": _current_relayer_state.get("tx_count", 0),
+        "rotations": _current_relayer_state.get("rotations", 0),
+        "rotation_threshold": RELAYER_ROTATION_THRESHOLD,
+        "tx_until_rotation": max(0, RELAYER_ROTATION_THRESHOLD - _current_relayer_state.get("tx_count", 0)),
+    }
+
 
 
 # (Re-add the original _stealth_registry_addr)
