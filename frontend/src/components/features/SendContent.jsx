@@ -106,12 +106,20 @@ export function SendContent() {
         const { readUsdcBalance } = await import("@/lib/balance-reader");
         const probes = await Promise.all(list.map(async (entry) => {
           try {
+            // Verify the private key actually matches the address
+            // in the archive entry. A corrupted/mismatched entry
+            // would sign a permit with the wrong key, causing the
+            // relayer's transferFrom to fail.
+            const w = new ethers.Wallet(entry.privateKey);
+            if (w.address.toLowerCase() !== entry.address.toLowerCase()) {
+              return { entry, balance: 0n, skip: true };
+            }
             const bal = await readUsdcBalance(entry.address);
             return { entry, balance: bal };
           } catch { return { entry, balance: 0n }; }
         }));
         if (cancelled) return;
-        const positive = probes.filter(p => p.balance > 0n);
+        const positive = probes.filter(p => p.balance > 0n && !p.skip);
         if (positive.length === 0) { setArchiveUsdc(null); return; }
         positive.sort((a, b) => (b.balance > a.balance ? 1 : -1));
         setArchiveUsdc({
@@ -151,7 +159,7 @@ export function SendContent() {
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
     const recipient = parseRecipient(to);
     if (!recipient) return toast.error("Invalid address — must be a raw 0x... address");
-    if (!archiveUsdc) return toast.error("No USDC in your stealth address. Send USDC to your stealth first.", { duration: 6000 });
+    if (!archiveUsdc) return toast.error("No USDC in your stealth address. Use Deposit mode first.", { duration: 6000 });
     setSending(true);
     setPermitStep("signing");
     try {
@@ -159,11 +167,22 @@ export function SendContent() {
         "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
       const decimals = 6;
       const amountRaw = ethers.parseUnits(amount, decimals);
-      // Source stealth must have enough USDC. (Frontend already
-      // checks via archiveUsdc.balanceRaw, but a last-minute gate
-      // avoids sending a doomed permit.)
-      if (BigInt(archiveUsdc.balanceRaw) < amountRaw) {
-        return toast.error("Stealth address balance insufficient — fund it first");
+
+      // CRITICAL: re-read the stealth's ACTUAL on-chain USDC balance
+      // right before signing. The archive balance might be stale
+      // (cached from a previous session, or the raw-fetch reader
+      // returned 0 due to a CORS hiccup). If we sign a permit for
+      // a stealth that has 0 USDC, the relayer's transferFrom
+      // reverts with "transfer amount exceeds balance" — the exact
+      // error the user was seeing.
+      const { readUsdcBalance } = await import("@/lib/balance-reader");
+      const liveBalance = await readUsdcBalance(archiveUsdc.address);
+      if (liveBalance < amountRaw) {
+        const liveHuman = ethers.formatUnits(liveBalance, 6);
+        return toast.error(
+          `Stealth ${archiveUsdc.address.slice(0, 6)}…${archiveUsdc.address.slice(-4)} only has ${liveHuman} USDC. Use Deposit mode to add more.`,
+          { duration: 6000 }
+        );
       }
 
       // Construct the stealth address as a local ethers wallet —
