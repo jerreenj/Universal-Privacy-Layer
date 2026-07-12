@@ -24,8 +24,8 @@ contract GasTreasuryTest is Test {
     function test_fund_relayer_sends_eth() public {
         vm.prank(OWNER);
         treasury.fundRelayer(payable(RELAYER1));
-        assertEq(RELAYER1.balance, 0.005 ether);
-        assertEq(treasury.fundedAmounts(RELAYER1), 0.005 ether);
+        assertEq(RELAYER1.balance, 0.00002 ether);
+        assertEq(treasury.fundedAmounts(RELAYER1), 0.00002 ether);
         assertEq(treasury.totalRelayersFunded(), 1);
     }
 
@@ -34,10 +34,10 @@ contract GasTreasuryTest is Test {
         treasury.fundRelayer(payable(RELAYER1));
         treasury.fundRelayer(payable(RELAYER2));
         vm.stopPrank();
-        assertEq(RELAYER1.balance, 0.005 ether);
-        assertEq(RELAYER2.balance, 0.005 ether);
+        assertEq(RELAYER1.balance, 0.00002 ether);
+        assertEq(RELAYER2.balance, 0.00002 ether);
         assertEq(treasury.totalRelayersFunded(), 2);
-        assertEq(address(treasury).balance, 0.01 ether); // 0.02 - 0.01 = 0.01
+        assertEq(address(treasury).balance, 0.01996 ether); // 0.02 - 0.00004 = 0.01996
     }
 
     function test_non_owner_cannot_fund() public {
@@ -53,9 +53,9 @@ contract GasTreasuryTest is Test {
     }
 
     function test_insufficient_treasury_reverts() public {
-        // Drain treasury to < 0.005
+        // Drain treasury to < 0.00002
         vm.prank(OWNER);
-        treasury.withdraw(0.018 ether);
+        treasury.withdraw(0.01999 ether);
         vm.prank(OWNER);
         vm.expectRevert(bytes("Insufficient treasury balance"));
         treasury.fundRelayer(payable(RELAYER1));

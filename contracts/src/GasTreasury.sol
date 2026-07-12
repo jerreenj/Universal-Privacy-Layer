@@ -19,15 +19,20 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  *   window. So each relayer always has plenty of gas.
  *
  *   Funding math:
- *     0.005 ETH per relayer × N relayers = total ETH needed
- *     0.01 ETH = 2 relayer rotations (200 transactions)
- *     0.05 ETH = 10 rotations (1,000 transactions)
- *     0.1 ETH = 20 rotations (2,000 transactions)
+ *     GAS_TOPUP per relayer × N relayers = total ETH needed
+ *     At 0.00002 ETH per rotation:
+ *     0.001 ETH = 50 rotations (5,000 transactions)
+ *     0.01 ETH = 500 rotations (50,000 transactions)
+ *     0.05 ETH = 2,500 rotations (250,000 transactions)
  */
 contract GasTreasury is Ownable {
-    /// @dev Gas top-up per new relayer. 0.005 ETH = plenty for 100+
-    ///      transactions on Base at current gas prices.
-    uint256 public constant GAS_TOPUP = 0.005 ether;
+    /// @dev Gas top-up per new relayer. Sized for Base mainnet where
+    ///      gas is ~0.006 gwei. 100 transactions of permit+transferFrom
+    ///      multicall (~120k gas each) at 0.01 gwei = ~0.0000012 ETH.
+    ///      0.00002 ETH covers this with a 16x safety margin. At
+    ///      $1500/ETH that's ~$0.03 per rotation — cheap enough to
+    ///      fund thousands of transactions from $1.50 of ETH.
+    uint256 public constant GAS_TOPUP = 0.00002 ether;
 
     /// @dev Total ETH sent to each relayer (audit trail).
     mapping(address => uint256) public fundedAmounts;
