@@ -3898,8 +3898,9 @@ async def prepare_usdc_permit_intent(request: USDCPermitPrepareRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"usdc-permit prepare error: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred")
+        import traceback
+        logger.error(f"usdc-permit prepare error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)[:300]}")
 
 
 class USDCPermitSubmitRequest(BaseModel):
@@ -4028,8 +4029,9 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"usdc-permit submit error: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred")
+        import traceback
+        logger.error(f"usdc-permit submit error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)[:300]}")
 
 
 # ─── Rotating Relayer Manager ────────────────────────────────────────────
@@ -4199,22 +4201,52 @@ async def _rotate_relayer(chain: str = "base"):
 
 
 async def _get_current_relayer_key(chain: str = "base") -> Optional[str]:
-    """Get the current relayer private key. If no state exists,
-    initialize one by generating a fresh keypair + rotating on-chain.
-    If tx_count >= threshold, rotate before returning."""
+    """Get the current relayer private key.
+
+    Priority:
+      1. In-memory rotating state (from MongoDB or rotation)
+      2. RELAYER_PRIVATE_KEY env var (the GitHub secret)
+      3. Hot wallet keyfile
+      4. DEPLOYER_PRIVATE_KEY env var (legacy)
+
+    The rotation logic only fires when tx_count >= threshold AND
+    a DEPLOYER_PRIVATE_KEY is available (needed to call setRelayer
+    on the contract). On Azure, only RELAYER_PRIVATE_KEY is set,
+    so we just use it directly — no rotation needed for the first
+    100 transactions.
+    """
     global _current_relayer_state
 
-    # Lazy-init on first call.
+    # If we have in-memory state, use it.
     if _current_relayer_state["private_key"] is None:
         await _load_relayer_state()
-        if _current_relayer_state["private_key"] is None:
-            # No persisted state — create the first relayer.
-            await _rotate_relayer(chain)
 
-    # Check if rotation is needed.
-    if _current_relayer_state["tx_count"] >= RELAYER_ROTATION_THRESHOLD:
-        logger.info(f"Relayer tx_count={_current_relayer_state['tx_count']} hit threshold — rotating")
-        await _rotate_relayer(chain)
+    if _current_relayer_state["private_key"] is not None:
+        # Check if rotation is needed.
+        if _current_relayer_state["tx_count"] >= RELAYER_ROTATION_THRESHOLD:
+            logger.info(f"Relayer tx_count={_current_relayer_state['tx_count']} hit threshold — rotating")
+            await _rotate_relayer(chain)
+        return _current_relayer_state["private_key"]
+
+    # No in-memory state — fall back to env vars.
+    # This is the normal path on Azure: RELAYER_PRIVATE_KEY is set
+    # as a GitHub secret, so we just use it directly.
+    relayer_key = (
+        os.environ.get("RELAYER_PRIVATE_KEY")
+        or _read_hot_wallet_keyfile()
+        or os.environ.get("DEPLOYER_PRIVATE_KEY")
+    )
+    if relayer_key:
+        # Cache it in memory so we don't re-read env on every call.
+        acct = Account.from_key(relayer_key)
+        _current_relayer_state = {
+            "private_key": relayer_key,
+            "address": acct.address,
+            "tx_count": 0,
+            "rotations": 0,
+        }
+        logger.info(f"Using env RELAYER_PRIVATE_KEY: addr={acct.address}")
+    return relayer_key
 
     return _current_relayer_state["private_key"]
 
