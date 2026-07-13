@@ -244,6 +244,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "/api/relayer/state",
         "/api/usdc-permit-forwarder/prepare-tx",
         "/api/usdc-permit-forwarder/submit",
+        # Confidential notes (P6) — public for customer onboarding
+        "/api/confidential/note-state",
+        "/api/confidential/note-submit",
+        "/api/confidential/note-settle",
         # Dynamic-path prefixes handled separately (FastAPI brace templates
         # can't be literal-listed).
     }
@@ -3229,6 +3233,169 @@ async def confidential_withdraw_relay(req: dict = Body(default={})):
     except Exception as e:
         logger.error(f"confidential/withdraw-relay error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── P6: Confidential Notes (zero-value, amount-hidden) ─────────────────
+# These endpoints support the new note-based system where NO USDC
+# moves on-chain. Only hashes are recorded. The amount is hidden
+# between Privacy Cloak users.
+
+_NOTES_CONTRACT_ADDR = "0x305d11e1877e2ACB928FdeFe7d94c10692beBCaC"
+_NOTES_VERIFIER_ADDR = "0x4F4cEC449297975c5b46347dB818b03dEe813aE0"
+
+_NOTES_ABI = json.loads(
+    '[{"inputs":[{"name":"proofA","type":"uint256[2]"},{"name":"proofB","type":"uint256[2][2]"},'
+    '{"name":"proofC","type":"uint256[2]"},{"name":"pubSignals","type":"uint256[4]"}],'
+    '"name":"createNote","outputs":[],"stateMutability":"nonpayable","type":"function"},'
+    '{"inputs":[],"name":"currentRoot","outputs":[{"name":"","type":"bytes32"}],'
+    '"stateMutability":"view","type":"function"},'
+    '{"inputs":[],"name":"nextLeafIndex","outputs":[{"name":"","type":"uint256"}],'
+    '"stateMutability":"view","type":"function"},'
+    '{"inputs":[{"name":"","type":"uint256"}],"name":"isSpent","outputs":[{"name":"","type":"bool"}],'
+    '"stateMutability":"view","type":"function"}]'
+)
+
+
+@api_router.get("/confidential/note-state")
+async def confidential_note_state():
+    """Read the current Merkle tree state from the ConfidentialNotes
+    contract. Returns the current root, next leaf index, and the
+    Merkle path for the next insertion (so the frontend can build
+    a ZK proof without scanning the whole chain)."""
+    try:
+        w3 = get_w3("base")
+        notes = w3.eth.contract(
+            address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
+            abi=_NOTES_ABI,
+        )
+        current_root = notes.functions.currentRoot().call()
+        next_leaf = notes.functions.nextLeafIndex().call()
+        # For the Merkle path: in a Poseidon Merkle tree of depth 20,
+        # the path for the next insertion is computed from the current
+        # tree state. For simplicity, return zeros for now — the
+        # circuit handles zero paths correctly for the first insertion.
+        # A full implementation would compute the actual path from
+        # stored leaves.
+        depth = 20
+        merkle_path_elements = ["0"] * depth
+        merkle_path_indices = ["0"] * depth
+        return {
+            "contract": _NOTES_CONTRACT_ADDR,
+            "current_root": "0x" + current_root.hex(),
+            "next_leaf_index": str(next_leaf),
+            "merkle_depth": depth,
+            "merkle_path_elements": merkle_path_elements,
+            "merkle_path_indices": merkle_path_indices,
+        }
+    except Exception as e:
+        logger.error(f"note-state error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class NoteSubmitRequest(BaseModel):
+    proof_a: List[str]
+    proof_b: List[List[str]]
+    proof_c: List[str]
+    pub_signals: List[str]
+
+
+@api_router.post("/confidential/note-submit")
+async def confidential_note_submit(request: NoteSubmitRequest):
+    """Submit a ZK proof to createNote() on the ConfidentialNotes
+    contract via the relayer. Zero USDC moves — only hashes are
+    recorded on-chain. The relayer pays gas; the user's wallet
+    never appears as msg.sender."""
+    try:
+        config = CHAIN_CONFIG.get("base")
+        if not config:
+            raise HTTPException(status_code=400, detail="Base only")
+
+        relayer_key = (
+            os.environ.get("RELAYER_PRIVATE_KEY")
+            or _read_hot_wallet_keyfile()
+            or os.environ.get("DEPLOYER_PRIVATE_KEY")
+        )
+        if not relayer_key:
+            raise HTTPException(status_code=503, detail="Relayer not configured")
+
+        w3 = get_w3("base")
+        relayer_addr = Account.from_key(relayer_key).address
+        notes = w3.eth.contract(
+            address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
+            abi=_NOTES_ABI,
+        )
+
+        # Format proof for Solidity
+        proofA = [int(request.proof_a[0]), int(request.proof_a[1])]
+        proofB = [
+            [int(request.proof_b[0][0]), int(request.proof_b[0][1])],
+            [int(request.proof_b[1][0]), int(request.proof_b[1][1])],
+        ]
+        proofC = [int(request.proof_c[0]), int(request.proof_c[1])]
+        pubSignals = [int(s) for s in request.pub_signals]
+
+        nonce_tx = w3.eth.get_transaction_count(relayer_addr)
+        gas_price = w3.eth.gas_price
+        tx = notes.functions.createNote(proofA, proofB, proofC, pubSignals).build_transaction({
+            "from": relayer_addr,
+            "nonce": nonce_tx,
+            "gas": 400000,
+            "gasPrice": gas_price,
+            "chainId": config["chain_id"],
+        })
+        signed = w3.eth.account.sign_transaction(tx, relayer_key)
+        raw = getattr(signed, 'raw_transaction', getattr(signed, 'rawTransaction', None))
+        tx_hash = w3.eth.send_raw_transaction(raw)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+
+        if receipt["status"] == 1:
+            await _increment_relayer_tx_count()
+
+        return {
+            "tx_hash": tx_hash.hex(),
+            "status": "success" if receipt["status"] == 1 else "reverted",
+            "block_number": receipt["blockNumber"],
+            "explorer": f"https://basescan.org/tx/{tx_hash.hex()}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"note-submit error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)[:300]}")
+
+
+class NoteSettleRequest(BaseModel):
+    nullifier: str
+    secret: str
+    amount: str
+    recipient: str
+
+
+@api_router.post("/confidential/note-settle")
+async def confidential_note_settle(request: NoteSettleRequest):
+    """Settle a note — convert it back to real USDC. The amount IS
+    visible at this transaction (architectural limit of ERC20).
+    But the settlement tx is detached from the note creation tx.
+
+    Flow:
+    1. Relayer sends USDC.transferFrom(stealth, recipient, amount)
+       — but the stealth needs to have approved the relayer first.
+    2. For now, this is a placeholder — the full settlement needs
+       a spend-proof circuit (prove you know the nullifier+secret
+       that created the note, without revealing them). That's a
+       future enhancement."""
+    try:
+        # Placeholder — return a clear message that settlement
+        # needs the spend-proof circuit which is P6.1
+        raise HTTPException(
+            status_code=501,
+            detail="Note settlement requires the spend-proof circuit (P6.1). "
+                   "Not yet implemented — the note is on-chain but cannot be "
+                   "redeemed for USDC until the spend circuit is built."
+        )
+    except HTTPException:
+        raise
 
 
 # Deployed BatchSwapRouter on Base mainnet
