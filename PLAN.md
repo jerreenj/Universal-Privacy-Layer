@@ -2,22 +2,27 @@
 
 **Live:** [privacycloak.in](https://privacycloak.in) · **Repo:** github.com/jerreenj/Universal-Privacy-Layer
 
-**Last updated:** 2026-07-07 (post-everything-fixed;)
+**Last updated:** 2026-07-13
 
 ---
 
 ## TL;DR — what's done
 
-- **Send**: ✅ — privacy-preserving on-chain (customer's EOA never appears; hot wallet `0x2d82E56f…` fronts in atomic `relayAndAnnounce`) — Base mainnet. Operator env auto-flipped in CI.
-- **Receive**: ✅ — wallet-derive button, direct-RPC scanner (`eth_getLogs` against `StealthAddressRegistry`), no backend round-trip needed for the scan; backend helper for the meta derivation if user doesn't have a saved keystore.
-- **Native Swap (Core tile)**: ✅ — `NativePrivateSwap` vault at `0x582c57a7…` (rate 1700 USDC/ETH, 6.08 USDC seeded reserve, 5 bps skim). 0 third-party AMM hop. Verified on-chain: customer tx `0x19b7fb0a…` swapped 0.0001 ETH → 169,915 µUSDC to stealth.
-- **Multi-DEX Swap (PrivateDeFi)**: ✅ — Aerodrome V2 + Uniswap V3 wrappers for opt-in 3rd-party routing (Aerodrome V2 = the customer's actual market; pickers visible on the dashboard).
-- **PrivacyPool**: ✅ — multi-denom (0.01 / 0.1 / 1 ETH live), Poseidon Merkle depth 20, Groth16 verifier on-chain. Browser-side snarkjs-WASM proof + server-side prover endpoint wired (M2; gated by `ZK_POOL_PROVER_ENABLED=1`).
-- **Transaction History**: ✅ — every row sealed with wallet-derived AES-256-GCM; backend stores ciphertext only.
+- **Send (USDC)**: ✅ — Stealth Send via EIP-2612 permit + relayer. User's stealth signs permit locally (no wallet popup), relayer submits `permit()` + `transferFrom()` on-chain. Main wallet AND stealth address hidden on BaseScan — only relayer appears as `from`. Two send modes: **Stealth Send** (private, via relayer) + **Deposit** (main wallet → own stealth, entry point).
+- **Send (ETH)**: ✅ — via PrivacyRelayer `relayAndAnnounce`. Customer's EOA never appears as `msg.sender`.
+- **Receive**: ✅ — self-custodial stealth address generation in browser. Recycling icon creates fresh addresses on demand. All historical addresses stored in localStorage archive (`upl:stealth-archive:<wallet>`). No server-side private key storage.
+- **USDC + ETH balance reads**: ✅ — raw `fetch()` reader (`balance-reader.js`) bypasses ethers CORS failures. Multi-RPC fallback (publicnode, blastapi, 1rpc). Reads across ALL archive addresses, sums total private balance.
+- **Rotating relayer**: ✅ — relayer auto-rotates every 100 transactions. GasTreasury contract auto-funds each new relayer with 0.00002 ETH. No single wallet accumulates suspicious volume.
+- **GasTreasury**: ✅ — deployed at `0xa95942e4176ece411764af08e35756b0ff23a76c`. Funded with 0.00096 ETH (~4,800 private transactions).
+- **Native Swap (Core tile)**: ✅ — `NativePrivateSwap` vault. 0 third-party AMM hop.
+- **Multi-DEX Swap (PrivateDeFi)**: ✅ — Aerodrome V2 + Uniswap V3 wrappers.
+- **PrivacyPool**: ✅ — multi-denom, Poseidon Merkle depth 20, Groth16 verifier.
+- **Confidential Notes (P2)**: ✅ — `confidential_notes.circom` circuit (4 public signals, recipient as private input). `ConfidentialNotes.sol` + verifier deployed. Zero-value ZK proof transactions — no USDC moves between users.
+- **Transaction History**: ✅ — sealed with AES-256-GCM; backend stores ciphertext only.
 - **Sui mainnet**: ✅ at parity.
-- **Solana**: 🔒 PAUSED — code + local proof + devnet + triple-guarded mainnet script (`scripts/flip_sol_to_mainnet.sh`); flipped to mainnet needs ~3 SOL.
+- **Solana**: 🔒 PAUSED — needs ~3 SOL.
 
-**Money spent this round + the previous Base closer round combined = ~$11** (deployer ETH: ~0.0027 ETH ≈ $7 real gas; vault funded with ~$4 USDC; relay buffer ≈$0.30; customer-pilot demo funding 0.0022 ETH ≈ $5.50 from deployer to a fresh customer EOA carrying the demo). All non-recoverable deployer ETH ≈ $7; everything else is still operational capital (in the vault's USDC reserve, the hot-wallet relayer buffer, and the customer EOA for the demo).
+**Money spent total ≈ $13** (deployer ETH gas + vault USDC + treasury ETH + test transactions).
 
 ---
 
@@ -26,12 +31,15 @@
 ```
 P0  Security + cleanup              ████████████████ 100% ✅ DONE
 P1  EVM contracts on Base           ████████████████ 100% ✅ DONE
-P2  Sui mainnet publish + wiring    ████████████████ 100% ✅ DONE
+P2  Sui mainnet + ConfidentialNotes ████████████████ 100% ✅ DONE
 P2.9 Sui/Base parity                ████████████████ 100% ✅ DONE
 P2.9.7 Base atomic relay+announce   ████████████████ 100% ✅ DONE
-P2.10 Solana (SVM) parity           ███████████░░░░░  72% 🔒 PAUSED — needs ~3 SOL
+P2.10 Solana (SVM) parity           ███████████░░░░░  72% 🔒 PAUSED
 P3  Real ZK (Privacy Pool, Path B)  ████████████████ 100% ✅ DONE
-P4  Pools + DeFi privacy            ████████████████ 100% ✅ DONE (round-1: P4.1 multi-denom + P4.2 Aerodrome + NativePrivateSwap + Backend-Prover + wallet-derive everywhere)
+P4  Pools + DeFi privacy            ████████████████ 100% ✅ DONE
+P5  USDC sender-hiding (permit)     ████████████████ 100% ✅ DONE
+P5.1 Rotating relayer + GasTreasury ████████████████ 100% ✅ DONE
+P6  Amount hiding                   ░░░░░░░░░░░░░░░░   0% NEXT
 ```
 
 ---
@@ -40,69 +48,79 @@ P4  Pools + DeFi privacy            ██████████████�
 
 | Contract | Address | Note |
 |---|---|---|
-| **PrivacyRelayer (P2.9.7 atomic)** | **`0xCea5b3dD22c5306dEF78767b27Ec9E276c5e1C42`** | registry wired; new hot-wallet relayer slot set |
-| **PrivacyRelayer hot wallet** | **`0x2d82E56f56e4483032fEf8248c2EB75C45A68D2d`** | fronts gas for atomic `relayAndAnnounce`; key in `scripts/.relayer-hot-wallet.txt` (gitignored) |
-| **StealthAddressRegistry** | **`0x05077cB4c4214b89dD35F949b587d31e79b3B0c9`** | live announcement log |
-| **Groth16Verifier** | **`0x838b7c20b1a97cAA6379542d03983b4571275679`** | snarkjs-generated |
-| **PrivacyPool (multi-denom)** | **`0x3F0b23Aca0624981a503e8f042db2F3884D0C89C`** | 3 denoms: 0.01 / 0.1 / 1 ETH |
-| **AerodromePrivacyWrapper (P4.2 hotfix)** | **`0xe896e6f51af137c32db7eb4e3b2de795d392a646`** | 4-field Route struct + factory |
-| **UniswapPrivacyWrapper** | **`0x9C30cdCd73347BF18A5bD424C37E5714e2606362`** | opt-in 3rd-party |
-| **NativePrivateSwap (in-house vault)** | **`0x582c57a7ba6e7758e75dc5334a5e8ff096515d09`** | Core Private Swap tile; 1700 USDC/ETH rate; 6.08 USDC reserve |
-| USDC (settlement token) | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | — |
+| **PrivacyRelayer** | `0xCea5b3dD22c5306dEF78767b27Ec9E276c5e1C42` | ETH relay + setRelayer for rotation |
+| **Current relayer hot wallet** | `0xeE608e6C9C5C630fA868d3c14CB3158e048EeB3f` | Funded with 0.00002 ETH from treasury |
+| **GasTreasury** | `0xa95942e4176ece411764af08e35756b0ff23a76c` | Auto-funds rotating relayers; 0.00094 ETH remaining |
+| **StealthAddressRegistry** | `0xaA5c31a4FF1715B85F1008aD6E874Eb183a843c1` | Live announcement log |
+| **Groth16Verifier** | `0x838b7c20b1a97cAA6379542d03983b4571275679` | snarkjs-generated |
+| **PrivacyPool (multi-denom)** | `0x3F0b23Aca0624981a503e8f042db2F3884D0C89C` | 3 denoms: 0.01 / 0.1 / 1 ETH |
+| **ConfidentialNotes** | `0x305d11e1877e2ACB928FdeFe7d94c10692beBCaC` | Zero-value ZK note creation |
+| **ConfidentialNotesVerifier** | `0x4F4cEC449297975c5b46347dB818b03dEe813aE0` | Groth16 verifier (4 public signals) |
+| **AerodromePrivacyWrapper** | `0xe896e6f51af137c32db7eb4e3b2de795d392a646` | 4-field Route struct + factory |
+| **UniswapPrivacyWrapper** | `0x9C30cdCd73347BF18A5bD424C37E5714e2606362` | opt-in 3rd-party |
+| **NativePrivateSwap** | `0x582c57a7ba6e7758e75dc5334a5e8ff096515d09` | Core Private Swap tile |
+| USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | 6 decimals |
+| Multicall3 | `0xcA11bde05977b3631167028862bE2a173976CA11` | Canonical (not used currently) |
 
-**Deployer / Owner / FeeRecipient / PoolOwner:** `0x3f44A6451439673D95082A1337045a25ec275394`
+**Deployer / Owner:** `0x3f44A6451439673D95082A1337045a25ec275394`
 
 ---
 
-## Privacy hiding on BaseScan — what IS and IS NOT hidden
+## Privacy on BaseScan — what IS and IS NOT hidden
 
 | Vector | Hidden? | How |
 |---|---|---|
-| Customer's EOA as `msg.sender` on **Send** | ✅ | atomic `relayAndAnnounce` — hot wallet fronts the tx; customer's EOA only ever signs an off-chain EIP-712 |
-| Customer's EOA as `msg.sender` on **Swap (Core tile)** | ⚠️ | visible — inherent to in-house vault; mitigated by the **recipient** being a stealth EOA so the OUTPUT is unlinked from the customer's spend identity |
-| Recipient identity (Send + Swap) | ✅ | EIP-5564 one-time stealth address; derived per-payment via ephemeral ECDH against wallet-derived meta (HKDF over `personal_sign`) |
-| Memo / encrypted body | ✅ | AES-256-GCM wallet-derived seal; per-record random IV + salt |
-| History row contents | ✅ | ciphertext envelope stored in backend; only customer's wallet can unseal |
-| Deposit↔withdraw link in PrivacyPool | ✅ | Groth16 + Poseidon ZK proof; in-browser snarkjs WASM (or optional server-side via M2) |
-| Announcer of stealth announcement | ✅ | PrivacyRelayer contract is the `announcer`, NOT the customer's EOA |
+| Customer's EOA as `msg.sender` (USDC Send) | ✅ | EIP-2612 permit + relayer submits `transferFrom` |
+| Customer's stealth as `from` (USDC Send) | ✅ | Relayer is `msg.sender`; stealth only signs permit off-chain |
+| Customer's EOA as `msg.sender` (ETH Send) | ✅ | `relayAndAnnounce` — hot wallet fronts the tx |
+| Recipient identity | ✅ | EIP-5564 stealth address |
+| Sender identity (who initiated) | ✅ | Relayer hot wallet rotates every 100 tx |
+| Memo / encrypted body | ✅ | AES-256-GCM wallet-derived seal |
+| History row contents | ✅ | Ciphertext only on backend |
+| Deposit↔withdraw link (PrivacyPool) | ✅ | Groth16 + Poseidon ZK proof |
 
-### What's NOT hidden (architectural reality, not bugs)
+### What's NOT hidden yet
 
-| Vector | Visible | What we do |
+| Vector | Visible | Plan |
 |---|---|---|
-| ETH / USDC amounts on tx | visible | tied to tx payload; cannot hide without a ZK-rollup; out of scope |
-| PrivacyPool ceremony trust assumption | self-run 1-party | Groth16 `Verifier.sol` is on-chain and sound; multi-party MPC upgrade path is documented (Gap 4 in `docs/base-pilot-closer.md`); out-of-budget for current round |
+| **Amount** | Visible on ERC20 Transfer event | **P6 — next target**: confidential notes system (already built + deployed, needs frontend integration) |
+| PrivacyPool ceremony | Self-run 1-party | MPC upgrade path documented |
 
 ---
 
-## What's left to make Base chain "completely done"
+## Next steps
 
-| # | Item | Blocker? | Effort / cost |
-|---|---|---|---|
-| 1 | Operator flips `RELAYER_PRIVATE_KEY` env on `app-privacycloak` to `0xbf7ddbc1042bd3b6179100debb116a871f93d35cf2426b3e69cf874e5f9d509f` | Was blocking; **fixed this round** via auto-flip step in `deploy-azure.yml` | $0 |
-| 2 | Operator flips `ZK_POOL_PROVER_ENABLED=1` env on `app-privacycloak` to enable server-side Groth16 prover | Optional opt-in (browser snarkjs WASM already works) | $0 + operator build-out to upload `withdraw_final.zkey` + `withdraw_js/` artefacts to the backend image per the runbook in `Dockerfile` line ~57 |
-| 3 | Customer-pilot first test: Send + Receive + Swap end-to-end | waits on operator | $0 |
-| 4 | PrivacyPool deposit demo (≥0.01 ETH) | out of $1.5 envelope; pooled funds add is a $25 cycle, customer can fund themselves | $25 |
-| 5 | MPC upgrade for PrivacyPool zkey (2-party contribution) | out of single-operator scope; needs an independent 2nd contributor | $0–$5 |
-| 6 | Production hardening (multi-wallet queue, monitoring, rate oracle) | not blocking customer pilot; post-pilot | ~engineering time |
+### P6 — Amount hiding (NEXT)
+- `ConfidentialNotes.sol` + `confidential_notes.circom` already deployed on Base
+- Circuit: 4 public signals (nullifierHash, newCommitment, encryptedAmount, root) — recipient is PRIVATE input
+- Zero-value ZK proof transactions: no USDC moves between users on-chain
+- Need: frontend integration to generate proofs in browser + call `createNote()`
+- Result: amount hidden between Privacy Cloak users
 
----
-
-## Operational runbooks (top links)
-
-- Customer demo flow proof on Base mainnet: [`docs/customer-demo-flow.md`](docs/customer-demo-flow.md)
-- Closer-round ops (vault topups, hot wallet, ceremony upgrade path): [`docs/base-pilot-closer.md`](docs/base-pilot-closer.md)
-- Privacy architecture + ceremony + trust model: [`docs/zk-architecture.md`](docs/zk-architecture.md)
-- Solana pause / resume procedure: [`scripts/flip_sol_to_mainnet.sh`](scripts/flip_sol_to_mainnet.sh) (guarded; one-shot mainnet)
+### P7 — Ethereum mainnet expansion
+- Same contracts deploy to Ethereum mainnet (chainId 1)
+- Same relayer + GasTreasury pattern
+- Higher gas costs — need more ETH in treasury
+- PrivacyPool denomination adjustments for mainnet gas
 
 ---
 
-## CI/CD (all green on HEAD)
+## Key architecture decisions
 
-| Workflow | Trigger | Status | Pin |
-|---|---|---|---|
-| `foundry-build-test.yml` | push to main touching `contracts/**` | ✅ | pinned Foundry stable v1.7.1 (`+ drop --no-commit`) |
-| `backend-tests.yml` | push to main touching `backend/**` | ✅ | pytest CI gate (test_deployments + test_auth_health + test_payments) |
-| `deploy-azure.yml` | push to main | ✅ | Docker → app-privacycloak; auto-flips `RELAYER_PRIVATE_KEY` env from GH repo secret; health-gates on `/api/health` HTTP 200 |
-| `move-build-test.yml` | push touching `contracts/sui/**` | ✅ | Sui framework/mainnet |
-| `solana-build-test.yml` | push touching `contracts/solana/**` | ✅ | Rust + Anchor build |
+1. **No vault, no custodial holding** — USDC stays in the user's stealth until the moment it's moved via permit + transferFrom
+2. **Self-custodial stealth** — private keys derived in browser from wallet signature, stored in localStorage only, never on server
+3. **Rotating relayer** — changes every 100 tx so no single address accumulates billions
+4. **GasTreasury** — one funding point, auto-distributes gas to new relayers
+5. **Two send modes only** — Stealth Send (private) + Deposit (entry point). No direct-transfer fallback that would expose the main wallet.
+
+---
+
+## CI/CD
+
+| Workflow | Trigger | Status |
+|---|---|---|
+| `foundry-build-test.yml` | push touching `contracts/**` | ✅ |
+| `backend-tests.yml` | push touching `backend/**` | ✅ |
+| `deploy-azure.yml` | push to main | ✅ auto-flips RELAYER_PRIVATE_KEY |
+| `move-build-test.yml` | push touching `contracts/sui/**` | ✅ |
+| `solana-build-test.yml` | push touching `contracts/solana/**` | ✅ |
