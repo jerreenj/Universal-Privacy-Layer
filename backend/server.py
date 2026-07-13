@@ -3945,84 +3945,85 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
             CHAINS.get(request.chain, {}).get("usdc_addr")
             or "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
         )
-        multicall3_addr = Web3.to_checksum_address(
-            MULTICALL3_ADDRESS_BASE if request.chain == "base" else MULTICALL3_ADDRESS_BASE
-        )
         stealth_src = Web3.to_checksum_address(request.stealth_source)
         recipient = Web3.to_checksum_address(request.recipient)
         amount_int = int(request.amount_raw)
 
-        # Build the calldatas. If v=0 and r/s are zero, the user
-        # already approved on-chain (public mode) — skip the permit
-        # call and only do transferFrom. Otherwise do both atomically.
         usdc = w3.eth.contract(address=usdc_addr, abi=_USDC_PERMIT_FORWARD_ABI)
-        transferfrom_calldata = usdc.encode_abi(
-            "transferFrom",
-            [stealth_src, recipient, amount_int],
-        )
+        relayer_addr = Account.from_key(relayer_key).address
 
         is_permit_mode = int(request.v) != 0 or (
             request.r not in ("0x0", "0x", "") and int(request.r, 16) != 0
         )
 
-        multicall3 = w3.eth.contract(address=multicall3_addr, abi=_MULTICALL3_ABI)
-        relayer_addr = Account.from_key(relayer_key).address
-        nonce_tx = w3.eth.get_transaction_count(relayer_addr)
-
+        # ── STEP 1: If permit mode, send permit() first ──────────────
+        # This grants the relayer an allowance to spend the stealth's
+        # USDC. The permit is a gasless EIP-2612 signature from the
+        # stealth's private key — the relayer just submits it.
+        permit_tx_hash = None
         if is_permit_mode:
-            permit_calldata = usdc.encode_abi(
-                "permit",
-                [stealth_src,
-                 Web3.to_checksum_address(request.spender),
-                 amount_int,
-                 int(request.deadline),
-                 int(request.v),
-                 bytes.fromhex(request.r[2:]) if request.r.startswith("0x") else bytes.fromhex(request.r),
-                 bytes.fromhex(request.s[2:]) if request.s.startswith("0x") else bytes.fromhex(request.s)],
-            )
-            # Multicall3 aggregate takes Call{target, callData} tuples.
-            # Both calls target the USDC contract.
-            calls = [
-                (usdc_addr, permit_calldata),
-                (usdc_addr, transferfrom_calldata),
-            ]
-        else:
-            # Public mode — just transferFrom (user already approved).
-            calls = [
-                (usdc_addr, transferfrom_calldata),
-            ]
+            r_bytes = bytes.fromhex(request.r[2:]) if request.r.startswith("0x") else bytes.fromhex(request.r)
+            s_bytes = bytes.fromhex(request.s[2:]) if request.s.startswith("0x") else bytes.fromhex(request.s)
 
-        # aggregate(Call[]) — all calls revert together if any fails.
-        # This is the REAL Multicall3 interface:
-        #   struct Call { address target; bytes callData; }
-        #   aggregate(Call[] calls)
-        tx = multicall3.functions.aggregate(
-            calls,
+            nonce_tx = w3.eth.get_transaction_count(relayer_addr)
+            permit_tx = usdc.functions.permit(
+                stealth_src,
+                Web3.to_checksum_address(request.spender),
+                amount_int,
+                int(request.deadline),
+                int(request.v),
+                r_bytes,
+                s_bytes,
+            ).build_transaction({
+                "from": relayer_addr,
+                "nonce": nonce_tx,
+                "gas": 200000,
+                "gasPrice": w3.eth.gas_price,
+                "chainId": config["chain_id"],
+            })
+            signed_permit = w3.eth.account.sign_transaction(permit_tx, relayer_key)
+            permit_tx_hash = w3.eth.send_raw_transaction(signed_permit.raw_transaction)
+            permit_receipt = w3.eth.wait_for_transaction_receipt(permit_tx_hash, timeout=300)
+            if permit_receipt["status"] != 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Permit transaction reverted — the signature may be invalid or the nonce stale."
+                )
+
+        # ── STEP 2: Send transferFrom() ──────────────────────────────
+        # Now the relayer has an allowance, so transferFrom moves the
+        # USDC from the stealth to the recipient. The relayer is
+        # msg.sender, NOT the customer's wallet.
+        nonce_tx = w3.eth.get_transaction_count(relayer_addr)
+        transfer_tx = usdc.functions.transferFrom(
+            stealth_src,
+            recipient,
+            amount_int,
         ).build_transaction({
             "from": relayer_addr,
             "nonce": nonce_tx,
-            "gas": 300000,
+            "gas": 200000,
             "gasPrice": w3.eth.gas_price,
             "chainId": config["chain_id"],
         })
-        signed = w3.eth.account.sign_transaction(tx, relayer_key)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+        signed_transfer = w3.eth.account.sign_transaction(transfer_tx, relayer_key)
+        transfer_tx_hash = w3.eth.send_raw_transaction(signed_transfer.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(transfer_tx_hash, timeout=300)
 
         # Increment the rotation counter after a successful submit.
         if receipt["status"] == 1:
             await _increment_relayer_tx_count()
 
         return {
-            "tx_hash": tx_hash.hex(),
+            "tx_hash": transfer_tx_hash.hex(),
+            "permit_tx_hash": permit_tx_hash.hex() if permit_tx_hash else None,
             "block_number": receipt["blockNumber"],
             "status": "success" if receipt["status"] == 1 else "reverted",
             "stealth_source": stealth_src,
             "recipient": recipient,
             "amount": str(amount_int),
             "spender": request.spender,
-            "multicall3": multicall3_addr,
-            "explorer": f"{config.get('explorer', 'https://basescan.org')}/tx/{tx_hash.hex()}",
+            "explorer": f"{config.get('explorer', 'https://basescan.org')}/tx/{transfer_tx_hash.hex()}",
         }
     except HTTPException:
         raise
