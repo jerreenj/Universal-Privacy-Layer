@@ -3841,7 +3841,14 @@ _USDC_PERMIT_FORWARD_ABI = [
     {"inputs":[],"name":"DOMAIN_SEPARATOR","outputs":[{"name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
 ]
 _MULTICALL3_ABI = [
-    {"inputs":[{"name":"calls","type":"bytes[]"},{"name":"revertOnFail","type":"bool[]"}],"name":"aggregate","outputs":[{"name":"returnData","type":"bytes[]"},{"name":"blockNumber","type":"uint256"},{"name":"blockHash","type":"bytes32"}],"stateMutability":"payable","type":"function"},
+    # The REAL Multicall3.aggregate takes a tuple array:
+    #   struct Call { address target; bytes callData; }
+    #   aggregate(Call[] calls)
+    # NOT aggregate(bytes[], bool[]) — that was wrong and caused
+    # every submit to 500 with "internal error occurred".
+    {"inputs":[{"components":[{"name":"target","type":"address"},{"name":"callData","type":"bytes"}],"name":"calls","type":"tuple[]"}],"name":"aggregate","outputs":[{"name":"","type":"uint256"},{"name":"returnData","type":"bytes[]"}],"stateMutability":"payable","type":"function"},
+    {"inputs":[{"components":[{"name":"target","type":"address"},{"name":"callData","type":"bytes"}],"name":"calls","type":"tuple[]"}],"name":"aggregate3","outputs":[{"name":"returnData","type":"bytes[]"}],"stateMutability":"payable","type":"function"},
+    {"inputs":[{"components":[{"name":"target","type":"address"},{"name":"allowFailure","type":"bool"},{"name":"callData","type":"bytes"}],"name":"calls","type":"tuple[]"}],"name":"aggregate3","outputs":[{"name":"returnData","type":"bytes[]"}],"stateMutability":"payable","type":"function"},
 ]
 MULTICALL3_ADDRESS_BASE = "0xcA11bde05977b3631167028862bE2a173976CA11"
 
@@ -3973,21 +3980,28 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
                  bytes.fromhex(request.r[2:]) if request.r.startswith("0x") else bytes.fromhex(request.r),
                  bytes.fromhex(request.s[2:]) if request.s.startswith("0x") else bytes.fromhex(request.s)],
             )
-            calls = [permit_calldata, transferfrom_calldata]
-            reverts = [True, True]
+            # Multicall3 aggregate takes Call{target, callData} tuples.
+            # Both calls target the USDC contract.
+            calls = [
+                (usdc_addr, permit_calldata),
+                (usdc_addr, transferfrom_calldata),
+            ]
         else:
             # Public mode — just transferFrom (user already approved).
-            calls = [transferfrom_calldata]
-            reverts = [True]
+            calls = [
+                (usdc_addr, transferfrom_calldata),
+            ]
 
-        # aggregate(calls[], revertOnFail[]) — all-or-nothing.
+        # aggregate(Call[]) — all calls revert together if any fails.
+        # This is the REAL Multicall3 interface:
+        #   struct Call { address target; bytes callData; }
+        #   aggregate(Call[] calls)
         tx = multicall3.functions.aggregate(
             calls,
-            reverts,
         ).build_transaction({
             "from": relayer_addr,
             "nonce": nonce_tx,
-            "gas": 250000,
+            "gas": 300000,
             "gasPrice": w3.eth.gas_price,
             "chainId": config["chain_id"],
         })
