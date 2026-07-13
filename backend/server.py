@@ -3957,16 +3957,21 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
             request.r not in ("0x0", "0x", "") and int(request.r, 16) != 0
         )
 
+        # Get the relayer's current nonce ONCE. We increment it
+        # manually for each tx in this request so they don't
+        # collide. Re-reading get_transaction_count after the first
+        # tx can return a stale/cached value, causing "replacement
+        # transaction underpriced" when the second tx uses the same
+        # nonce.
+        base_nonce = w3.eth.get_transaction_count(relayer_addr)
+        gas_price = w3.eth.gas_price
+
         # ── STEP 1: If permit mode, send permit() first ──────────────
-        # This grants the relayer an allowance to spend the stealth's
-        # USDC. The permit is a gasless EIP-2612 signature from the
-        # stealth's private key — the relayer just submits it.
         permit_tx_hash = None
         if is_permit_mode:
             r_bytes = bytes.fromhex(request.r[2:]) if request.r.startswith("0x") else bytes.fromhex(request.r)
             s_bytes = bytes.fromhex(request.s[2:]) if request.s.startswith("0x") else bytes.fromhex(request.s)
 
-            nonce_tx = w3.eth.get_transaction_count(relayer_addr)
             permit_tx = usdc.functions.permit(
                 stealth_src,
                 Web3.to_checksum_address(request.spender),
@@ -3977,9 +3982,9 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
                 s_bytes,
             ).build_transaction({
                 "from": relayer_addr,
-                "nonce": nonce_tx,
+                "nonce": base_nonce,
                 "gas": 200000,
-                "gasPrice": w3.eth.gas_price,
+                "gasPrice": gas_price,
                 "chainId": config["chain_id"],
             })
             signed_permit = w3.eth.account.sign_transaction(permit_tx, relayer_key)
@@ -3992,19 +3997,20 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
                 )
 
         # ── STEP 2: Send transferFrom() ──────────────────────────────
-        # Now the relayer has an allowance, so transferFrom moves the
-        # USDC from the stealth to the recipient. The relayer is
-        # msg.sender, NOT the customer's wallet.
-        nonce_tx = w3.eth.get_transaction_count(relayer_addr)
+        # Use base_nonce + 1 (or base_nonce if no permit was sent).
+        # This avoids the "replacement transaction underpriced" error
+        # that happens when get_transaction_count returns a stale
+        # value after the first tx.
+        transfer_nonce = base_nonce + (1 if is_permit_mode else 0)
         transfer_tx = usdc.functions.transferFrom(
             stealth_src,
             recipient,
             amount_int,
         ).build_transaction({
             "from": relayer_addr,
-            "nonce": nonce_tx,
+            "nonce": transfer_nonce,
             "gas": 200000,
-            "gasPrice": w3.eth.gas_price,
+            "gasPrice": gas_price,
             "chainId": config["chain_id"],
         })
         signed_transfer = w3.eth.account.sign_transaction(transfer_tx, relayer_key)
