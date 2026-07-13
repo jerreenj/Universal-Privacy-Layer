@@ -3983,7 +3983,7 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
                 "chainId": config["chain_id"],
             })
             signed_permit = w3.eth.account.sign_transaction(permit_tx, relayer_key)
-            permit_tx_hash = w3.eth.send_raw_transaction(signed_permit.raw_transaction)
+            permit_tx_hash = w3.eth.send_raw_transaction(getattr(signed_permit, 'raw_transaction', getattr(signed_permit, 'rawTransaction', None)))
             permit_receipt = w3.eth.wait_for_transaction_receipt(permit_tx_hash, timeout=300)
             if permit_receipt["status"] != 1:
                 raise HTTPException(
@@ -4008,7 +4008,7 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
             "chainId": config["chain_id"],
         })
         signed_transfer = w3.eth.account.sign_transaction(transfer_tx, relayer_key)
-        transfer_tx_hash = w3.eth.send_raw_transaction(signed_transfer.raw_transaction)
+        transfer_tx_hash = w3.eth.send_raw_transaction(getattr(signed_transfer, 'raw_transaction', getattr(signed_transfer, 'rawTransaction', None)))
         receipt = w3.eth.wait_for_transaction_receipt(transfer_tx_hash, timeout=300)
 
         # Increment the rotation counter after a successful submit.
