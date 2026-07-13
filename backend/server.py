@@ -3887,7 +3887,7 @@ async def prepare_usdc_permit_intent(request: USDCPermitPrepareRequest):
                 detail="Relayer wallet not configured (set RELAYER_PRIVATE_KEY env)."
             )
         relayer_addr = Account.from_key(relayer_key).address
-        usdc_addr = CHAINS.get(request.chain, {}).get("usdc_addr") or "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        usdc_addr = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"  # USDC on Base mainnet
         return {
             "chain": request.chain,
             "chainId": config["chain_id"],
@@ -3942,10 +3942,10 @@ async def submit_usdc_permit_forward(request: USDCPermitSubmitRequest):
 
         w3 = get_w3(request.chain)
 
-        usdc_addr = Web3.to_checksum_address(
-            CHAINS.get(request.chain, {}).get("usdc_addr")
-            or "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-        )
+        # USDC on Base mainnet — hardcoded. The frontend's CHAINS
+        # config object doesn't exist in the Python backend.
+        USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        usdc_addr = Web3.to_checksum_address(USDC_BASE)
         stealth_src = Web3.to_checksum_address(request.stealth_source)
         recipient = Web3.to_checksum_address(request.recipient)
         amount_int = int(request.amount_raw)
