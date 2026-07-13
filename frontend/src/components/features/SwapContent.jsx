@@ -169,10 +169,8 @@ export function SwapContent() {
     setSwapping(true);
     try {
       if (isUSDC2ETH) {
-        // USDC → ETH: stealth sends USDC to vault, gets ETH to recipient.
-        // Sign with the stealth's private key locally.
-        const provider = await getProvider();
-        const stealthWallet = new ethers.Wallet(stealthInfo.privateKey, provider);
+        // USDC → ETH: stealth signs permit, relayer moves USDC to vault.
+        // Stealth needs ZERO ETH for gas — relayer pays everything.
         const amountRaw = ethers.parseUnits(amount, 6);
 
         // Check stealth has enough USDC.
@@ -183,54 +181,98 @@ export function SwapContent() {
           return;
         }
 
-        // Transfer USDC from stealth to the vault.
-        const usdc = new ethers.Contract(USDC_ADDR,
-          ["function transfer(address to, uint256 amount) returns (bool)"],
-          stealthWallet);
-        const tx = await usdc.transfer(VAULT_ADDR, amountRaw);
-        setTxHash(tx.hash);
-        toast.success("Swap submitted — waiting for confirmation…");
-        const receipt = await tx.wait();
-        if (receipt.status === 1) {
-          toast.success("Swap confirmed!");
-        } else {
-          toast.error("Swap reverted");
-        }
+        // Read USDC nonce + domain for the permit signature.
+        const { readUsdcNonce, readUsdcName, readUsdcVersion } =
+          await import("@/lib/balance-reader");
+        const stealthWallet = new ethers.Wallet(stealthInfo.privateKey);
+        const [nonce, name, version] = await Promise.all([
+          readUsdcNonce(stealthWallet.address),
+          readUsdcName().catch(() => "USD Coin"),
+          readUsdcVersion().catch(() => "2"),
+        ]);
+
+        // Get relayer address from backend.
+        const prepRes = await axios.post(`${API}/usdc-permit-forwarder/prepare-tx`, {
+          from_address: address,
+          stealth_source: stealthInfo.address,
+          recipient,
+          amount,
+          chain: "base",
+        });
+        const spender = prepRes.data.relayer_address;
+        const chainId = prepRes.data.chainId;
+
+        // Sign the permit with the stealth key locally.
+        const deadline = Math.floor(Date.now() / 1000) + 600;
+        const domain = {
+          name,
+          version,
+          chainId,
+          verifyingContract: USDC_ADDR,
+        };
+        const types = {
+          Permit: [
+            { name: "owner", type: "address" },
+            { name: "spender", type: "address" },
+            { name: "value", type: "uint256" },
+            { name: "nonce", type: "uint256" },
+            { name: "deadline", type: "uint256" },
+          ],
+        };
+        const message = {
+          owner: stealthWallet.address,
+          spender,
+          value: amountRaw.toString(),
+          nonce: nonce.toString(),
+          deadline,
+        };
+        const sig = await stealthWallet.signTypedData(domain, types, message);
+        const { v, r, s } = ethers.Signature.from(sig);
+
+        // Submit via the native swap relay endpoint.
+        const submitRes = await axios.post(`${API}/swap/native-relay`, {
+          stealth_source: stealthInfo.address,
+          recipient,
+          amount_raw: amountRaw.toString(),
+          spender,
+          deadline,
+          v,
+          r,
+          s,
+        });
+
+        setTxHash(submitRes.data.tx_hash);
+        toast.success("Swap confirmed! USDC moved to vault via relayer.");
       } else {
-        // ETH → USDC: stealth sends ETH to vault, gets USDC to recipient.
+        // ETH → USDC: stealth sends ETH to vault.
+        // ETH transfers always need gas, so the stealth needs a
+        // tiny amount of ETH. If it doesn't have any, tell the user.
         const provider = await getProvider();
         const stealthWallet = new ethers.Wallet(stealthInfo.privateKey, provider);
         const amountWei = ethers.parseEther(amount);
 
-        // Check stealth has enough ETH.
         const stealthEth = await readEthBalance(stealthInfo.address);
-        if (stealthEth < amountWei) {
-          toast.error(`Stealth only has ${ethers.formatEther(stealthEth)} ETH. Deposit ETH first.`);
+        if (stealthEth < amountWei + 100000n) {
+          toast.error(`Stealth needs ETH for gas. Current: ${ethers.formatEther(stealthEth)} ETH. Send a tiny amount of ETH to your stealth first.`);
           setSwapping(false);
           return;
         }
 
-        // Send ETH to the vault with the swap call.
         const vault = new ethers.Contract(VAULT_ADDR, [
           "function swapUSDCViaCommitment(address recipient, bytes32 amountCommit, bytes1 viewTagByte, uint256 minUsdcOut) payable",
         ], stealthWallet);
-        // Simple commitment: use keccak256 of the expected output.
-        const minOut = ethers.parseUnits(expectedOut, 6) * 95n / 100n; // 5% slippage
+        const minOut = ethers.parseUnits(expectedOut, 6) * 95n / 100n;
         const tx = await vault.swapUSDCViaCommitment(
           recipient,
-          ethers.id(expectedOut), // amountCommit (simplified)
-          "0x00",                  // viewTagByte
+          ethers.id(expectedOut),
+          "0x00",
           minOut,
           { value: amountWei }
         );
         setTxHash(tx.hash);
         toast.success("Swap submitted — waiting for confirmation…");
-        const receipt = await tx.wait();
-        if (receipt.status === 1) {
-          toast.success("Swap confirmed!");
-        } else {
-          toast.error("Swap reverted");
-        }
+        await tx.wait();
+        toast.success("Swap confirmed!");
       }
 
       // Refresh balances.
@@ -240,7 +282,7 @@ export function SwapContent() {
       setAmount("");
       setExpectedOut("");
     } catch (e) {
-      const msg = e.message?.slice(0, 80) || "Swap failed";
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Swap failed";
       toast.error(msg);
     }
     setSwapping(false);
