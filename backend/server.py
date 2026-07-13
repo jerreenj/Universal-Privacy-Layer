@@ -3255,12 +3255,16 @@ class NativeSwapRelayRequest(BaseModel):
 
 @api_router.post("/swap/native-relay")
 async def swap_native_relay(request: NativeSwapRelayRequest):
-    """Relay a USDC→ETH swap. The stealth signs a permit; the relayer
-    submits permit + transferFrom to move USDC from the stealth into
-    the NativePrivateSwap vault. The vault handles the ETH payout.
+    """Relay a USDC→ETH swap through Uniswap V3. The stealth signs a
+    permit; the relayer:
+      1. permit() — gets allowance from stealth
+      2. transferFrom() — moves USDC from stealth to relayer
+      3. Approves Uniswap V3 router to spend the USDC
+      4. Swaps USDC→WETH→ETH on Uniswap V3
+      5. Sends the ETH to the recipient
 
-    The stealth needs NO ETH for gas — the relayer pays everything.
-    Same pattern as Stealth Send."""
+    No vault. No fixed rate. Real market price via Uniswap V3.
+    Stealth needs ZERO ETH for gas — relayer pays everything."""
     try:
         config = CHAIN_CONFIG.get("base")
         if not config:
@@ -3276,7 +3280,8 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
 
         w3 = get_w3("base")
         USDC_BASE = Web3.to_checksum_address("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
-        VAULT = Web3.to_checksum_address("0x582c57a7ba6e7758e75dc5334a5e8ff096515d09")
+        WETH_BASE = Web3.to_checksum_address("0x4200000000000000000000000000000000000006")
+        UNISWAP_ROUTER = Web3.to_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564")
         stealth_src = Web3.to_checksum_address(request.stealth_source)
         recipient = Web3.to_checksum_address(request.recipient)
         amount_int = int(request.amount_raw)
@@ -3292,7 +3297,7 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
 
         permit_tx = usdc.functions.permit(
             stealth_src,
-            Web3.to_checksum_address(request.spender),
+            relayer_addr,  # spender = relayer itself
             amount_int,
             int(request.deadline),
             int(request.v),
@@ -3312,13 +3317,10 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
         if permit_receipt["status"] != 1:
             raise HTTPException(status_code=400, detail="Permit reverted — invalid signature or stale nonce")
 
-        # STEP 2: transferFrom() — move USDC from stealth to the vault.
-        # The vault will send ETH to the recipient in a separate step
-        # (or the customer can claim). For now, we just move USDC to
-        # the vault — the vault's swapFor handles the ETH payout.
+        # STEP 2: transferFrom() — move USDC from stealth to relayer
         transfer_tx = usdc.functions.transferFrom(
             stealth_src,
-            VAULT,
+            relayer_addr,
             amount_int,
         ).build_transaction({
             "from": relayer_addr,
@@ -3330,19 +3332,121 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
         signed_transfer = w3.eth.account.sign_transaction(transfer_tx, relayer_key)
         raw2 = getattr(signed_transfer, 'raw_transaction', getattr(signed_transfer, 'rawTransaction', None))
         transfer_hash = w3.eth.send_raw_transaction(raw2)
-        receipt = w3.eth.wait_for_transaction_receipt(transfer_hash, timeout=300)
+        transfer_receipt = w3.eth.wait_for_transaction_receipt(transfer_hash, timeout=300)
+        if transfer_receipt["status"] != 1:
+            raise HTTPException(status_code=400, detail="transferFrom reverted")
 
-        if receipt["status"] == 1:
+        # STEP 3: Approve Uniswap router to spend the USDC
+        USDC_SIMPLE_ABI = json.loads(
+            '[{"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],'
+            '"name":"approve","outputs":[{"name":"","type":"bool"}],'
+            '"stateMutability":"nonpayable","type":"function"},'
+            '{"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],'
+            '"name":"allowance","outputs":[{"name":"","type":"uint256"}],'
+            '"stateMutability":"view","type":"function"}]'
+        )
+        usdc_simple = w3.eth.contract(address=USDC_BASE, abi=USDC_SIMPLE_ABI)
+        approve_tx = usdc_simple.functions.approve(UNISWAP_ROUTER, amount_int).build_transaction({
+            "from": relayer_addr,
+            "nonce": base_nonce + 2,
+            "gas": 100000,
+            "gasPrice": gas_price,
+            "chainId": config["chain_id"],
+        })
+        signed_approve = w3.eth.account.sign_transaction(approve_tx, relayer_key)
+        raw3 = getattr(signed_approve, 'raw_transaction', getattr(signed_approve, 'rawTransaction', None))
+        approve_hash = w3.eth.send_raw_transaction(raw3)
+        approve_receipt = w3.eth.wait_for_transaction_receipt(approve_hash, timeout=300)
+        if approve_receipt["status"] != 1:
+            raise HTTPException(status_code=400, detail="Approve reverted")
+
+        # STEP 4: Swap USDC→WETH on Uniswap V3 (0.3% fee tier = 3000)
+        # exactInputSingle: tokenIn=USDC, tokenOut=WETH, fee=3000,
+        # recipient=relayer (so we get WETH), deadline, amountIn,
+        # amountOutMin=0 (accept whatever), sqrtPriceLimitX96=0
+        UNISWAP_ROUTER_ABI = json.loads(
+            '[{"inputs":[{"components":'
+            '{"name":"tokenIn","type":"address"},'
+            '{"name":"tokenOut","type":"address"},'
+            '{"name":"fee","type":"uint24"},'
+            '{"name":"recipient","type":"address"},'
+            '{"name":"deadline","type":"uint256"},'
+            '{"name":"amountIn","type":"uint256"},'
+            '{"name":"amountOutMinimum","type":"uint256"},'
+            '{"name":"sqrtPriceLimitX96","type":"uint160"}'
+            '"name":"params","type":"tuple"}],'
+            '"name":"exactInputSingle","outputs":[{"name":"amountOut","type":"uint256"}],'
+            '"stateMutability":"payable","type":"function"},'
+            '{"inputs":[{"name":"amountMinimum","type":"uint256"},{"name":"recipient","type":"address"}],'
+            '"name":"unwrapWETH9","outputs":[],"stateMutability":"payable","type":"function"}]'
+        )
+        router = w3.eth.contract(address=UNISWAP_ROUTER, abi=UNISWAP_ROUTER_ABI)
+
+        deadline_ts = int(request.deadline)
+        swap_params = (
+            USDC_BASE,       # tokenIn
+            WETH_BASE,       # tokenOut
+            3000,            # fee (0.3%)
+            relayer_addr,    # recipient (relayer gets WETH)
+            deadline_ts,     # deadline
+            amount_int,      # amountIn
+            0,               # amountOutMinimum (accept any)
+            0,               # sqrtPriceLimitX96
+        )
+        swap_tx = router.functions.exactInputSingle(swap_params).build_transaction({
+            "from": relayer_addr,
+            "nonce": base_nonce + 3,
+            "gas": 300000,
+            "gasPrice": gas_price,
+            "chainId": config["chain_id"],
+        })
+        signed_swap = w3.eth.account.sign_transaction(swap_tx, relayer_key)
+        raw4 = getattr(signed_swap, 'raw_transaction', getattr(signed_swap, 'rawTransaction', None))
+        swap_hash = w3.eth.send_raw_transaction(raw4)
+        swap_receipt = w3.eth.wait_for_transaction_receipt(swap_hash, timeout=300)
+        if swap_receipt["status"] != 1:
+            raise HTTPException(status_code=400, detail="Uniswap swap reverted")
+
+        # Parse amountOut from the swap receipt logs
+        # The Transfer event from WETH tells us how much WETH we got
+        weth_received = 0
+        for log in swap_receipt["logs"]:
+            # Transfer(address,address,uint256) = 0xddf252ad...
+            if len(log["data"]) >= 64:
+                try:
+                    weth_received = int(log["data"].hex(), 16)
+                except:
+                    pass
+
+        # STEP 5: Unwrap WETH→ETH and send to recipient
+        if weth_received > 0:
+            unwrap_tx = router.functions.unwrapWETH9(
+                weth_received,
+                recipient,
+            ).build_transaction({
+                "from": relayer_addr,
+                "nonce": base_nonce + 4,
+                "gas": 200000,
+                "gasPrice": gas_price,
+                "chainId": config["chain_id"],
+            })
+            signed_unwrap = w3.eth.account.sign_transaction(unwrap_tx, relayer_key)
+            raw5 = getattr(signed_unwrap, 'raw_transaction', getattr(signed_unwrap, 'rawTransaction', None))
+            unwrap_hash = w3.eth.send_raw_transaction(raw5)
+            unwrap_receipt = w3.eth.wait_for_transaction_receipt(unwrap_hash, timeout=300)
+
+        if swap_receipt["status"] == 1:
             await _increment_relayer_tx_count()
 
         return {
-            "tx_hash": transfer_hash.hex(),
+            "tx_hash": swap_hash.hex(),
             "permit_tx_hash": permit_hash.hex(),
-            "status": "success" if receipt["status"] == 1 else "reverted",
+            "status": "success" if swap_receipt["status"] == 1 else "reverted",
             "stealth_source": stealth_src,
             "recipient": recipient,
             "amount": str(amount_int),
-            "explorer": f"https://basescan.org/tx/{transfer_hash.hex()}",
+            "weth_received": str(weth_received),
+            "explorer": f"https://basescan.org/tx/{swap_hash.hex()}",
         }
     except HTTPException:
         raise

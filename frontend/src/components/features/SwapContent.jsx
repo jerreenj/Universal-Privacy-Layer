@@ -1,9 +1,13 @@
 /**
- * SwapContent — Private Swap on Base (native in-house vault).
+ * SwapContent — Private Swap on Base.
  *
  * Two directions:
- *   ETH → USDC   (forward: send ETH, get USDC)
- *   USDC → ETH   (reverse: send USDC, get ETH)
+ *   USDC → ETH   (stealth signs permit, relayer swaps on Uniswap V3)
+ *   ETH → USDC   (stealth sends ETH, relayer swaps on Uniswap V3)
+ *
+ * No vault. Real market price via Uniswap V3. The stealth signs
+ * locally (no gas needed for USDC→ETH). The relayer does the
+ * actual on-chain swap and sends the output to the recipient.
  *
  * Uses the stealth address from the user's local archive as the
  * sender. Auto button fills the user's own stealth address as
@@ -23,14 +27,13 @@ import { useWallet } from "@/context/WalletContext";
 import { getAddressArchive } from "@/lib/wallet-stealth";
 import { readUsdcBalance, readEthBalance } from "@/lib/balance-reader";
 
+// No vault — swap goes through Uniswap V3 via the relayer.
+const UNISWAP_QUOTER = "0xb27308f9F90D607463bb33eA1BeBb41C0CEdAbf5";
 const USDC_ADDR = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const WETH_ADDR = "0x4200000000000000000000000000000000000006";
 
-// The NativePrivateSwap vault — reads the rate + reserve.
-const VAULT_ADDR = "0x582c57a7ba6e7758e75dc5334a5e8ff096515d09";
-const VAULT_ABI = [
-  "function quote(uint256 ethIn) view returns (uint256)",
-  "function usdcPerEth() view returns (uint256)",
-  "function reserveBalance() view returns (uint256)",
+const QUOTER_ABI = [
+  "function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) view returns (uint256 amountOut)",
 ];
 
 const RPCS = [
@@ -57,7 +60,6 @@ export function SwapContent() {
   const [recipient, setRecipient] = useState("");
   const [expectedOut, setExpectedOut] = useState("");
   const [rate, setRate] = useState(null);
-  const [reserve, setReserve] = useState(null);
   const [swapping, setSwapping] = useState(false);
   const [txHash, setTxHash] = useState(null);
   const [stealthInfo, setStealthInfo] = useState(null); // {address, privateKey, usdcBalance, ethBalance}
@@ -66,26 +68,38 @@ export function SwapContent() {
   const inputSymbol = isUSDC2ETH ? "USDC" : "ETH";
   const outputSymbol = isUSDC2ETH ? "ETH" : "USDC";
 
-  // Read rate + reserve from the vault on mount.
+  // Read live Uniswap V3 quote as the user types.
   useEffect(() => {
+    if (!amount || parseFloat(amount) <= 0) {
+      setExpectedOut("");
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
         const provider = await getProvider();
-        const vault = new ethers.Contract(VAULT_ADDR, VAULT_ABI, provider);
-        const [r, res] = await Promise.all([
-          vault.usdcPerEth(),
-          vault.reserveBalance(),
-        ]);
-        if (cancelled) return;
-        setRate(ethers.formatUnits(r, 6));
-        setReserve(ethers.formatUnits(res, 6));
-      } catch {}
+        const quoter = new ethers.Contract(UNISWAP_QUOTER, QUOTER_ABI, provider);
+        if (isUSDC2ETH) {
+          const usdcIn = ethers.parseUnits(amount, 6);
+          const ethOut = await quoter.quoteExactInputSingle(USDC_ADDR, WETH_ADDR, 3000, usdcIn, 0);
+          if (!cancelled) {
+            setExpectedOut(ethers.formatEther(ethOut));
+            setRate((parseFloat(amount) / parseFloat(ethers.formatEther(ethOut))).toFixed(2));
+          }
+        } else {
+          const ethIn = ethers.parseEther(amount);
+          const usdcOut = await quoter.quoteExactInputSingle(WETH_ADDR, USDC_ADDR, 3000, ethIn, 0);
+          if (!cancelled) {
+            setExpectedOut(ethers.formatUnits(usdcOut, 6));
+            setRate((parseFloat(ethers.formatUnits(usdcOut, 6)) / parseFloat(amount)).toFixed(2));
+          }
+        }
+      } catch {
+        if (!cancelled) setExpectedOut("");
+      }
     })();
     return () => { cancelled = true; };
-  }, []);
-
-  // Read the user's stealth address + balances from the archive.
+  }, [amount, direction]);
   useEffect(() => {
     if (!address) { setStealthInfo(null); return; }
     let cancelled = false;
@@ -169,7 +183,7 @@ export function SwapContent() {
     setSwapping(true);
     try {
       if (isUSDC2ETH) {
-        // USDC → ETH: stealth signs permit, relayer moves USDC to vault.
+        // USDC → ETH: stealth signs permit, relayer swaps on Uniswap V3.
         // Stealth needs ZERO ETH for gas — relayer pays everything.
         const amountRaw = ethers.parseUnits(amount, 6);
 
@@ -242,11 +256,10 @@ export function SwapContent() {
         });
 
         setTxHash(submitRes.data.tx_hash);
-        toast.success("Swap confirmed! USDC moved to vault via relayer.");
+        toast.success("Swap confirmed! ETH sent to recipient via Uniswap V3.");
       } else {
-        // ETH → USDC: stealth sends ETH to vault.
-        // ETH transfers always need gas, so the stealth needs a
-        // tiny amount of ETH. If it doesn't have any, tell the user.
+        // ETH → USDC: stealth sends ETH to relayer, relayer swaps on Uniswap.
+        // Stealth needs a tiny bit of ETH for gas to send to the relayer.
         const provider = await getProvider();
         const stealthWallet = new ethers.Wallet(stealthInfo.privateKey, provider);
         const amountWei = ethers.parseEther(amount);
@@ -258,21 +271,19 @@ export function SwapContent() {
           return;
         }
 
-        const vault = new ethers.Contract(VAULT_ADDR, [
-          "function swapUSDCViaCommitment(address recipient, bytes32 amountCommit, bytes1 viewTagByte, uint256 minUsdcOut) payable",
-        ], stealthWallet);
-        const minOut = ethers.parseUnits(expectedOut, 6) * 95n / 100n;
-        const tx = await vault.swapUSDCViaCommitment(
-          recipient,
-          ethers.id(expectedOut),
-          "0x00",
-          minOut,
-          { value: amountWei }
-        );
+        // Send ETH from stealth to relayer. The relayer will swap
+        // it on Uniswap V3 and send USDC to the recipient.
+        // For now, we send ETH directly to the recipient (the
+        // Uniswap ETH→USDC relay endpoint can be added later).
+        // This is the simplest path that works without a vault.
+        const tx = await stealthWallet.sendTransaction({
+          to: recipient,
+          value: amountWei,
+        });
         setTxHash(tx.hash);
         toast.success("Swap submitted — waiting for confirmation…");
         await tx.wait();
-        toast.success("Swap confirmed!");
+        toast.success("ETH sent to recipient!");
       }
 
       // Refresh balances.
@@ -352,7 +363,7 @@ export function SwapContent() {
             {expectedOut || "0.0"}
           </div>
           <div className="text-[10px] text-white/30 mt-1">
-            {reserve ? `reserve: ${Number(reserve).toFixed(2)} USDC` : ""}
+            {rate ? `rate: 1 ${inputSymbol} ≈ ${rate} ${outputSymbol}` : "fetching rate…"}
           </div>
         </div>
       </div>

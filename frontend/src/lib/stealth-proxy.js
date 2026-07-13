@@ -269,20 +269,25 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
     // so even if CHAINS[chain].contracts.usdc was nullified by the
     // deployment-endpoint overwrite bug, this still works.
     const { readUsdcBalance, readEthBalance } = await import("@/lib/balance-reader");
-    let totalEth = 0n;
-    let totalUsdc = 0n;
-    for (const sa of stealthAddrs) {
-        try {
-            totalEth += await readEthBalance(sa);
-        } catch (e) { /* silent */ }
-        try {
-            totalUsdc += await readUsdcBalance(sa);
-        } catch (e) { /* silent */ }
-    }
+    // Read ALL addresses in PARALLEL — not one-by-one. The old
+    // sequential loop was the cause of the slow private balance
+    // fetch (each address × 2 reads × 4 RPC fallbacks = up to
+    // 8 sequential RPC calls per address). Now all addresses
+    // are read simultaneously, so the total time = one RPC call
+    // regardless of how many stealth addresses the user has.
+    const balances = await Promise.all(stealthAddrs.map(async (sa) => {
+        const [eth, usdc] = await Promise.all([
+            readEthBalance(sa).catch(() => 0n),
+            readUsdcBalance(sa).catch(() => 0n),
+        ]);
+        return { eth, usdc };
+    }));
+    const totalEth = balances.reduce((a, b) => a + b.eth, 0n);
+    const totalUsdc = balances.reduce((a, b) => a + b.usdc, 0n);
     return {
         eth: ethers.formatEther(totalEth),
         usdc: ethers.formatUnits(totalUsdc, 6),
-        address: stealthAddrs[0], // most recent (active)
+        address: stealthAddrs[0],
         addresses: stealthAddrs,
     };
 }
