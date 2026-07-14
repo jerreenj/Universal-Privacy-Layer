@@ -3365,7 +3365,7 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
         # recipient=relayer (so we get WETH), deadline, amountIn,
         # amountOutMin=0 (accept whatever), sqrtPriceLimitX96=0
         UNISWAP_ROUTER_ABI = json.loads(
-            '[{"inputs":[{"components":'
+            '[{"inputs":[{"components":['
             '{"name":"tokenIn","type":"address"},'
             '{"name":"tokenOut","type":"address"},'
             '{"name":"fee","type":"uint24"},'
@@ -3374,7 +3374,7 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
             '{"name":"amountIn","type":"uint256"},'
             '{"name":"amountOutMinimum","type":"uint256"},'
             '{"name":"sqrtPriceLimitX96","type":"uint160"}'
-            '"name":"params","type":"tuple"}],'
+            '],"name":"params","type":"tuple"}],'
             '"name":"exactInputSingle","outputs":[{"name":"amountOut","type":"uint256"}],'
             '"stateMutability":"payable","type":"function"},'
             '{"inputs":[{"name":"amountMinimum","type":"uint256"},{"name":"recipient","type":"address"}],'

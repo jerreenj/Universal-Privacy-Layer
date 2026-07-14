@@ -68,38 +68,47 @@ export function SwapContent() {
   const inputSymbol = isUSDC2ETH ? "USDC" : "ETH";
   const outputSymbol = isUSDC2ETH ? "ETH" : "USDC";
 
-  // Read live Uniswap V3 quote as the user types.
+  // Live quote: calculate expected output using a cached rate.
+  // The rate is fetched ONCE on mount from a fast price API,
+  // not from the Uniswap quoter (which was too slow — each
+  // keystroke triggered an RPC call that took 2-3 seconds).
+  const [cachedRate, setCachedRate] = useState(null);
+
   useEffect(() => {
-    if (!amount || parseFloat(amount) <= 0) {
-      setExpectedOut("");
-      return;
-    }
     let cancelled = false;
     (async () => {
       try {
-        const provider = await getProvider();
-        const quoter = new ethers.Contract(UNISWAP_QUOTER, QUOTER_ABI, provider);
-        if (isUSDC2ETH) {
-          const usdcIn = ethers.parseUnits(amount, 6);
-          const ethOut = await quoter.quoteExactInputSingle(USDC_ADDR, WETH_ADDR, 3000, usdcIn, 0);
-          if (!cancelled) {
-            setExpectedOut(ethers.formatEther(ethOut));
-            setRate((parseFloat(amount) / parseFloat(ethers.formatEther(ethOut))).toFixed(2));
-          }
-        } else {
-          const ethIn = ethers.parseEther(amount);
-          const usdcOut = await quoter.quoteExactInputSingle(WETH_ADDR, USDC_ADDR, 3000, ethIn, 0);
-          if (!cancelled) {
-            setExpectedOut(ethers.formatUnits(usdcOut, 6));
-            setRate((parseFloat(ethers.formatUnits(usdcOut, 6)) / parseFloat(amount)).toFixed(2));
-          }
-        }
+        // Fetch ETH price from a fast public API.
+        const resp = await fetch("https://api.coinbase.com/v2/prices/ETH-USD/spot");
+        const data = await resp.json();
+        const ethPrice = parseFloat(data?.data?.amount || "2500");
+        if (!cancelled) setCachedRate(ethPrice.toString());
       } catch {
-        if (!cancelled) setExpectedOut("");
+        if (!cancelled) setCachedRate("2500"); // fallback
       }
     })();
     return () => { cancelled = true; };
-  }, [amount, direction]);
+  }, []);
+
+  useEffect(() => {
+    if (!amount || parseFloat(amount) <= 0 || !cachedRate) {
+      setExpectedOut("");
+      return;
+    }
+    if (isUSDC2ETH) {
+      // USDC → ETH: usdcAmount / ethPrice = ethAmount
+      const usdcIn = parseFloat(amount);
+      const ethOut = usdcIn / parseFloat(cachedRate);
+      setExpectedOut(ethOut.toFixed(8));
+      setRate(cachedRate);
+    } else {
+      // ETH → USDC: ethAmount * ethPrice = usdcAmount
+      const ethIn = parseFloat(amount);
+      const usdcOut = ethIn * parseFloat(cachedRate);
+      setExpectedOut(usdcOut.toFixed(2));
+      setRate(cachedRate);
+    }
+  }, [amount, cachedRate, direction]);
   useEffect(() => {
     if (!address) { setStealthInfo(null); return; }
     let cancelled = false;
