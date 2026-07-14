@@ -276,9 +276,8 @@ export function SwapContent() {
           swapDirection: "USDC → ETH",
         });
       } else {
-        // ETH → USDC: stealth signs permit is not possible for ETH.
-        // Instead, stealth sends ETH to relayer, relayer swaps on
-        // Uniswap V3 and sends USDC to recipient.
+        // ETH → USDC: stealth sends ETH to relayer, relayer sends
+        // USDC from its own balance to the recipient. No DEX needed.
         // Stealth needs a tiny bit of ETH for gas.
         const provider = await getProvider();
         const stealthWallet = new ethers.Wallet(stealthInfo.privateKey, provider);
@@ -291,8 +290,7 @@ export function SwapContent() {
           return;
         }
 
-        // Send ETH from stealth to relayer. Relayer swaps on Uniswap
-        // and sends USDC to the recipient.
+        // Get relayer address from backend.
         const prepRes = await axios.post(`${API}/usdc-permit-forwarder/prepare-tx`, {
           from_address: address,
           stealth_source: stealthInfo.address,
@@ -302,15 +300,14 @@ export function SwapContent() {
         });
         const relayerAddr = prepRes.data.relayer_address;
 
-        // Send ETH to relayer — stealth pays gas for this one tx.
+        // Send ETH from stealth to relayer.
         const tx = await stealthWallet.sendTransaction({
           to: relayerAddr,
           value: amountWei,
         });
         await tx.wait();
 
-        // Tell backend to swap the ETH → USDC on Uniswap and send
-        // USDC to the recipient.
+        // Tell backend to send USDC to recipient from relayer's balance.
         const submitRes = await axios.post(`${API}/swap/native-relay-eth`, {
           stealth_source: stealthInfo.address,
           recipient,
@@ -318,7 +315,6 @@ export function SwapContent() {
           chain: "base",
         });
 
-        // Show success popup with BaseScan link.
         const hash = submitRes.data?.tx_hash || tx.hash;
         setTxHash(hash);
         setSuccessPopup({
@@ -330,8 +326,6 @@ export function SwapContent() {
           chain: "base",
           swapDirection: "ETH → USDC",
         });
-
-        // Silent success — popup handles the feedback.
       }
 
       // Refresh balances silently — dashboard updates automatically.
