@@ -20,7 +20,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { ethers } from "ethers";
-import { Loader2, ExternalLink, Check, Lock, ArrowDown } from "lucide-react";
+import { Loader2, ExternalLink, Check, Lock, ArrowDown, CheckCircle2, X } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
@@ -62,6 +62,7 @@ export function SwapContent() {
   const [rate, setRate] = useState(null);
   const [swapping, setSwapping] = useState(false);
   const [txHash, setTxHash] = useState(null);
+  const [successPopup, setSuccessPopup] = useState(null);
   const [stealthInfo, setStealthInfo] = useState(null); // {address, privateKey, usdcBalance, ethBalance}
 
   const isUSDC2ETH = direction === "usdc2eth";
@@ -250,7 +251,7 @@ export function SwapContent() {
 
         // Submit via the native swap relay — relayer does the swap
         // on Uniswap V3 and sends ETH to the recipient. Sender hidden.
-        await axios.post(`${API}/swap/native-relay`, {
+        const submitRes = await axios.post(`${API}/swap/native-relay`, {
           stealth_source: stealthInfo.address,
           recipient,
           amount_raw: amountRaw.toString(),
@@ -261,7 +262,19 @@ export function SwapContent() {
           s,
         });
 
-        // Silent success — just refresh balances. No toast spam.
+        // Show success popup with BaseScan link — same style as
+        // the send success popup.
+        const hash = submitRes.data?.tx_hash || "";
+        setTxHash(hash);
+        setSuccessPopup({
+          hash,
+          explorer: `${CHAINS[chain]?.explorer || "https://basescan.org"}/tx/${hash}`,
+          amount,
+          token: "ETH",
+          to: recipient,
+          chain: "base",
+          swapDirection: "USDC → ETH",
+        });
       } else {
         // ETH → USDC: stealth signs permit is not possible for ETH.
         // Instead, stealth sends ETH to relayer, relayer swaps on
@@ -298,14 +311,27 @@ export function SwapContent() {
 
         // Tell backend to swap the ETH → USDC on Uniswap and send
         // USDC to the recipient.
-        await axios.post(`${API}/swap/native-relay-eth`, {
+        const submitRes = await axios.post(`${API}/swap/native-relay-eth`, {
           stealth_source: stealthInfo.address,
           recipient,
           amount: amount,
           chain: "base",
         });
 
-        // Silent success — just refresh balances.
+        // Show success popup with BaseScan link.
+        const hash = submitRes.data?.tx_hash || tx.hash;
+        setTxHash(hash);
+        setSuccessPopup({
+          hash,
+          explorer: `${CHAINS[chain]?.explorer || "https://basescan.org"}/tx/${hash}`,
+          amount,
+          token: "USDC",
+          to: recipient,
+          chain: "base",
+          swapDirection: "ETH → USDC",
+        });
+
+        // Silent success — popup handles the feedback.
       }
 
       // Refresh balances silently — dashboard updates automatically.
@@ -415,12 +441,75 @@ export function SwapContent() {
       </button>
 
       {/* Tx hash link */}
-      {txHash && (
+      {txHash && !successPopup && (
         <a href={`${CHAINS[chain]?.explorer || "https://basescan.org"}/tx/${txHash}`}
           target="_blank" rel="noopener noreferrer"
           className="flex items-center justify-center gap-2 text-sm text-gray-400 hover:text-white">
           View on explorer <ExternalLink className="w-3 h-3" />
         </a>
+      )}
+
+      {/* SUCCESS POPUP — same style as SendContent */}
+      {successPopup && (
+        <div
+          data-testid="swap-success-popup"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+          onClick={() => setSuccessPopup(null)}
+        >
+          <div
+            className="bg-black border border-green-400/40 p-6 max-w-md w-full space-y-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-6 h-6 text-green-400" />
+                <h3 className="text-lg font-bold text-white">Swap Complete</h3>
+              </div>
+              <button
+                onClick={() => setSuccessPopup(null)}
+                className="text-white/40 hover:text-white"
+                aria-label="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-white/40">Direction</span>
+                <span className="text-white">{successPopup.swapDirection}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/40">Amount</span>
+                <span className="font-mono text-white">{successPopup.amount} {successPopup.swapDirection?.startsWith("USDC") ? "USDC" : "ETH"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/40">Network</span>
+                <span className="text-white">Base</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-white/40 shrink-0">Recipient</span>
+                <span className="font-mono text-white/80 truncate">{successPopup.to}</span>
+              </div>
+              <div className="pt-2 border-t border-green-400/20">
+                <p className="text-[10px] text-green-400/70">
+                  Routed through the relayer — your wallet is hidden on BaseScan.
+                </p>
+              </div>
+            </div>
+            <a
+              href={successPopup.explorer}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full py-3 bg-green-500 text-black font-bold uppercase tracking-wider hover:bg-green-400 flex items-center justify-center gap-2"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Open in BaseScan
+            </a>
+            <p className="text-[11px] text-white/40 text-center">
+              Your dashboard balances will update shortly.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );
