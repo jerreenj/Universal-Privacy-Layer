@@ -194,6 +194,7 @@ export function SwapContent() {
       if (isUSDC2ETH) {
         // USDC → ETH: stealth signs permit, relayer swaps on Uniswap V3.
         // Stealth needs ZERO ETH for gas — relayer pays everything.
+        // Sender is hidden: only the relayer appears on BaseScan.
         const amountRaw = ethers.parseUnits(amount, 6);
 
         // Check stealth has enough USDC.
@@ -204,7 +205,7 @@ export function SwapContent() {
           return;
         }
 
-        // Read USDC nonce + domain for the permit signature.
+        // Read USDC nonce for the permit signature.
         const { readUsdcNonce, readUsdcName, readUsdcVersion } =
           await import("@/lib/balance-reader");
         const stealthWallet = new ethers.Wallet(stealthInfo.privateKey);
@@ -225,14 +226,9 @@ export function SwapContent() {
         const spender = prepRes.data.relayer_address;
         const chainId = prepRes.data.chainId;
 
-        // Sign the permit with the stealth key locally.
+        // Sign the permit with the stealth key locally (no wallet popup).
         const deadline = Math.floor(Date.now() / 1000) + 600;
-        const domain = {
-          name,
-          version,
-          chainId,
-          verifyingContract: USDC_ADDR,
-        };
+        const domain = { name, version, chainId, verifyingContract: USDC_ADDR };
         const types = {
           Permit: [
             { name: "owner", type: "address" },
@@ -252,8 +248,9 @@ export function SwapContent() {
         const sig = await stealthWallet.signTypedData(domain, types, message);
         const { v, r, s } = ethers.Signature.from(sig);
 
-        // Submit via the native swap relay endpoint.
-        const submitRes = await axios.post(`${API}/swap/native-relay`, {
+        // Submit via the native swap relay — relayer does the swap
+        // on Uniswap V3 and sends ETH to the recipient. Sender hidden.
+        await axios.post(`${API}/swap/native-relay`, {
           stealth_source: stealthInfo.address,
           recipient,
           amount_raw: amountRaw.toString(),
@@ -264,38 +261,54 @@ export function SwapContent() {
           s,
         });
 
-        setTxHash(submitRes.data.tx_hash);
-        toast.success("Swap confirmed! ETH sent to recipient via Uniswap V3.");
+        // Silent success — just refresh balances. No toast spam.
       } else {
-        // ETH → USDC: stealth sends ETH to relayer, relayer swaps on Uniswap.
-        // Stealth needs a tiny bit of ETH for gas to send to the relayer.
+        // ETH → USDC: stealth signs permit is not possible for ETH.
+        // Instead, stealth sends ETH to relayer, relayer swaps on
+        // Uniswap V3 and sends USDC to recipient.
+        // Stealth needs a tiny bit of ETH for gas.
         const provider = await getProvider();
         const stealthWallet = new ethers.Wallet(stealthInfo.privateKey, provider);
         const amountWei = ethers.parseEther(amount);
 
         const stealthEth = await readEthBalance(stealthInfo.address);
         if (stealthEth < amountWei + 100000n) {
-          toast.error(`Stealth needs ETH for gas. Current: ${ethers.formatEther(stealthEth)} ETH. Send a tiny amount of ETH to your stealth first.`);
+          toast.error(`Stealth needs ETH for gas. Current: ${ethers.formatEther(stealthEth)} ETH.`);
           setSwapping(false);
           return;
         }
 
-        // Send ETH from stealth to relayer. The relayer will swap
-        // it on Uniswap V3 and send USDC to the recipient.
-        // For now, we send ETH directly to the recipient (the
-        // Uniswap ETH→USDC relay endpoint can be added later).
-        // This is the simplest path that works without a vault.
+        // Send ETH from stealth to relayer. Relayer swaps on Uniswap
+        // and sends USDC to the recipient.
+        const prepRes = await axios.post(`${API}/usdc-permit-forwarder/prepare-tx`, {
+          from_address: address,
+          stealth_source: stealthInfo.address,
+          recipient,
+          amount,
+          chain: "base",
+        });
+        const relayerAddr = prepRes.data.relayer_address;
+
+        // Send ETH to relayer — stealth pays gas for this one tx.
         const tx = await stealthWallet.sendTransaction({
-          to: recipient,
+          to: relayerAddr,
           value: amountWei,
         });
-        setTxHash(tx.hash);
-        toast.success("Swap submitted — waiting for confirmation…");
         await tx.wait();
-        toast.success("ETH sent to recipient!");
+
+        // Tell backend to swap the ETH → USDC on Uniswap and send
+        // USDC to the recipient.
+        await axios.post(`${API}/swap/native-relay-eth`, {
+          stealth_source: stealthInfo.address,
+          recipient,
+          amount: amount,
+          chain: "base",
+        });
+
+        // Silent success — just refresh balances.
       }
 
-      // Refresh balances.
+      // Refresh balances silently — dashboard updates automatically.
       fetchBalance && fetchBalance();
       fetchUsdcBalance && fetchUsdcBalance();
       try { if (typeof fetchStealthBalance === "function") await fetchStealthBalance(); } catch {}
