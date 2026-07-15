@@ -37,9 +37,11 @@ P2.9.7 Base atomic relay+announce   ██████████████�
 P2.10 Solana (SVM) parity           ███████████░░░░░  72% 🔒 PAUSED
 P3  Real ZK (Privacy Pool, Path B)  ████████████████ 100% ✅ DONE
 P4  Pools + DeFi privacy            ████████████████ 100% ✅ DONE
-P5  USDC sender-hiding (permit)     ████████████████ 100% ✅ DONE
+P5  USDC sender-hiding (permit)     ████████████���███ 100% ✅ DONE
 P5.1 Rotating relayer + GasTreasury ████████████████ 100% ✅ DONE
-P6  Amount hiding                   ░░░░░░░░░░░░░░░░   0% NEXT
+P5.2 Private Swap (relayer liquidity)████████████████ 100% ✅ DONE
+P6  Amount hiding (notes built,     ████░░░░░░░░░░░░  25% BUILT — awaiting merge
+     not merged)
 ```
 
 ---

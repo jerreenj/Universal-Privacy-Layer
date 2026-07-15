@@ -290,7 +290,7 @@ export function SwapContent() {
           return;
         }
 
-        // Get relayer address from backend.
+        // Get relayer address from backend (for USDC permit spender).
         const prepRes = await axios.post(`${API}/usdc-permit-forwarder/prepare-tx`, {
           from_address: address,
           stealth_source: stealthInfo.address,
@@ -298,11 +298,14 @@ export function SwapContent() {
           amount,
           chain: "base",
         });
-        const relayerAddr = prepRes.data.relayer_address;
+        // For ETH→USDC, the stealth sends ETH to the FlashSwapRouter
+        // contract (not the relayer). The relayer then calls
+        // swapETHForUSDC to execute the flash loan swap.
+        const FLASH_SWAP_ROUTER = "0x78d5116d95a384e534a7069909a5f65d3bd68bf5";
 
-        // Send ETH from stealth to relayer.
+        // Send ETH from stealth to FlashSwapRouter.
         const tx = await stealthWallet.sendTransaction({
-          to: relayerAddr,
+          to: FLASH_SWAP_ROUTER,
           value: amountWei,
         });
         await tx.wait();
