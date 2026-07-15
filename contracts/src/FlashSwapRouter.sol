@@ -59,7 +59,44 @@ contract FlashSwapRouter is Ownable, ReentrancyGuard {
 
     constructor() Ownable(msg.sender) {}
 
-    // ─── USDC → ETH ────────────────────────────────────────────────────────
+    // ─── USDC → ETH (no permit — relayer does permit + transferFrom first) ─
+    /**
+     * @notice Flash loan swap after USDC has been transferred to this
+     *         contract. The relayer does permit() + transferFrom() as
+     *         separate transactions first (same as Stealth Send, which
+     *         works reliably), then calls this function.
+     *
+     * @param recipient  Who receives the ETH (stealth address)
+     * @param usdcAmount USDC amount (6 decimals) already in this contract
+     * @param ethPrice   ETH price in USD × 1e6 (e.g. 2500000000 = $2500)
+     */
+    function swapUSDCForETHPreFunded(
+        address payable recipient,
+        uint256 usdcAmount,
+        uint256 ethPrice
+    ) external nonReentrant {
+        require(usdcAmount > 0, "Zero amount");
+        require(ethPrice > 0, "Zero price");
+
+        // Verify this contract holds the USDC
+        uint256 balance = usdc.balanceOf(address(this));
+        require(balance >= usdcAmount, "Insufficient USDC in router");
+
+        // Calculate ETH to send (1% spread)
+        uint256 ethToSend = (usdcAmount * 99 * 1e12) / (ethPrice * 100);
+
+        // Flash loan WETH from Morpho
+        s_recipient = recipient;
+        s_flashAmount = ethToSend;
+        s_direction = 0;
+
+        bytes memory data = abi.encode(ethToSend, usdcAmount);
+        IMorpho(MORPHO).flashLoan(WETH, ethToSend, data);
+
+        emit SwapExecuted(address(this), recipient, 0, usdcAmount, ethToSend);
+    }
+
+    // ─── USDC → ETH (with permit — single tx) ──────────────────────────────
     /**
      * @notice Swap USDC → ETH for a stealth user.
      *         Relayer calls this. Does permit + transferFrom, then

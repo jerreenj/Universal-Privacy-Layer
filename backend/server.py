@@ -3259,12 +3259,9 @@ class NativeSwapRelayRequest(BaseModel):
 async def swap_native_relay(request: NativeSwapRelayRequest):
     """USDC→ETH swap via Morpho flash loan + Curve. Zero capital.
 
-    Relayer calls FlashSwapRouter.swapUSDCForETH() which:
-    1. Does permit + transferFrom (gets USDC from stealth)
-    2. Flash loans WETH from Morpho (free)
-    3. Unwraps WETH → ETH, sends to recipient
-    4. Swaps USDC → WETH on Curve to repay Morpho
-    5. Surplus = our 1% revenue
+    Two-phase approach (same as Stealth Send, which works reliably):
+    Phase 1: permit + transferFrom — get USDC from stealth to FlashSwapRouter
+    Phase 2: call swapUSDCForETHPreFunded — flash loan + Curve + send ETH
 
     Stealth needs ZERO ETH. Relayer only needs gas (~$0.0001)."""
     try:
@@ -3281,13 +3278,50 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
             raise HTTPException(status_code=503, detail="Relayer not configured")
 
         w3 = get_w3("base")
-        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0x78d5116d95a384e534a7069909a5f65d3bd68bf5")
+        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0x74a1fd5ea04a8633d2d67becde992b222fd09c50")
+        USDC_BASE = Web3.to_checksum_address("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
         stealth_src = Web3.to_checksum_address(request.stealth_source)
         recipient = Web3.to_checksum_address(request.recipient)
         amount_int = int(request.amount_raw)
         relayer_addr = Account.from_key(relayer_key).address
+        base_nonce = w3.eth.get_transaction_count(relayer_addr)
+        gas_price = w3.eth.gas_price
 
-        # Fetch ETH price from Coinbase
+        usdc = w3.eth.contract(address=USDC_BASE, abi=_USDC_PERMIT_FORWARD_ABI)
+
+        # PHASE 1: permit() — relayer gets allowance from stealth
+        r_bytes = bytes.fromhex(request.r[2:]) if request.r.startswith("0x") else bytes.fromhex(request.r)
+        s_bytes = bytes.fromhex(request.s[2:]) if request.s.startswith("0x") else bytes.fromhex(request.s)
+
+        permit_tx = usdc.functions.permit(
+            stealth_src, relayer_addr, amount_int,
+            int(request.deadline), int(request.v), r_bytes, s_bytes,
+        ).build_transaction({
+            "from": relayer_addr, "nonce": base_nonce,
+            "gas": 200000, "gasPrice": gas_price, "chainId": config["chain_id"],
+        })
+        signed_permit = w3.eth.account.sign_transaction(permit_tx, relayer_key)
+        raw = getattr(signed_permit, 'raw_transaction', getattr(signed_permit, 'rawTransaction', None))
+        permit_hash = w3.eth.send_raw_transaction(raw)
+        permit_receipt = w3.eth.wait_for_transaction_receipt(permit_hash, timeout=300)
+        if permit_receipt["status"] != 1:
+            raise HTTPException(status_code=400, detail="Permit reverted")
+
+        # PHASE 1b: transferFrom() — move USDC from stealth to FlashSwapRouter
+        transfer_tx = usdc.functions.transferFrom(
+            stealth_src, FLASH_SWAP_ROUTER, amount_int,
+        ).build_transaction({
+            "from": relayer_addr, "nonce": base_nonce + 1,
+            "gas": 200000, "gasPrice": gas_price, "chainId": config["chain_id"],
+        })
+        signed_transfer = w3.eth.account.sign_transaction(transfer_tx, relayer_key)
+        raw2 = getattr(signed_transfer, 'raw_transaction', getattr(signed_transfer, 'rawTransaction', None))
+        transfer_hash = w3.eth.send_raw_transaction(raw2)
+        transfer_receipt = w3.eth.wait_for_transaction_receipt(transfer_hash, timeout=300)
+        if transfer_receipt["status"] != 1:
+            raise HTTPException(status_code=400, detail="transferFrom reverted")
+
+        # PHASE 2: call swapUSDCForETHPreFunded — flash loan + Curve + ETH
         import urllib.request
         try:
             with urllib.request.urlopen("https://api.coinbase.com/v2/prices/ETH-USD/spot", timeout=5) as resp:
@@ -3296,56 +3330,45 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
         except:
             eth_price_usd = 2500.0
 
-        # ethPrice in the contract format: USD × 1e6
         eth_price_scaled = int(eth_price_usd * 1e6)
 
-        # Build the swapUSDCForETH call
-        r_bytes = bytes.fromhex(request.r[2:]) if request.r.startswith("0x") else bytes.fromhex(request.r)
-        s_bytes = bytes.fromhex(request.s[2:]) if request.s.startswith("0x") else bytes.fromhex(request.s)
-
         FLASH_SWAP_ABI = json.loads(
-            '[{"inputs":[{"name":"stealth","type":"address"},{"name":"recipient","type":"address"},'
-            '{"name":"usdcAmount","type":"uint256"},{"name":"v","type":"uint8"},'
-            '{"name":"r","type":"bytes32"},{"name":"s","type":"bytes32"},'
-            '{"name":"deadline","type":"uint256"},{"name":"ethPrice","type":"uint256"}],'
-            '"name":"swapUSDCForETH","outputs":[],"stateMutability":"nonpayable","type":"function"}]'
+            '[{"inputs":[{"name":"recipient","type":"address"},'
+            '{"name":"usdcAmount","type":"uint256"},'
+            '{"name":"ethPrice","type":"uint256"}],'
+            '"name":"swapUSDCForETHPreFunded","outputs":[],'
+            '"stateMutability":"nonpayable","type":"function"}]'
         )
         router = w3.eth.contract(address=FLASH_SWAP_ROUTER, abi=FLASH_SWAP_ABI)
 
-        nonce_tx = w3.eth.get_transaction_count(relayer_addr)
-        gas_price = w3.eth.gas_price
-        tx = router.functions.swapUSDCForETH(
-            stealth_src,
+        swap_tx = router.functions.swapUSDCForETHPreFunded(
             recipient,
             amount_int,
-            int(request.v),
-            r_bytes,
-            s_bytes,
-            int(request.deadline),
             eth_price_scaled,
         ).build_transaction({
             "from": relayer_addr,
-            "nonce": nonce_tx,
+            "nonce": base_nonce + 2,
             "gas": 500000,
             "gasPrice": gas_price,
             "chainId": config["chain_id"],
         })
-        signed = w3.eth.account.sign_transaction(tx, relayer_key)
-        raw = getattr(signed, 'raw_transaction', getattr(signed, 'rawTransaction', None))
-        tx_hash = w3.eth.send_raw_transaction(raw)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+        signed_swap = w3.eth.account.sign_transaction(swap_tx, relayer_key)
+        raw3 = getattr(signed_swap, 'raw_transaction', getattr(signed_swap, 'rawTransaction', None))
+        swap_hash = w3.eth.send_raw_transaction(raw3)
+        receipt = w3.eth.wait_for_transaction_receipt(swap_hash, timeout=300)
 
         if receipt["status"] == 1:
             await _increment_relayer_tx_count()
 
         return {
-            "tx_hash": tx_hash.hex(),
+            "tx_hash": swap_hash.hex(),
+            "permit_tx_hash": permit_hash.hex(),
             "status": "success" if receipt["status"] == 1 else "reverted",
             "stealth_source": stealth_src,
             "recipient": recipient,
             "usdc_in": str(amount_int),
             "eth_price": str(eth_price_usd),
-            "explorer": f"https://basescan.org/tx/{tx_hash.hex()}",
+            "explorer": f"https://basescan.org/tx/{swap_hash.hex()}",
         }
     except HTTPException:
         raise
@@ -3386,7 +3409,7 @@ async def swap_native_relay_eth(request: NativeSwapEthRelayRequest):
             raise HTTPException(status_code=503, detail="Relayer not configured")
 
         w3 = get_w3("base")
-        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0x78d5116d95a384e534a7069909a5f65d3bd68bf5")
+        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0x74a1fd5ea04a8633d2d67becde992b222fd09c50")
         recipient = Web3.to_checksum_address(request.recipient)
         relayer_addr = Account.from_key(relayer_key).address
 

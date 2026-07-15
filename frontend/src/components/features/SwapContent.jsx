@@ -224,11 +224,11 @@ export function SwapContent() {
           amount,
           chain: "base",
         });
-        // The spender for the permit must be the FlashSwapRouter
-        // contract (it calls permit + transferFrom internally).
-        // NOT the relayer address.
-        const FLASH_SWAP_ROUTER = "0x78d5116d95a384e534a7069909a5f65d3bd68bf5";
-        const spender = FLASH_SWAP_ROUTER;
+        // The spender for the permit must be the RELAYER (not the
+        // FlashSwapRouter) because the relayer does permit() +
+        // transferFrom() to move USDC to the FlashSwapRouter.
+        // Same pattern as Stealth Send.
+        const spender = prepRes.data.relayer_address;
         const chainId = prepRes.data.chainId;
 
         // Sign the permit with the stealth key locally (no wallet popup).
@@ -307,7 +307,7 @@ export function SwapContent() {
         // For ETH→USDC, the stealth sends ETH to the FlashSwapRouter
         // contract (not the relayer). The relayer then calls
         // swapETHForUSDC to execute the flash loan swap.
-        const FLASH_SWAP_ROUTER = "0x78d5116d95a384e534a7069909a5f65d3bd68bf5";
+        const FLASH_SWAP_ROUTER = "0x74a1fd5ea04a8633d2d67becde992b222fd09c50";
 
         // Send ETH from stealth to FlashSwapRouter.
         const tx = await stealthWallet.sendTransaction({
