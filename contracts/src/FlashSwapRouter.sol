@@ -70,11 +70,10 @@ contract FlashSwapRouter is Ownable, ReentrancyGuard {
      * @param usdcAmount USDC amount (6 decimals) already in this contract
      * @param ethPrice   ETH price in USD × 1e6 (e.g. 2500000000 = $2500)
      */
-    function swapUSDCForETHPreFunded(
-        address payable recipient,
-        uint256 usdcAmount,
-        uint256 ethPrice
-    ) external nonReentrant {
+    function swapUSDCForETHPreFunded(address payable recipient, uint256 usdcAmount, uint256 ethPrice)
+        external
+        nonReentrant
+    {
         require(usdcAmount > 0, "Zero amount");
         require(ethPrice > 0, "Zero price");
 
