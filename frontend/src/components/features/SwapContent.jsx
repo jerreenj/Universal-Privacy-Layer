@@ -307,7 +307,7 @@ export function SwapContent() {
         // For ETH→USDC, the stealth sends ETH to the FlashSwapRouter
         // contract (not the relayer). The relayer then calls
         // swapETHForUSDC to execute the flash loan swap.
-        const FLASH_SWAP_ROUTER = "0x74a1fd5ea04a8633d2d67becde992b222fd09c50";
+        const FLASH_SWAP_ROUTER = "0x3583f096097e34191d6d03a48d6f6A5CD2E52b08";
 
         // Send ETH from stealth to FlashSwapRouter.
         const tx = await stealthWallet.sendTransaction({

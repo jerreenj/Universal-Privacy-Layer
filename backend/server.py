@@ -3278,7 +3278,7 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
             raise HTTPException(status_code=503, detail="Relayer not configured")
 
         w3 = get_w3("base")
-        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0x74a1fd5ea04a8633d2d67becde992b222fd09c50")
+        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0x3583f096097e34191d6d03a48d6f6A5CD2E52b08")
         USDC_BASE = Web3.to_checksum_address("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
         stealth_src = Web3.to_checksum_address(request.stealth_source)
         recipient = Web3.to_checksum_address(request.recipient)
@@ -3321,21 +3321,11 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
         if transfer_receipt["status"] != 1:
             raise HTTPException(status_code=400, detail="transferFrom reverted")
 
-        # PHASE 2: call swapUSDCForETHPreFunded — flash loan + Curve + ETH
-        import urllib.request
-        try:
-            with urllib.request.urlopen("https://api.coinbase.com/v2/prices/ETH-USD/spot", timeout=5) as resp:
-                price_data = json.loads(resp.read())
-                eth_price_usd = float(price_data["data"]["amount"])
-        except:
-            eth_price_usd = 2500.0
-
-        eth_price_scaled = int(eth_price_usd * 1e6)
-
+        # PHASE 2: call swapUSDCForETHPreFunded — Curve swap + unwrap + ETH
+        # No ethPrice needed — Curve gives the real market rate directly.
         FLASH_SWAP_ABI = json.loads(
             '[{"inputs":[{"name":"recipient","type":"address"},'
-            '{"name":"usdcAmount","type":"uint256"},'
-            '{"name":"ethPrice","type":"uint256"}],'
+            '{"name":"usdcAmount","type":"uint256"}],'
             '"name":"swapUSDCForETHPreFunded","outputs":[],'
             '"stateMutability":"nonpayable","type":"function"}]'
         )
@@ -3344,7 +3334,6 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
         swap_tx = router.functions.swapUSDCForETHPreFunded(
             recipient,
             amount_int,
-            eth_price_scaled,
         ).build_transaction({
             "from": relayer_addr,
             "nonce": base_nonce + 2,
@@ -3367,7 +3356,6 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
             "stealth_source": stealth_src,
             "recipient": recipient,
             "usdc_in": str(amount_int),
-            "eth_price": str(eth_price_usd),
             "explorer": f"https://basescan.org/tx/{swap_hash.hex()}",
         }
     except HTTPException:
@@ -3409,38 +3397,27 @@ async def swap_native_relay_eth(request: NativeSwapEthRelayRequest):
             raise HTTPException(status_code=503, detail="Relayer not configured")
 
         w3 = get_w3("base")
-        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0x74a1fd5ea04a8633d2d67becde992b222fd09c50")
+        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0x3583f096097e34191d6d03a48d6f6A5CD2E52b08")
         recipient = Web3.to_checksum_address(request.recipient)
         relayer_addr = Account.from_key(relayer_key).address
 
-        # Fetch ETH price
-        import urllib.request
-        try:
-            with urllib.request.urlopen("https://api.coinbase.com/v2/prices/ETH-USD/spot", timeout=5) as resp:
-                price_data = json.loads(resp.read())
-                eth_price_usd = float(price_data["data"]["amount"])
-        except:
-            eth_price_usd = 2500.0
-
-        eth_price_scaled = int(eth_price_usd * 1e6)
-
+        # No ethPrice needed — Curve gives the real market rate directly.
         FLASH_SWAP_ETH_ABI = json.loads(
-            '[{"inputs":[{"name":"recipient","type":"address"},'
-            '{"name":"ethPrice","type":"uint256"}],'
+            '[{"inputs":[{"name":"recipient","type":"address"}],'
             '"name":"swapETHForUSDC","outputs":[],'
             '"stateMutability":"payable","type":"function"}]'
         )
         router = w3.eth.contract(address=FLASH_SWAP_ROUTER, abi=FLASH_SWAP_ETH_ABI)
 
-        # Check FlashSwapRouter received ETH from the stealth
+        # Check CurveSwapRouter received ETH from the stealth
         router_eth = w3.eth.get_balance(FLASH_SWAP_ROUTER)
         amount_wei = w3.to_wei(Decimal(request.amount))
         if router_eth < amount_wei:
-            raise HTTPException(status_code=400, detail="FlashSwapRouter has not received enough ETH")
+            raise HTTPException(status_code=400, detail="CurveSwapRouter has not received enough ETH")
 
         nonce_tx = w3.eth.get_transaction_count(relayer_addr)
         gas_price = w3.eth.gas_price
-        tx = router.functions.swapETHForUSDC(recipient, eth_price_scaled).build_transaction({
+        tx = router.functions.swapETHForUSDC(recipient).build_transaction({
             "from": relayer_addr,
             "nonce": nonce_tx,
             "gas": 500000,
