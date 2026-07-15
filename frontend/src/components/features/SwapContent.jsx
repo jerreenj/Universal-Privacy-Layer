@@ -224,11 +224,17 @@ export function SwapContent() {
           amount,
           chain: "base",
         });
-        const spender = prepRes.data.relayer_address;
+        // The spender for the permit must be the FlashSwapRouter
+        // contract (it calls permit + transferFrom internally).
+        // NOT the relayer address.
+        const FLASH_SWAP_ROUTER = "0x78d5116d95a384e534a7069909a5f65d3bd68bf5";
+        const spender = FLASH_SWAP_ROUTER;
         const chainId = prepRes.data.chainId;
 
         // Sign the permit with the stealth key locally (no wallet popup).
-        const deadline = Math.floor(Date.now() / 1000) + 600;
+        // 1 hour deadline — the old 10-minute window was too tight for
+        // the backend to process + submit the flash loan transaction.
+        const deadline = Math.floor(Date.now() / 1000) + 3600;
         const domain = { name, version, chainId, verifyingContract: USDC_ADDR };
         const types = {
           Permit: [
