@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Copy, Check, Shield, RefreshCw, ChevronDown, ChevronUp, History } from "lucide-react";
+import { Copy, Check, Shield, RefreshCw, ChevronDown, ChevronUp, History, Lock } from "lucide-react";
 import { toast } from "sonner";
 import axios from "axios";
 import { ethers } from "ethers";
@@ -8,6 +8,7 @@ import {
   deriveStealthEOA,
   getAddressArchive,
   addAddressToArchive,
+  getViewKeyForArchiveEntry,
 } from "@/lib/wallet-stealth";
 
 function CopyBtn({ text, label }) {
@@ -55,10 +56,14 @@ function CopyBtn({ text, label }) {
  *     customer has minted.
  */
 export function StealthMeta({ address, signer }) {
-  const [active, setActive] = useState(null);             // currently-shown receive address
-  const [archive, setArchive] = useState([]);              // every address the customer has minted
+  const [active, setActive] = useState(null);
+  const [archive, setArchive] = useState([]);
   const [step, setStep] = useState("check");
   const [loading, setLoading] = useState(false);
+  // Hidden Notes state — for the P6 amount-hiding system
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [hiddenNotes, setHiddenNotes] = useState([]);
+  const [notesLoading, setNotesLoading] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
 
   // On mount + on address change: pull local archive FIRST. The
@@ -190,6 +195,34 @@ export function StealthMeta({ address, signer }) {
     }
   };
 
+  // Scan for hidden notes sent to this user's stealth addresses
+  const scanHiddenNotes = async () => {
+    if (!address) return;
+    setNotesLoading(true);
+    try {
+      const { scanNotes } = await import("@/lib/confidential-notes");
+      const notes = await scanNotes(address, API);
+      setHiddenNotes(notes);
+    } catch {
+      setHiddenNotes([]);
+    }
+    setNotesLoading(false);
+  };
+
+  // Auto-register view keys for all archive addresses when they're loaded
+  useEffect(() => {
+    if (!archive.length || !address) return;
+    // Register view keys in the background (non-blocking)
+    import("@/lib/confidential-notes").then(({ registerViewKey }) => {
+      archive.forEach(entry => {
+        const viewKey = getViewKeyForArchiveEntry(entry);
+        if (viewKey) {
+          registerViewKey(entry.address, viewKey, API).catch(() => {});
+        }
+      });
+    }).catch(() => {});
+  }, [archive, address]);
+
   if (!address) return (
     <div className="flex items-center justify-center h-40 text-white/30 text-sm">
       Connect a wallet first.
@@ -296,6 +329,48 @@ export function StealthMeta({ address, signer }) {
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+
+          {/* Hidden Notes section — for the P6 amount-hiding system.
+              Shows notes sent to this user with hidden amounts.
+              Purely additive — doesn't affect the existing archive panel. */}
+          <div className="border border-white/10 mt-2">
+            <button
+              data-testid="hidden-notes-toggle"
+              onClick={() => { setNotesOpen(o => !o); if (!notesOpen && hiddenNotes.length === 0) scanHiddenNotes(); }}
+              className="w-full flex items-center justify-between px-3 py-2.5 text-xs uppercase tracking-wider text-white/60 hover:text-white hover:bg-white/5 transition-colors"
+            >
+              <span className="flex items-center gap-2">
+                <Lock className="w-3.5 h-3.5" />
+                Hidden Notes ({hiddenNotes.length})
+              </span>
+              {notesOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+            {notesOpen && (
+              <div className="border-t border-white/10 max-h-64 overflow-y-auto">
+                {notesLoading ? (
+                  <div className="px-3 py-4 text-xs text-white/30 text-center">Scanning for hidden notes…</div>
+                ) : hiddenNotes.length === 0 ? (
+                  <div className="px-3 py-4 text-xs text-white/30 text-center">No hidden notes found.</div>
+                ) : (
+                  hiddenNotes.map((note, i) => (
+                    <div key={i} className="px-3 py-2 text-xs border-b border-white/5 last:border-b-0">
+                      <div className="font-mono text-white/50 truncate">
+                        Commitment: {note.commitment?.slice(0, 18)}…
+                      </div>
+                      <div className="text-[10px] text-white/30 mt-0.5">
+                        Block: {note.blockNumber} · {note.isMine ? "Possibly mine" : "Unknown"}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {!notesLoading && (
+                  <button onClick={scanHiddenNotes} className="w-full px-3 py-2 text-[10px] text-white/40 hover:text-white border-t border-white/5">
+                    Re-scan
+                  </button>
+                )}
               </div>
             )}
           </div>
