@@ -67,7 +67,7 @@
     "confidential_transfer_verifier": "0x1eCbB3C1cB39Fd2125D12f566dB91Cc055A80CdD",
     "confidential_vault_usdc_reserve": "500000",
     "batch_swap_router": "0x0b80fD06A73bDA4f0B76aBB94B48fFd59d137aA5",
-    "confidential_notes": "0x305d11e1877e2ACB928FdeFe7d94c10692beBCaC",
-    "confidential_notes_verifier": "0x4F4cEC449297975c5b46347dB818b03dEe813aE0"
+    "confidential_notes": "0xd590df2ac8f4fd5fbd5ebd67e7c8f0838784128f",
+    "confidential_notes_verifier": "0x9DBDB7cC200B83Fa6C9673857058bC86Bf77773C"
   }
 }
