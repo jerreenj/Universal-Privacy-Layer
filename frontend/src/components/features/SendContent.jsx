@@ -52,6 +52,10 @@ export function SendContent() {
   //               this, the stealth has USDC and all future sends
   //               use Stealth Send mode.
   const [sendMode, setSendMode] = useState("stealth");
+  // Hidden Amount toggle — when ON, sends use confidential notes
+  // (amount hidden on BaseScan). Defaults to OFF — when OFF,
+  // everything works exactly as before. This is the safety barrier.
+  const [hiddenAmount, setHiddenAmount] = useState(false);
   const [sending, setSending] = useState(false);
   const [txHash, setTxHash] = useState(null);
   // Tx-success popup — appears centered over the page on success,
@@ -379,12 +383,17 @@ export function SendContent() {
   //   "stealth" — permit flow (most private, requires stealth USDC)
   //   "public"  — public→private via relayer (main wallet → relayer → recipient)
   //   "direct"  — stealth→stealth direct transfer (no relayer, stealth = msg.sender)
-  // Dispatcher: TWO modes only.
-  //   "stealth" — Stealth Send (permit + relayer, most private)
+  // Dispatcher: TWO modes + hidden amount toggle.
+  //   "stealth" — Stealth Send (permit + relayer, OR hidden note if toggle ON)
   //   "deposit" — Deposit (main wallet → your own stealth)
+  // When hiddenAmount is ON and mode is "stealth", uses the
+  // confidential notes system instead of the permit flow.
+  // When hiddenAmount is OFF, everything works exactly as before.
   const sendUsdc = () => {
     if (sendMode === "deposit") return sendUsdcDeposit();
-    // default: stealth permit flow
+    // If hidden amount toggle is ON, use the note flow
+    if (hiddenAmount) return sendUsdcHidden();
+    // default: stealth permit flow (existing, untouched)
     if (!archiveUsdc) {
       return toast.error(
         "No USDC in your stealth address. Switch to 'Deposit' mode to fund your stealth first.",
@@ -403,6 +412,78 @@ export function SendContent() {
       );
     }
     return sendUsdcViaPermit();
+  };
+
+  /**
+   * sendUsdcHidden — HIDDEN AMOUNT mode for USDC.
+   * Creates a confidential note (amount hidden on BaseScan), then
+   * auto-settles it (real USDC delivered, amount visible but
+   * unlinkable to the note creation). Returns TWO BaseScan links.
+   *
+   * Only used when the "Hidden Amount" toggle is ON.
+   * When OFF, the existing permit flow runs untouched.
+   */
+  const sendUsdcHidden = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
+    const recipient = parseRecipient(to);
+    if (!recipient) return toast.error("Invalid address — must be a raw 0x... address");
+    if (!archiveUsdc) return toast.error("No USDC in your stealth. Deposit first.", { duration: 6000 });
+    setSending(true);
+    try {
+      // Import the hidden amount module
+      const { sendWithHiddenAmount, lookupViewKey } = await import("@/lib/confidential-notes");
+
+      // Look up the recipient's view key from the directory
+      let recipientViewKey = await lookupViewKey(recipient, API);
+      if (!recipientViewKey) {
+        // If not registered, try deriving from the recipient's
+        // stealth address (works if the recipient is the same user)
+        const { getViewKeyForArchiveEntry } = await import("@/lib/wallet-stealth");
+        const archive = getAddressArchive(address);
+        const entry = archive.find(e => e.address.toLowerCase() === recipient.toLowerCase());
+        if (entry) {
+          recipientViewKey = getViewKeyForArchiveEntry(entry);
+        }
+        if (!recipientViewKey) {
+          toast.error("Recipient's view key not found. Ask them to register their stealth address first.", { duration: 6000 });
+          setSending(false);
+          return;
+        }
+      }
+
+      // Execute the full flow: create note + auto-settle
+      const result = await sendWithHiddenAmount({
+        amount,
+        recipientViewKey,
+        recipientAddress: recipient,
+        senderStealthPrivateKey: archiveUsdc.privateKey,
+        apiBase: API,
+      });
+
+      // Show success popup with TWO BaseScan links
+      setTxHash(result.noteTxHash);
+      setSuccessPopup({
+        hash: result.noteTxHash,
+        explorer: `${CHAINS[chain].explorer}/tx/${result.noteTxHash}`,
+        settleHash: result.settleTxHash,
+        settleExplorer: `${CHAINS[chain].explorer}/tx/${result.settleTxHash}`,
+        amount,
+        token: "USDC",
+        to: recipient,
+        chain: chain || "base",
+        hiddenAmount: true,
+      });
+
+      // Refresh balances
+      fetchBalance();
+      try { if (typeof fetchStealthBalance === "function") await fetchStealthBalance(); } catch {}
+      setTo(""); setAmount("");
+    } catch (e) {
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Failed";
+      toast.error(msg);
+    }
+    setSending(false);
   };
 
   /**
@@ -738,6 +819,30 @@ export function SendContent() {
           </p>
         </div>
       )}
+      {/* Hidden Amount toggle — only shown in Stealth Send mode.
+          When ON, uses confidential notes (amount hidden on BaseScan).
+          When OFF, everything works exactly as before. This is the
+          safety barrier — the toggle defaults to OFF. */}
+      {sendMode === "stealth" && (
+        <div className="flex items-center gap-3 py-1">
+          <button
+            data-testid="hidden-amount-toggle"
+            onClick={() => setHiddenAmount(!hiddenAmount)}
+            className={`px-3 py-1.5 text-xs font-semibold border transition-colors ${
+              hiddenAmount
+                ? "bg-purple-500/20 border-purple-400 text-purple-300"
+                : "border-white/20 text-white/40 hover:bg-white/5"
+            }`}
+          >
+            {hiddenAmount ? "🔒 Hidden Amount ON" : "🔓 Hidden Amount OFF"}
+          </button>
+          {hiddenAmount && (
+            <span className="text-[10px] text-purple-300/70">
+              Amount hidden on BaseScan — two transactions (note + settlement)
+            </span>
+          )}
+        </div>
+      )}
       {/* Recipient field — hidden in Deposit mode (destination is
           always the user's own stealth). In Stealth Send mode the
           user pastes the recipient's address. */}
@@ -836,17 +941,49 @@ export function SendContent() {
                   </p>
                 </div>
               )}
+              {successPopup.hiddenAmount && (
+                <div className="pt-2 border-t border-purple-400/20 space-y-1">
+                  <p className="text-[10px] text-purple-300/80">
+                    Amount hidden on BaseScan. Two transactions created:
+                  </p>
+                </div>
+              )}
             </div>
-            <a
-              data-testid="basescan-link"
-              href={successPopup.explorer}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full py-3 bg-green-500 text-black font-bold uppercase tracking-wider hover:bg-green-400 flex items-center justify-center gap-2"
-            >
-              <ExternalLink className="w-4 h-4" />
-              Open in BaseScan
-            </a>
+            {successPopup.hiddenAmount ? (
+              <div className="space-y-2">
+                <a
+                  data-testid="basescan-link-note"
+                  href={successPopup.explorer}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3 bg-purple-500 text-black font-bold uppercase tracking-wider hover:bg-purple-400 flex items-center justify-center gap-2"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Note Created (Amount Hidden)
+                </a>
+                <a
+                  data-testid="basescan-link-settle"
+                  href={successPopup.settleExplorer}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3 bg-green-500 text-black font-bold uppercase tracking-wider hover:bg-green-400 flex items-center justify-center gap-2"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  USDC Delivered (Settlement)
+                </a>
+              </div>
+            ) : (
+              <a
+                data-testid="basescan-link"
+                href={successPopup.explorer}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-3 bg-green-500 text-black font-bold uppercase tracking-wider hover:bg-green-400 flex items-center justify-center gap-2"
+              >
+                <ExternalLink className="w-4 h-4" />
+                Open in BaseScan
+              </a>
+            )}
             <p className="text-[11px] text-white/40 text-center">
               The transaction is finalized on-chain. Refresh the dashboard to see your Private balance update.
             </p>

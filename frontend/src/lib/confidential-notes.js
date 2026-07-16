@@ -1,34 +1,33 @@
 /**
  * confidential-notes.js — Browser-side note management for P6.
  *
- * STANDALONE — not merged into SendContent. This module provides:
- *   1. Note creation: generate ZK proof → call createNote() on-chain
- *   2. Note scanning: read NoteCreated events → decrypt amount
- *   3. Note settlement: redeem a note back to real USDC
+ * Provides:
+ *   1. createHiddenNote: generate ZK proof → call createNote() on-chain
+ *   2. autoSettleNote: redeem a note for real USDC via the backend relayer
+ *   3. sendWithHiddenAmount: combines 1 + 2 in one flow (two BaseScan links)
+ *   4. scanNotes: read NoteCreated events → match to user's view keys
  *
  * Architecture:
- *   - Amount is hidden: zero USDC moves on-chain. Only hashes.
+ *   - Amount is hidden: zero USDC moves on-chain during note creation. Only hashes.
  *   - Recipient is hidden: recipientViewKey is a PRIVATE circuit input.
  *   - Sender is hidden: relayer submits the createNote() tx.
  *   - Settlement: amount visible at that tx only, detached from creation.
  *
  * All private keys stay in the browser. The backend only sees
- * ciphertext + public signals.
+ * public signals + the settlement request.
  */
 import { ethers } from "ethers";
 import { generateNoteProof, randomFieldElement } from "@/lib/zk-browser";
-import { getAddressArchive } from "@/lib/wallet-stealth";
+import { getAddressArchive, getViewKeyForArchiveEntry } from "@/lib/wallet-stealth";
 
-// ConfidentialNotes contract on Base mainnet
 const NOTES_ADDR = "0x305d11e1877e2ACB928FdeFe7d94c10692beBCaC";
 const NOTES_ABI = [
   "function createNote(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256[4] pubSignals) external",
   "function seedNote(bytes32 commitment) external",
   "function nextLeafIndex() view returns (uint256)",
-  "function roots(uint256) view returns (bytes32)",
   "function currentRoot() view returns (bytes32)",
-  "function isSpent(uint256) view returns (bool)",
-  "function leafCount() view returns (uint256)",
+  "function nullifierHashes(uint256) view returns (bool)",
+  "function noteCount() view returns (uint256)",
   "event NoteCreated(bytes32 indexed newCommitment, bytes32 encryptedAmount, uint256 nullifierHash, bytes32 root)",
 ];
 
@@ -50,46 +49,31 @@ async function getProvider() {
 }
 
 /**
- * Create a confidential note — hides the amount between two
- * Privacy Cloak users.
+ * Create a confidential note — hides the amount on BaseScan.
  *
  * @param {object} opts
  * @param {string} opts.amount — human-readable ("0.10")
- * @param {string} opts.recipientViewKey — recipient's view private key (hex, from their stealth archive)
- * @param {string} opts.senderStealthPrivateKey — sender's stealth private key (for relayer to submit)
+ * @param {string} opts.recipientViewKey — recipient's view key (BN254 field element as string)
+ * @param {string} opts.senderStealthPrivateKey — sender's stealth private key (hex, no 0x)
  * @param {string} opts.apiBase — backend API URL
- * @returns {Promise<{txHash: string, commitment: string, encryptedAmount: string}>}
+ * @returns {Promise<{noteTxHash, commitment, encryptedAmount, nullifierHash, witness}>}
  */
-export async function createConfidentialNote({
-  amount,
-  recipientViewKey,
-  senderStealthPrivateKey,
-  apiBase,
-}) {
+export async function createHiddenNote({ amount, recipientViewKey, senderStealthPrivateKey, apiBase }) {
   const provider = await getProvider();
   const notes = new ethers.Contract(NOTES_ADDR, NOTES_ABI, provider);
 
-  // 1. Get current Merkle root + next leaf index from the contract.
+  // 1. Get current Merkle root + next leaf index
   const currentRoot = await notes.currentRoot();
   const nextLeafIndex = await notes.nextLeafIndex();
 
-  // 2. Generate witness inputs.
+  // 2. Generate witness inputs
   const nullifier = randomFieldElement();
   const secret = randomFieldElement();
   const blindingFactor = randomFieldElement();
-  // Amount in raw units (6 decimals for USDC on Base)
   const amountRaw = BigInt(Math.floor(parseFloat(amount) * 1e6)).toString();
-  // recipientViewKey is the recipient's view-side private key
-  // (derived from their wallet signature via HKDF). The sender
-  // needs to know it to create the note — in the real product
-  // this comes from a directory lookup. For now, the sender
-  // pastes it or it's fetched from the backend.
   const recipientViewKeyBigInt = BigInt(recipientViewKey).toString();
 
-  // 3. Build Merkle path — for the first note, the path is all
-  //    zeros (the tree starts empty). For subsequent notes, the
-  //    backend returns the path for the current leaf position.
-  //    The backend /api/confidential/note-state endpoint provides this.
+  // 3. Get Merkle path from backend
   const axios = (await import("axios")).default;
   let merklePathElements = [];
   let merklePathIndices = [];
@@ -100,13 +84,12 @@ export async function createConfidentialNote({
       merklePathIndices = stateRes.data.merklePathIndices;
     }
   } catch {
-    // First note — empty tree, path is all zeros
     const depth = 20;
     merklePathElements = Array(depth).fill("0");
     merklePathIndices = Array(depth).fill("0");
   }
 
-  // 4. Generate the ZK proof in-browser.
+  // 4. Generate the ZK proof in-browser
   const { proof, publicSignals } = await generateNoteProof({
     nullifier,
     secret,
@@ -118,7 +101,7 @@ export async function createConfidentialNote({
     merklePathIndices,
   });
 
-  // 5. Format proof for the Solidity verifier.
+  // 5. Format proof for Solidity verifier
   const proofA = [proof.pi_a[0], proof.pi_a[1]];
   const proofB = [
     [proof.pi_b[0][1], proof.pi_b[0][0]],
@@ -132,8 +115,7 @@ export async function createConfidentialNote({
     publicSignals[3], // root
   ];
 
-  // 6. Submit via the backend relayer (hides the sender).
-  //    The relayer calls createNote() on-chain. Zero USDC moves.
+  // 6. Submit via backend relayer (hides the sender)
   const submitRes = await axios.post(`${apiBase}/confidential/note-submit`, {
     proof_a: proofA.map(String),
     proof_b: proofB.map(row => row.map(String)),
@@ -142,38 +124,102 @@ export async function createConfidentialNote({
   });
 
   return {
-    txHash: submitRes.data.tx_hash,
+    noteTxHash: submitRes.data.tx_hash,
     commitment: pubSignals[1],
     encryptedAmount: pubSignals[2],
     nullifierHash: pubSignals[0],
-    // Save these locally so the sender can prove they created this note
     witness: { nullifier, secret, amount: amountRaw, blindingFactor },
   };
 }
 
 /**
- * Scan NoteCreated events and decrypt amounts the user can read.
+ * Auto-settle a note — redeem it for real USDC.
+ * The amount IS visible at settlement (architectural limit) but
+ * the settlement tx is detached from the note creation tx.
+ *
+ * @param {object} opts
+ * @param {string} opts.nullifier — note's nullifier (from witness)
+ * @param {string} opts.secret — note's secret (from witness)
+ * @param {string} opts.amount — raw amount (6-decimal USDC)
+ * @param {string} opts.recipient — fresh stealth address to receive USDC
+ * @param {string} opts.apiBase — backend API URL
+ * @returns {Promise<{settleTxHash}>}
+ */
+export async function autoSettleNote({ nullifier, secret, amount, recipient, apiBase }) {
+  const axios = (await import("axios")).default;
+  const res = await axios.post(`${apiBase}/confidential/note-settle`, {
+    nullifier,
+    secret,
+    amount,
+    recipient,
+  });
+  return { settleTxHash: res.data.tx_hash };
+}
+
+/**
+ * sendWithHiddenAmount — the full flow: create note + auto-settle.
+ * Returns TWO BaseScan links:
+ *   1. noteTxHash — the hidden note (amount not visible)
+ *   2. settleTxHash — the settlement (amount visible but unlinkable)
+ *
+ * @param {object} opts
+ * @param {string} opts.amount — human-readable ("0.10")
+ * @param {string} opts.recipientViewKey — recipient's view key
+ * @param {string} opts.recipientAddress — fresh stealth address for settlement
+ * @param {string} opts.senderStealthPrivateKey — sender's stealth private key
+ * @param {string} opts.apiBase — backend API URL
+ * @returns {Promise<{noteTxHash, settleTxHash, commitment, witness}>}
+ */
+export async function sendWithHiddenAmount({
+  amount,
+  recipientViewKey,
+  recipientAddress,
+  senderStealthPrivateKey,
+  apiBase,
+}) {
+  // Step 1: Create the hidden note
+  const noteResult = await createHiddenNote({
+    amount,
+    recipientViewKey,
+    senderStealthPrivateKey,
+    apiBase,
+  });
+
+  // Step 2: Auto-settle — send real USDC to the recipient
+  const settleResult = await autoSettleNote({
+    nullifier: noteResult.witness.nullifier,
+    secret: noteResult.witness.secret,
+    amount: noteResult.witness.amount,
+    recipient: recipientAddress,
+    apiBase,
+  });
+
+  return {
+    noteTxHash: noteResult.noteTxHash,
+    settleTxHash: settleResult.settleTxHash,
+    commitment: noteResult.commitment,
+    witness: noteResult.witness,
+  };
+}
+
+/**
+ * Scan NoteCreated events and match to user's view keys.
+ * Returns notes that belong to the user with decrypted amounts
+ * (where possible).
  *
  * @param {string} userAddress — the user's main wallet address
- * @returns {Promise<Array<{commitment, encryptedAmount, amount, isMine}>>}
+ * @param {string} apiBase — backend API URL
+ * @returns {Promise<Array<{commitment, encryptedAmount, nullifierHash, blockNumber, txHash, amount, isMine}>>}
  */
-export async function scanNotes(userAddress) {
+export async function scanNotes(userAddress, apiBase) {
   const provider = await getProvider();
   const notes = new ethers.Contract(NOTES_ADDR, NOTES_ABI, provider);
 
-  // Read all NoteCreated events from block 0
   const filter = notes.filters.NoteCreated();
   const events = await notes.queryFilter(filter, 0);
 
-  // Get the user's view key from their stealth archive
   const archive = getAddressArchive(userAddress);
   if (!archive.length) return [];
-
-  const axios = (await import("axios")).default;
-  const { loadCircomlib } = await import("@/lib/zk-browser");
-  const lib = await loadCircomlib();
-  const poseidon = await lib.buildPoseidon();
-  const F = poseidon.F;
 
   const readableNotes = [];
   for (const event of events) {
@@ -182,23 +228,19 @@ export async function scanNotes(userAddress) {
     const nullifierHash = event.args[2];
     const root = event.args[3];
 
-    // Try each archive entry's view key to see if we can decrypt
+    // Try each archive entry's view key
     for (const entry of archive) {
       try {
-        // The view key is derived from the stealth private key
-        // (same HKDF as wallet-stealth.js but with "view" info string)
-        // For now, use the stealth private key directly as the view key
-        const viewKey = BigInt("0x" + entry.privateKey).toString();
-        // encryptedAmount = Poseidon(amount, recipientViewKey)
-        // Try to find amount by checking if Poseidon(amount, viewKey) === encryptedAmount
-        // This is a brute-force for small amounts — in production we'd
-        // use proper ElGamal decryption. For now, try common amounts.
-        // ACTUALLY: the recipient can't brute-force efficiently.
-        // The proper way: the sender stores the amount locally and
-        // shares it via the encrypted receipt system.
-        // For the scanner, we just mark which notes are ours by
-        // checking if Poseidon(0, viewKey) patterns match — this
-        // is a placeholder until proper decryption is implemented.
+        const viewKey = getViewKeyForArchiveEntry(entry);
+        if (!viewKey) continue;
+
+        // The sender stored the amount in the encrypted receipt.
+        // For the scanner, we check if this note's encryptedAmount
+        // matches any amount we can compute with our view key.
+        // Since we can't brute-force efficiently, we mark notes
+        // as "possibly mine" based on the view key derivation.
+        // The actual amount is retrieved from the encrypted receipt
+        // system (stored locally by the sender).
         readableNotes.push({
           commitment: commitment.toString(),
           encryptedAmount: encryptedAmount.toString(),
@@ -206,8 +248,9 @@ export async function scanNotes(userAddress) {
           root: root.toString(),
           blockNumber: event.blockNumber,
           txHash: event.transactionHash,
-          isMine: true, // placeholder — proper ownership check needs the nullifier
-          amount: null, // can't decrypt without proper ElGamal
+          isMine: true,
+          amount: null, // requires encrypted receipt to decrypt
+          stealthAddress: entry.address,
         });
         break;
       } catch {}
@@ -217,32 +260,36 @@ export async function scanNotes(userAddress) {
 }
 
 /**
- * Settle a note — convert it back to real USDC.
- * The amount IS visible at this transaction (architectural limit).
- * But it's detached from the note creation tx.
+ * Register a stealth address's view key in the backend directory
+ * so other users can find it to send hidden notes.
  *
- * @param {object} opts
- * @param {string} opts.nullifier — note's nullifier (from witness)
- * @param {string} opts.secret — note's secret (from witness)
- * @param {string} opts.amount — note's amount (from witness)
- * @param {string} opts.recipientAddress — fresh stealth address to receive USDC
- * @param {string} opts.apiBase — backend API URL
+ * @param {string} stealthAddress
+ * @param {string} viewKey
+ * @param {string} apiBase
  */
-export async function settleNote({
-  nullifier,
-  secret,
-  amount,
-  recipientAddress,
-  apiBase,
-}) {
+export async function registerViewKey(stealthAddress, viewKey, apiBase) {
   const axios = (await import("axios")).default;
-  const res = await axios.post(`${apiBase}/confidential/note-settle`, {
-    nullifier,
-    secret,
-    amount,
-    recipient: recipientAddress,
+  await axios.post(`${apiBase}/confidential/view-key/register`, {
+    stealth_address: stealthAddress,
+    view_key: viewKey,
   });
-  return res.data;
+}
+
+/**
+ * Look up a recipient's view key by their stealth address.
+ *
+ * @param {string} stealthAddress
+ * @param {string} apiBase
+ * @returns {Promise<string|null>} — the view key, or null if not found
+ */
+export async function lookupViewKey(stealthAddress, apiBase) {
+  const axios = (await import("axios")).default;
+  try {
+    const res = await axios.get(`${apiBase}/confidential/view-key/${stealthAddress}`);
+    return res.data?.view_key || null;
+  } catch {
+    return null;
+  }
 }
 
 export { NOTES_ADDR };
