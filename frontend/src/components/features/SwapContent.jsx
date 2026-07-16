@@ -27,14 +27,7 @@ import { useWallet } from "@/context/WalletContext";
 import { getAddressArchive } from "@/lib/wallet-stealth";
 import { readUsdcBalance, readEthBalance } from "@/lib/balance-reader";
 
-// No vault — swap goes through Uniswap V3 via the relayer.
-const UNISWAP_QUOTER = "0xb27308f9F90D607463bb33eA1BeBb41C0CEdAbf5";
 const USDC_ADDR = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-const WETH_ADDR = "0x4200000000000000000000000000000000000006";
-
-const QUOTER_ABI = [
-  "function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) view returns (uint256 amountOut)",
-];
 
 const RPCS = [
   "https://base.publicnode.com",

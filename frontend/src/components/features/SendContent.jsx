@@ -617,23 +617,29 @@ export function SendContent() {
         chain: chain || "base",
       });
 
-      const envelope = await seal({
-        tx_hash:      hash,
-        from_address: archiveEth.address,
-        to_address:   recipient,
-        amount_wei:   amountWei.toString(),
-        amount_human: amount,
-        chain:        chain || "base",
-        tx_type:      "private_send_eth",
-        status:       "confirmed",
-        client:       "metadata",
-      }, signer, address);
-      await axios.post(`${API}/transactions/record`, {
-        ...envelope,
-        tx_type: "private_send_eth",
-        status: "confirmed",
-        chain: chain || "base",
-      });
+      // Seal metadata — wrapped in try-catch because seal() uses the
+      // main wallet signer but the stealth is the sender, which can
+      // cause a "from should be same" error. The tx itself succeeded,
+      // so we don't block the success popup on the metadata.
+      try {
+        const envelope = await seal({
+          tx_hash:      hash,
+          from_address: archiveEth.address,
+          to_address:   recipient,
+          amount_wei:   amountWei.toString(),
+          amount_human: amount,
+          chain:        chain || "base",
+          tx_type:      "private_send_eth",
+          status:       "confirmed",
+          client:       "metadata",
+        }, signer, address);
+        await axios.post(`${API}/transactions/record`, {
+          ...envelope,
+          tx_type: "private_send_eth",
+          status: "confirmed",
+          chain: chain || "base",
+        });
+      } catch {}
 
       fetchBalance();
       try { if (typeof fetchStealthBalance === "function") await fetchStealthBalance(); } catch {}
