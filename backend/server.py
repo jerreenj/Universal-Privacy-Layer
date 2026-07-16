@@ -3583,27 +3583,42 @@ class NoteSettleRequest(BaseModel):
     secret: str
     amount: str
     recipient: str
+    # Optional: ZK spend proof for on-chain verification via
+    # NoteSettlement contract. If provided, the backend calls
+    # NoteSettlement.settle() on-chain. If not provided, falls
+    # back to direct USDC transfer + MongoDB double-spend guard.
+    proof_a: Optional[List[str]] = None
+    proof_b: Optional[List[List[str]]] = None
+    proof_c: Optional[List[str]] = None
+    pub_signals: Optional[List[str]] = None
+
+
+# NoteSettlement contract on Base mainnet
+_NOTE_SETTLEMENT_ADDR = "0xc6b069530038eca82ad4c826b304143283a7728f"
+_NOTE_SETTLEMENT_ABI = json.loads(
+    '[{"inputs":['
+    '{"name":"proofA","type":"uint256[2]"},'
+    '{"name":"proofB","type":"uint256[2][2]"},'
+    '{"name":"proofC","type":"uint256[2]"},'
+    '{"name":"pubSignals","type":"uint256[2]"},'
+    '{"name":"recipient","type":"address"}],'
+    '"name":"settle","outputs":[],'
+    '"stateMutability":"nonpayable","type":"function"}]'
+)
 
 
 @api_router.post("/confidential/note-settle")
 async def confidential_note_settle(request: NoteSettleRequest):
     """Settle a confidential note — redeem it for real USDC.
 
-    The relayer sends USDC directly from its own balance to the
-    recipient. The nullifier+secret are used to compute the
-    nullifierHash (double-spend guard). The amount IS visible at
-    this transaction (architectural limit of ERC20) but the
-    settlement tx is detached from the note creation tx.
+    Two paths:
+    1. If ZK proof is provided → calls NoteSettlement.settle()
+       on-chain (full ZK verification, on-chain double-spend guard)
+    2. If no proof → direct USDC transfer + MongoDB double-spend
+       guard (fallback, works without ZK proof)
 
-    The relayer fronts the USDC. The note creation flow holds the
-    original USDC (it never moved on-chain during note creation),
-    so the relayer's balance is replenished over time.
-
-    NOTE: The full ZK spend-proof verification requires the
-    spend circuit to be compiled + verifier deployed. Until then,
-    this endpoint settles using the nullifierHash as a simple
-    double-spend guard (computed from nullifier via Poseidon).
-    The relayer is trusted not to settle invalid notes.
+    The amount IS visible at settlement (architectural limit of
+    ERC20) but the settlement tx is detached from the note creation.
     """
     try:
         config = CHAIN_CONFIG.get("base")
@@ -3623,55 +3638,84 @@ async def confidential_note_settle(request: NoteSettleRequest):
         recipient = Web3.to_checksum_address(request.recipient)
         relayer_addr = Account.from_key(relayer_key).address
         amount_int = int(request.amount)
+        gas_price = w3.eth.gas_price
 
-        # Compute nullifierHash = Poseidon(nullifier) — used as
-        # double-spend guard. We store settled nullifiers in MongoDB
-        # since the on-chain verifier isn't deployed yet.
-        nullifier_bigint = int(request.nullifier)
-        # Simple hash for now — the real circuit uses Poseidon(nullifier)
-        # but we use keccak256 as a temporary double-spend guard.
-        nullifier_hash = Web3.keccak(request.nullifier.encode()).hex()
-
-        # Check not already settled
-        existing = await db.note_settlements.find_one({"nullifier_hash": nullifier_hash})
-        if existing:
-            raise HTTPException(status_code=400, detail="Note already settled")
-
-        # Check relayer has enough USDC
-        USDC_ABI = json.loads(
-            '[{"inputs":[{"name":"to","type":"address"},{"name":"amount","type":"uint256"}],'
-            '"name":"transfer","outputs":[{"name":"","type":"bool"}],'
-            '"stateMutability":"nonpayable","type":"function"},'
-            '{"inputs":[{"name":"owner","type":"address"}],'
-            '"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],'
-            '"stateMutability":"view","type":"function"}]'
+        # Check if ZK proof is provided for on-chain verification
+        has_proof = (
+            request.proof_a is not None
+            and request.proof_b is not None
+            and request.proof_c is not None
+            and request.pub_signals is not None
         )
-        usdc = w3.eth.contract(address=USDC_BASE, abi=USDC_ABI)
-        relayer_usdc = usdc.functions.balanceOf(relayer_addr).call()
-        if relayer_usdc < amount_int:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Relayer needs more USDC liquidity. Current: {relayer_usdc / 1e6} USDC."
+
+        if has_proof:
+            # PATH 1: On-chain ZK verification via NoteSettlement contract
+            settlement = w3.eth.contract(
+                address=Web3.to_checksum_address(_NOTE_SETTLEMENT_ADDR),
+                abi=_NOTE_SETTLEMENT_ABI,
             )
 
-        # Send USDC to recipient from relayer's balance
-        gas_price = w3.eth.gas_price
-        nonce_tx = w3.eth.get_transaction_count(relayer_addr)
-        transfer_tx = usdc.functions.transfer(recipient, amount_int).build_transaction({
-            "from": relayer_addr,
-            "nonce": nonce_tx,
-            "gas": 100000,
-            "gasPrice": gas_price,
-            "chainId": config["chain_id"],
-        })
-        signed = w3.eth.account.sign_transaction(transfer_tx, relayer_key)
-        raw = getattr(signed, 'raw_transaction', getattr(signed, 'rawTransaction', None))
-        tx_hash = w3.eth.send_raw_transaction(raw)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+            proofA = [int(request.proof_a[0]), int(request.proof_a[1])]
+            proofB = [
+                [int(request.proof_b[0][0]), int(request.proof_b[0][1])],
+                [int(request.proof_b[1][0]), int(request.proof_b[1][1])],
+            ]
+            proofC = [int(request.proof_c[0]), int(request.proof_c[1])]
+            pubSignals = [int(s) for s in request.pub_signals]
 
-        if receipt["status"] == 1:
-            await _increment_relayer_tx_count()
-            # Record the settlement in MongoDB
+            nonce_tx = w3.eth.get_transaction_count(relayer_addr)
+            tx = settlement.functions.settle(
+                proofA, proofB, proofC, pubSignals, recipient
+            ).build_transaction({
+                "from": relayer_addr,
+                "nonce": nonce_tx,
+                "gas": 300000,
+                "gasPrice": gas_price,
+                "chainId": config["chain_id"],
+            })
+            signed = w3.eth.account.sign_transaction(tx, relayer_key)
+            raw = getattr(signed, 'raw_transaction', getattr(signed, 'rawTransaction', None))
+            tx_hash = w3.eth.send_raw_transaction(raw)
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+
+        else:
+            # PATH 2: Direct USDC transfer + MongoDB double-spend guard
+            nullifier_hash = Web3.keccak(request.nullifier.encode()).hex()
+
+            existing = await db.note_settlements.find_one({"nullifier_hash": nullifier_hash})
+            if existing:
+                raise HTTPException(status_code=400, detail="Note already settled")
+
+            USDC_ABI = json.loads(
+                '[{"inputs":[{"name":"to","type":"address"},{"name":"amount","type":"uint256"}],'
+                '"name":"transfer","outputs":[{"name":"","type":"bool"}],'
+                '"stateMutability":"nonpayable","type":"function"},'
+                '{"inputs":[{"name":"owner","type":"address"}],'
+                '"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],'
+                '"stateMutability":"view","type":"function"}]'
+            )
+            usdc = w3.eth.contract(address=USDC_BASE, abi=USDC_ABI)
+            relayer_usdc = usdc.functions.balanceOf(relayer_addr).call()
+            if relayer_usdc < amount_int:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Relayer needs more USDC liquidity. Current: {relayer_usdc / 1e6} USDC."
+                )
+
+            nonce_tx = w3.eth.get_transaction_count(relayer_addr)
+            transfer_tx = usdc.functions.transfer(recipient, amount_int).build_transaction({
+                "from": relayer_addr,
+                "nonce": nonce_tx,
+                "gas": 100000,
+                "gasPrice": gas_price,
+                "chainId": config["chain_id"],
+            })
+            signed = w3.eth.account.sign_transaction(transfer_tx, relayer_key)
+            raw = getattr(signed, 'raw_transaction', getattr(signed, 'rawTransaction', None))
+            tx_hash = w3.eth.send_raw_transaction(raw)
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+
+            # Record in MongoDB
             await db.note_settlements.insert_one({
                 "nullifier_hash": nullifier_hash,
                 "recipient": recipient.lower(),
@@ -3680,11 +3724,15 @@ async def confidential_note_settle(request: NoteSettleRequest):
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
 
+        if receipt["status"] == 1:
+            await _increment_relayer_tx_count()
+
         return {
             "tx_hash": tx_hash.hex(),
             "status": "success" if receipt["status"] == 1 else "reverted",
             "recipient": recipient,
             "amount": str(amount_int),
+            "on_chain_verification": has_proof,
             "explorer": f"https://basescan.org/tx/{tx_hash.hex()}",
         }
     except HTTPException:

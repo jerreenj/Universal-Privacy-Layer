@@ -17,7 +17,7 @@
  * public signals + the settlement request.
  */
 import { ethers } from "ethers";
-import { generateNoteProof, randomFieldElement } from "@/lib/zk-browser";
+import { generateNoteProof, generateSpendProof, randomFieldElement } from "@/lib/zk-browser";
 import { getAddressArchive, getViewKeyForArchiveEntry } from "@/lib/wallet-stealth";
 
 const NOTES_ADDR = "0x305d11e1877e2ACB928FdeFe7d94c10692beBCaC";
@@ -147,11 +147,49 @@ export async function createHiddenNote({ amount, recipientViewKey, senderStealth
  */
 export async function autoSettleNote({ nullifier, secret, amount, recipient, apiBase }) {
   const axios = (await import("axios")).default;
+
+  // Generate the spend ZK proof in-browser
+  // nullifierHash = Poseidon(nullifier) — computed by the circuit
+  let proofData = {};
+  try {
+    const { loadCircomlib } = await import("@/lib/zk-browser");
+    const lib = await loadCircomlib();
+    const poseidon = await lib.buildPoseidon();
+    const F = poseidon.F;
+    const nullifierHash = F.toString(poseidon([BigInt(nullifier)]));
+
+    const { proof, publicSignals } = await generateSpendProof({
+      nullifier,
+      secret,
+      nullifierHash,
+      amount,
+    });
+
+    const proofA = [proof.pi_a[0], proof.pi_a[1]];
+    const proofB = [
+      [proof.pi_b[0][1], proof.pi_b[0][0]],
+      [proof.pi_b[1][1], proof.pi_b[1][0]],
+    ];
+    const proofC = [proof.pi_c[0], proof.pi_c[1]];
+
+    proofData = {
+      proof_a: proofA.map(String),
+      proof_b: proofB.map(row => row.map(String)),
+      proof_c: proofC.map(String),
+      pub_signals: publicSignals.map(String),
+    };
+  } catch (e) {
+    // If proof generation fails, fall back to no-proof settlement
+    // (MongoDB double-spend guard, relayer sends USDC directly)
+    console.warn("Spend proof generation failed, using fallback:", e?.message);
+  }
+
   const res = await axios.post(`${apiBase}/confidential/note-settle`, {
     nullifier,
     secret,
     amount,
     recipient,
+    ...proofData,
   });
   return { settleTxHash: res.data.tx_hash };
 }
