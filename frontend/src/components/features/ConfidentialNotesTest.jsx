@@ -18,7 +18,7 @@ import { Loader2, Lock, CheckCircle2, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";
-import { createConfidentialNote, scanNotes, NOTES_ADDR } from "@/lib/confidential-notes";
+import { createHiddenNote, scanNotes, NOTES_ADDR } from "@/lib/confidential-notes";
 
 export function ConfidentialNotesTest() {
   const { address } = useWallet();
@@ -52,7 +52,7 @@ export function ConfidentialNotesTest() {
       const archive = JSON.parse(localStorage.getItem(`upl:stealth-archive:${address.toLowerCase()}`) || "[]");
       if (!archive.length) return toast.error("No stealth in archive");
 
-      const res = await createConfidentialNote({
+      const res = await createHiddenNote({
         amount,
         recipientViewKey,
         senderStealthPrivateKey: archive[0].privateKey,
@@ -121,7 +121,7 @@ export function ConfidentialNotesTest() {
           <div className="flex items-center gap-1 text-green-400 font-semibold">
             <CheckCircle2 className="w-4 h-4" /> Note Created
           </div>
-          <div>Tx: <span className="font-mono text-white/50">{result.txHash?.slice(0, 18)}…</span></div>
+          <div>Tx: <span className="font-mono text-white/50">{result.noteTxHash?.slice(0, 18)}…</span></div>
           <div>Commitment: <span className="font-mono text-white/50">{result.commitment?.slice(0, 18)}…</span></div>
           <div>Encrypted Amount: <span className="font-mono text-white/50">{result.encryptedAmount?.slice(0, 18)}…</span></div>
           <div className="text-green-400/70 text-[10px] mt-1">

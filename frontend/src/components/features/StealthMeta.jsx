@@ -210,14 +210,15 @@ export function StealthMeta({ address, signer }) {
   };
 
   // Auto-register view keys for all archive addresses when they're loaded
+  // Only register entries that have a REAL viewKey field (from deriveStealthEOA).
+  // Old entries without viewKey use a keccak fallback which is inconsistent
+  // with the HKDF-derived key — we skip those to avoid poisoning the directory.
   useEffect(() => {
     if (!archive.length || !address) return;
-    // Register view keys in the background (non-blocking)
     import("@/lib/confidential-notes").then(({ registerViewKey }) => {
       archive.forEach(entry => {
-        const viewKey = getViewKeyForArchiveEntry(entry);
-        if (viewKey) {
-          registerViewKey(entry.address, viewKey, API).catch(() => {});
+        if (entry.viewKey) {
+          registerViewKey(entry.address, entry.viewKey, API).catch(() => {});
         }
       });
     }).catch(() => {});

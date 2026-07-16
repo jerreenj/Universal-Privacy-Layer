@@ -364,11 +364,7 @@ export function SendContent() {
       try {
         if (typeof fetchStealthBalance === "function") await fetchStealthBalance();
       } catch {}
-      // Refresh archive view so balance reflects new state.
-      try {
-        const list = getAddressArchive(address);
-        setArchive(list);
-      } catch {}
+      // Balance refresh is handled by fetchBalance/fetchStealthBalance above.
       setTo(""); setAmount("");
     } catch (e) {
       const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Failed";
@@ -587,8 +583,7 @@ export function SendContent() {
   //   "stealth" → sendEthFromStealth (stealth → recipient, hidden)
   const sendEth = () => {
     if (sendMode === "deposit") return sendEthDeposit();
-    // If hidden amount toggle is ON, use the note flow (same as USDC)
-    if (hiddenAmount) return sendUsdcHidden();
+    // Hidden amount is USDC-only for now — ETH notes not implemented
     return sendEthFromStealth();
   };
 
@@ -821,11 +816,11 @@ export function SendContent() {
           </p>
         </div>
       )}
-      {/* Hidden Amount toggle — only shown in Stealth Send mode.
+      {/* Hidden Amount toggle — only shown in Stealth Send mode + USDC.
           When ON, uses confidential notes (amount hidden on BaseScan).
           When OFF, everything works exactly as before. This is the
           safety barrier — the toggle defaults to OFF. */}
-      {sendMode === "stealth" && (
+      {sendMode === "stealth" && token === "usdc" && (
         <div className="flex items-center gap-3 py-1">
           <button
             data-testid="hidden-amount-toggle"

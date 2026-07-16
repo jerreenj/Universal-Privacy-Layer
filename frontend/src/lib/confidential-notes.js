@@ -27,7 +27,7 @@ const NOTES_ABI = [
   "function nextLeafIndex() view returns (uint32)",
   "function currentRoot() view returns (bytes32)",
   "function nullifierHashes(uint256) view returns (bool)",
-  "function noteCount() view returns (uint256)",
+  "function noteCount() view returns (uint32)",
   "event NoteCreated(bytes32 indexed newCommitment, bytes32 encryptedAmount, uint256 nullifierHash, bytes32 root)",
 ];
 
@@ -91,23 +91,15 @@ export async function createHiddenNote({ amount, recipientViewKey, senderStealth
 
   // Seed the source commitment on-chain via the relayer
   const axios = (await import("axios")).default;
-  // seedNote is permissionless — anyone can call it
-  // But we route through the backend so the relayer submits it
-  // (hiding the sender)
+  // Seed via backend relayer (hides the sender)
   try {
-    // Actually seedNote can be called by anyone. We'll submit it
-    // directly from the stealth wallet since it's just an insert.
-    // This adds one on-chain tx but it's zero-value.
-    const stealthWallet = new ethers.Wallet(senderStealthPrivateKey);
-    // Stealth needs ETH for gas — but seedNote is a view? No, it
-    // modifies state. So we need gas.
-    // Route through backend relayer instead.
     await axios.post(`${apiBase}/confidential/note-seed`, {
       commitment: srcCommitment,
     });
   } catch (e) {
-    // If seed fails, the tree may already have notes from a previous
-    // send. Continue anyway — the existing notes can be the source.
+    // If seed fails, continue — the tree may already have notes.
+    // The proof will use the existing root + path.
+    console.warn("Note seed failed (may be OK if tree has existing notes):", e?.message);
   }
 
   // Step 3: Get the updated root after seeding
