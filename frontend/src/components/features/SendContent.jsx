@@ -335,24 +335,26 @@ export function SendContent() {
         chain: chain || "base",
       });
 
-      // Seal metadata: server stores ciphertext only.
-      const envelope = await seal({
-        tx_hash:      hash,
-        from_address: archiveUsdc.address,  // privacy-first: log the stealth as the from
-        to_address:   recipient,
-        amount_wei:   amountRaw.toString(),
-        amount_human: amount,
-        chain:        chain || "base",
-        tx_type:      "private_send_usdc_permit",
-        status:       "confirmed",
-        client:       "metadata",
-      }, signer, address);
-      await axios.post(`${API}/transactions/record`, {
-        ...envelope,
-        tx_type: "private_send_usdc_permit",
-        status: "confirmed",
-        chain: chain || "base",
-      });
+      // Seal metadata — wrapped so 401 doesn't toast after success.
+      try {
+        const envelope = await seal({
+          tx_hash:      hash,
+          from_address: archiveUsdc.address,
+          to_address:   recipient,
+          amount_wei:   amountRaw.toString(),
+          amount_human: amount,
+          chain:        chain || "base",
+          tx_type:      "private_send_usdc_permit",
+          status:       "confirmed",
+          client:       "metadata",
+        }, signer, address);
+        await axios.post(`${API}/transactions/record`, {
+          ...envelope,
+          tx_type: "private_send_usdc_permit",
+          status: "confirmed",
+          chain: chain || "base",
+        });
+      } catch {}
 
       fetchBalance();
       try {
@@ -466,24 +468,28 @@ export function SendContent() {
         chain: chain || "base",
       });
 
-      // Seal metadata.
-      const envelope = await seal({
-        tx_hash:      hash,
-        from_address: address,
-        to_address:   stealthTarget,
-        amount_wei:   amountRaw.toString(),
-        amount_human: amount,
-        chain:        chain || "base",
-        tx_type:      "deposit_usdc_to_stealth",
-        status:       "confirmed",
-        client:       "metadata",
-      }, signer, address);
-      await axios.post(`${API}/transactions/record`, {
-        ...envelope,
-        tx_type: "deposit_usdc_to_stealth",
-        status: "confirmed",
-        chain: chain || "base",
-      });
+      // Seal metadata — wrapped in try-catch so 401 on
+      // /transactions/record doesn't show a toast after a
+      // successful transaction.
+      try {
+        const envelope = await seal({
+          tx_hash:      hash,
+          from_address: address,
+          to_address:   stealthTarget,
+          amount_wei:   amountRaw.toString(),
+          amount_human: amount,
+          chain:        chain || "base",
+          tx_type:      "deposit_usdc_to_stealth",
+          status:       "confirmed",
+          client:       "metadata",
+        }, signer, address);
+        await axios.post(`${API}/transactions/record`, {
+          ...envelope,
+          tx_type: "deposit_usdc_to_stealth",
+          status: "confirmed",
+          chain: chain || "base",
+        });
+      } catch {}
 
       fetchBalance();
       try { if (typeof fetchStealthBalance === "function") await fetchStealthBalance(); } catch {}
@@ -544,23 +550,25 @@ export function SendContent() {
         isDeposit: true,
       });
 
-      const envelope = await seal({
-        tx_hash:      hash,
-        from_address: address,
-        to_address:   stealthTarget,
-        amount_wei:   amountWei.toString(),
-        amount_human: amount,
-        chain:        chain || "base",
-        tx_type:      "deposit_eth_to_stealth",
-        status:       "confirmed",
-        client:       "metadata",
-      }, signer, address);
-      await axios.post(`${API}/transactions/record`, {
-        ...envelope,
-        tx_type: "deposit_eth_to_stealth",
-        status: "confirmed",
-        chain: chain || "base",
-      });
+      try {
+        const envelope = await seal({
+          tx_hash:      hash,
+          from_address: address,
+          to_address:   stealthTarget,
+          amount_wei:   amountWei.toString(),
+          amount_human: amount,
+          chain:        chain || "base",
+          tx_type:      "deposit_eth_to_stealth",
+          status:       "confirmed",
+          client:       "metadata",
+        }, signer, address);
+        await axios.post(`${API}/transactions/record`, {
+          ...envelope,
+          tx_type: "deposit_eth_to_stealth",
+          status: "confirmed",
+          chain: chain || "base",
+        });
+      } catch {}
 
       fetchBalance();
       try { if (typeof fetchStealthBalance === "function") await fetchStealthBalance(); } catch {}
@@ -633,12 +641,12 @@ export function SendContent() {
           status:       "confirmed",
           client:       "metadata",
         }, signer, address);
-        await axios.post(`${API}/transactions/record`, {
+        try { await axios.post(`${API}/transactions/record`, {
           ...envelope,
           tx_type: "private_send_eth",
           status: "confirmed",
           chain: chain || "base",
-        });
+        }); } catch {}
       } catch {}
 
       fetchBalance();
