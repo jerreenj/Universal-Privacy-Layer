@@ -3411,7 +3411,7 @@ async def swap_native_relay_eth(request: NativeSwapEthRelayRequest):
 
         # Check CurveSwapRouter received ETH from the stealth
         router_eth = w3.eth.get_balance(FLASH_SWAP_ROUTER)
-        amount_wei = w3.to_wei(Decimal(request.amount))
+        amount_wei = w3.to_wei(Decimal(request.amount), 'ether')
         if router_eth < amount_wei:
             raise HTTPException(status_code=400, detail="CurveSwapRouter has not received enough ETH")
 
