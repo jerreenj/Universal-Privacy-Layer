@@ -31,6 +31,7 @@
 import { ethers } from "ethers";
 import axios from "axios";
 import { getAddressArchive } from "./wallet-stealth";
+import { readUsdcBalance, readEthBalance } from "./balance-reader";
 
 /**
  * Cache key MUST be per-address — different wallets have different
@@ -257,24 +258,8 @@ export async function readStealthBalance(ownerAddress, provider, usdcAddress) {
         return { eth: "0.0", usdc: "0", address: null, addresses: [] };
     }
 
-    // Use the raw-fetch reader (lib/balance-reader.js) — bypasses
-    // ethers' BrowserProvider polyfill, which silently fails on
-    // browser CORS preflights. Each RPC is tried in sequence with a
-    // 4s timeout. We sum balances across EVERY address in the
-    // archive so the dashboard shows the user's TOTAL private
-    // balance, not just the most recent address.
-    //
-    // We ALWAYS read USDC — the Base USDC contract is hardcoded in
-    // balance-reader.js (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913),
-    // so even if CHAINS[chain].contracts.usdc was nullified by the
-    // deployment-endpoint overwrite bug, this still works.
-    const { readUsdcBalance, readEthBalance } = await import("@/lib/balance-reader");
-    // Read ALL addresses in PARALLEL — not one-by-one. The old
-    // sequential loop was the cause of the slow private balance
-    // fetch (each address × 2 reads × 4 RPC fallbacks = up to
-    // 8 sequential RPC calls per address). Now all addresses
-    // are read simultaneously, so the total time = one RPC call
-    // regardless of how many stealth addresses the user has.
+    // Use the raw-fetch reader — static import (no dynamic import
+    // delay). All addresses read in parallel.
     const balances = await Promise.all(stealthAddrs.map(async (sa) => {
         const [eth, usdc] = await Promise.all([
             readEthBalance(sa).catch(() => 0n),

@@ -778,7 +778,18 @@ export function WalletProvider({ children }) {
     }
   }, [address, chain]);
 
-  useEffect(() => { if (address) { fetchBalance(); fetchUsdcBalance(); fetchHiddenBalance(); fetchStealthBalance(); } }, [address, chain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance, fetchStealthBalance]);
+  // Fire all balance fetches IN PARALLEL on wallet connect / chain
+  // change — so public + private balances load at the same time
+  // instead of sequentially.
+  useEffect(() => {
+    if (!address) return;
+    Promise.all([
+      fetchBalance(),
+      fetchUsdcBalance(),
+      fetchHiddenBalance(),
+      fetchStealthBalance(),
+    ]).catch(() => {});
+  }, [address, chain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance, fetchStealthBalance]);
 
   useEffect(() => {
     if (window.ethereum) {
