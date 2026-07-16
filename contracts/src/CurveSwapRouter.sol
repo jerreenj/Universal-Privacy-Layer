@@ -32,7 +32,11 @@ contract CurveSwapRouter is Ownable {
     }
 
     function swapETHForUSDC(address recipient) external payable {
-        uint256 ethAmount = msg.value;
+        // Use the contract's OWN ETH balance (sent by the stealth
+        // in a separate tx) — not msg.value, since the relayer
+        // calls this with value=0.
+        uint256 ethAmount = address(this).balance;
+        require(ethAmount > 0, "No ETH in contract");
         IWETH9(payable(WETH)).deposit{value: ethAmount}();
         IWETH9(payable(WETH)).approve(CURVE_POOL, ethAmount);
         uint256 usdcOut = ICurvePool(CURVE_POOL).exchange(1, 0, ethAmount, 0);

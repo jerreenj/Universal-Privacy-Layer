@@ -3278,7 +3278,7 @@ async def swap_native_relay(request: NativeSwapRelayRequest):
             raise HTTPException(status_code=503, detail="Relayer not configured")
 
         w3 = get_w3("base")
-        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0x3583f096097e34191d6d03a48d6f6A5CD2E52b08")
+        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0xdD7F4A1557eF98Aa6B14C8EbD50acA6d81C8659a")
         USDC_BASE = Web3.to_checksum_address("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
         stealth_src = Web3.to_checksum_address(request.stealth_source)
         recipient = Web3.to_checksum_address(request.recipient)
@@ -3397,7 +3397,7 @@ async def swap_native_relay_eth(request: NativeSwapEthRelayRequest):
             raise HTTPException(status_code=503, detail="Relayer not configured")
 
         w3 = get_w3("base")
-        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0x3583f096097e34191d6d03a48d6f6A5CD2E52b08")
+        FLASH_SWAP_ROUTER = Web3.to_checksum_address("0xdD7F4A1557eF98Aa6B14C8EbD50acA6d81C8659a")
         recipient = Web3.to_checksum_address(request.recipient)
         relayer_addr = Account.from_key(relayer_key).address
 
