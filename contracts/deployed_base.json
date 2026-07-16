@@ -14,6 +14,8 @@
     "privacy_pool": "0x3F0b23Aca0624981a503e8f042db2F3884D0C89C",
     "gas_treasury": "0xa95942e4176ece411764af08e35756b0ff23a76c",
     "curve_swap_router": "0xdD7F4A1557eF98Aa6B14C8EbD50acA6d81C8659a",
+    "spend_verifier": "0x9a3a3C447320634F2FCc35DB522f6978490bAC7b",
+    "note_settlement": "0xc6b069530038eca82ad4c826b304143283a7728f",
     "pool_kind": "multi-denom",
     "initial_denominations_wei": "100000000000000000",
     "deploy_tx_hashes": {

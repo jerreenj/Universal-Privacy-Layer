@@ -15,10 +15,8 @@ import {NoteSettlement} from "../src/NoteSettlement.sol";
 ///     --private-key $DEPLOYER_PRIVATE_KEY \
 ///     --broadcast
 contract DeployNoteSettlementScript is Script {
-    // Will be replaced with the real verifier address after
-    // the spend circuit is compiled + trusted setup + verifier generated.
-    // For now, deploy with a mock that always returns true.
-    address constant MOCK_VERIFIER = address(0);
+    // Real SpendVerifier address — deployed on Base mainnet.
+    address constant SPEND_VERIFIER = 0x9a3a3C447320634F2FCc35DB522f6978490bAC7b;
 
     function run() external {
         address deployer = msg.sender;
@@ -26,10 +24,7 @@ contract DeployNoteSettlementScript is Script {
         console2.log("Deployer (owner):", deployer);
 
         vm.startBroadcast();
-        // TODO: replace MOCK_VERIFIER with the real verifier address
-        // after compiling the spend circuit + trusted setup.
-        // For now this is a placeholder deploy.
-        NoteSettlement settlement = new NoteSettlement(MOCK_VERIFIER);
+        NoteSettlement settlement = new NoteSettlement(SPEND_VERIFIER);
         console2.log("NoteSettlement deployed:", address(settlement));
         console2.log("  owner:", settlement.owner());
         console2.log("  USDC:", settlement.USDC());

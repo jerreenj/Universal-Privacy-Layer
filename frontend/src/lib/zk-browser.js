@@ -147,6 +147,30 @@ export async function generateNoteProof({
   return { proof, publicSignals };
 }
 
+// ─── P6.1: Spend Proof (settlement) ────────────────────────────────────
+// Generates a Groth16 proof for the confidential_spend circuit.
+// Public signals: [nullifierHash, amount]
+// Private inputs: nullifier, secret
+//
+// Used when settling a note — proves ownership without revealing
+// which note is being settled.
+export async function generateSpendProof({ nullifier, secret, nullifierHash, amount }) {
+  const snarkjs = await loadSnarkjs();
+  const input = {
+    nullifierHash: String(nullifierHash),
+    amount: String(amount),
+    nullifier: String(nullifier),
+    secret: String(secret),
+  };
+
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    input,
+    `${ZK_ASSETS_BASE}/confidential_spend.wasm`,
+    `${ZK_ASSETS_BASE}/spend_final.zkey`
+  );
+  return { proof, publicSignals };
+}
+
 // Helper to fetch the pool state (root, denomination, recent roots) from
 // the backend. Pass an optional `denomination` (wei string) to scope the
 // response to a specific sub-pool — same query semantics as the backend
