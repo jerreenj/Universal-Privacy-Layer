@@ -587,6 +587,8 @@ export function SendContent() {
   //   "stealth" → sendEthFromStealth (stealth → recipient, hidden)
   const sendEth = () => {
     if (sendMode === "deposit") return sendEthDeposit();
+    // If hidden amount toggle is ON, use the note flow (same as USDC)
+    if (hiddenAmount) return sendUsdcHidden();
     return sendEthFromStealth();
   };
 

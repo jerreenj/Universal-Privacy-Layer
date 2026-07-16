@@ -54,6 +54,9 @@ export function SwapContent() {
   const [expectedOut, setExpectedOut] = useState("");
   const [rate, setRate] = useState(null);
   const [swapping, setSwapping] = useState(false);
+  // Hidden Amount toggle for swap — defaults OFF.
+  // When ON, creates a confidential note instead of a visible swap.
+  const [hiddenAmount, setHiddenAmount] = useState(false);
   const [txHash, setTxHash] = useState(null);
   const [successPopup, setSuccessPopup] = useState(null);
   const [stealthInfo, setStealthInfo] = useState(null); // {address, privateKey, usdcBalance, ethBalance}
@@ -176,12 +179,74 @@ export function SwapContent() {
     }
   };
 
+  /**
+   * doHiddenSwap — creates a confidential note for the swap amount
+   * (amount hidden on BaseScan), then auto-settles. The actual
+   * Curve swap still happens at settlement (amount visible there
+   * but unlinkable to the note creation).
+   * Only used when the "Hidden Amount" toggle is ON.
+   */
+  const doHiddenSwap = async () => {
+    setSwapping(true);
+    try {
+      const { sendWithHiddenAmount, lookupViewKey } = await import("@/lib/confidential-notes");
+      const { getViewKeyForArchiveEntry } = await import("@/lib/wallet-stealth");
+
+      let recipientViewKey = await lookupViewKey(recipient, API);
+      if (!recipientViewKey) {
+        const archive = getAddressArchive(address);
+        const entry = archive.find(e => e.address.toLowerCase() === recipient.toLowerCase());
+        if (entry) recipientViewKey = getViewKeyForArchiveEntry(entry);
+        if (!recipientViewKey) {
+          toast.error("Recipient's view key not found.", { duration: 6000 });
+          setSwapping(false);
+          return;
+        }
+      }
+
+      const result = await sendWithHiddenAmount({
+        amount,
+        recipientViewKey,
+        recipientAddress: recipient,
+        senderStealthPrivateKey: stealthInfo.privateKey,
+        apiBase: API,
+      });
+
+      setTxHash(result.noteTxHash);
+      setSuccessPopup({
+        hash: result.noteTxHash,
+        explorer: `${CHAINS[chain]?.explorer || "https://basescan.org"}/tx/${result.noteTxHash}`,
+        settleHash: result.settleTxHash,
+        settleExplorer: `${CHAINS[chain]?.explorer || "https://basescan.org"}/tx/${result.settleTxHash}`,
+        amount,
+        token: isUSDC2ETH ? "ETH" : "USDC",
+        to: recipient,
+        chain: "base",
+        swapDirection: isUSDC2ETH ? "USDC → ETH" : "ETH → USDC",
+        hiddenAmount: true,
+      });
+
+      fetchBalance && fetchBalance();
+      fetchUsdcBalance && fetchUsdcBalance();
+      try { if (typeof fetchStealthBalance === "function") await fetchStealthBalance(); } catch {}
+      setAmount("");
+      setExpectedOut("");
+    } catch (e) {
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Failed";
+      toast.error(msg);
+    }
+    setSwapping(false);
+  };
+
   const doSwap = async () => {
     if (!address) return toast.error("Connect wallet first");
     if (!amount || parseFloat(amount) <= 0) return toast.error("Enter an amount");
     if (!recipient) return toast.error("Enter a recipient address");
     if (!ethers.isAddress(recipient)) return toast.error("Invalid recipient address");
     if (!stealthInfo) return toast.error("No stealth address available — generate one first");
+
+    // If hidden amount toggle is ON, use the confidential notes flow
+    if (hiddenAmount) return doHiddenSwap();
 
     setSwapping(true);
     try {
@@ -426,6 +491,21 @@ export function SwapContent() {
           <button data-testid="swap-auto-stealth-btn" onClick={autoFillRecipient}
             className="px-3 border border-white/20 hover:bg-white/10 text-xs">Auto</button>
         </div>
+      </div>
+
+      {/* Hidden Amount toggle — same as Send. Defaults OFF. */}
+      <div className="flex items-center gap-3 py-1">
+        <button
+          data-testid="swap-hidden-amount-toggle"
+          onClick={() => setHiddenAmount(!hiddenAmount)}
+          className={`px-3 py-1.5 text-xs font-semibold border transition-colors ${
+            hiddenAmount
+              ? "bg-purple-500/20 border-purple-400 text-purple-300"
+              : "border-white/20 text-white/40 hover:bg-white/5"
+          }`}
+        >
+          {hiddenAmount ? "🔒 Hidden Amount ON" : "🔓 Hidden Amount OFF"}
+        </button>
       </div>
 
       {/* Swap button */}
