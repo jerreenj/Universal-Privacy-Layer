@@ -24,7 +24,7 @@ const NOTES_ADDR = "0xd590df2ac8f4fd5fbd5ebd67e7c8f0838784128f";
 const NOTES_ABI = [
   "function createNote(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256[4] pubSignals) external",
   "function seedNote(bytes32 commitment) external",
-  "function nextLeafIndex() view returns (uint256)",
+  "function nextLeafIndex() view returns (uint32)",
   "function currentRoot() view returns (bytes32)",
   "function nullifierHashes(uint256) view returns (bool)",
   "function noteCount() view returns (uint256)",
@@ -62,9 +62,9 @@ export async function createHiddenNote({ amount, recipientViewKey, senderStealth
   const provider = await getProvider();
   const notes = new ethers.Contract(NOTES_ADDR, NOTES_ABI, provider);
 
-  // 1. Get current Merkle root + next leaf index
-  const currentRoot = await notes.currentRoot();
-  const nextLeafIndex = await notes.nextLeafIndex();
+  // 1. Get current Merkle root — convert bytes32 to BigInt string
+  const currentRootBytes = await notes.currentRoot();
+  const currentRoot = BigInt(currentRootBytes).toString();
 
   // 2. Generate witness inputs
   const nullifier = randomFieldElement();
@@ -73,21 +73,18 @@ export async function createHiddenNote({ amount, recipientViewKey, senderStealth
   const amountRaw = BigInt(Math.floor(parseFloat(amount) * 1e6)).toString();
   const recipientViewKeyBigInt = BigInt(recipientViewKey).toString();
 
-  // 3. Get Merkle path from backend
+  // 3. Get Merkle path from backend — MUST be 20 elements
   const axios = (await import("axios")).default;
-  let merklePathElements = [];
-  let merklePathIndices = [];
+  const DEPTH = 20;
+  let merklePathElements = Array(DEPTH).fill("0");
+  let merklePathIndices = Array(DEPTH).fill("0");
   try {
     const stateRes = await axios.get(`${apiBase}/confidential/note-state`);
-    if (stateRes.data?.merklePathElements) {
+    if (stateRes.data?.merklePathElements && stateRes.data.merklePathElements.length === DEPTH) {
       merklePathElements = stateRes.data.merklePathElements;
       merklePathIndices = stateRes.data.merklePathIndices;
     }
-  } catch {
-    const depth = 20;
-    merklePathElements = Array(depth).fill("0");
-    merklePathIndices = Array(depth).fill("0");
-  }
+  } catch { /* use zeros — valid for first insertion */ }
 
   // 4. Generate the ZK proof in-browser
   const { proof, publicSignals } = await generateNoteProof({
@@ -96,7 +93,7 @@ export async function createHiddenNote({ amount, recipientViewKey, senderStealth
     amount: amountRaw,
     blindingFactor,
     recipientViewKey: recipientViewKeyBigInt,
-    root: currentRoot.toString(),
+    root: currentRoot,
     merklePathElements,
     merklePathIndices,
   });
