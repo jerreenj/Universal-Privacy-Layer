@@ -15,7 +15,7 @@
 - **USDC + ETH balance reads**: ✅ — Raw fetch() reader, multi-RPC fallback, parallel reads across all stealth addresses. Loads at same time as public balance.
 - **Rotating relayer**: ✅ — Auto-rotates every 100 tx. GasTreasury auto-funds new relayers.
 - **GasTreasury**: ✅ — Deployed, funded, auto-funds relayer rotations.
-- **Confidential Notes (P6)**: ✅ Built, standalone, awaiting merge approval. Zero-value ZK proof transactions hide amount between Privacy Cloak users.
+- **Hidden Amount (P6)**: ✅ — "Hidden Amount" toggle in Send + Swap. When ON, creates a confidential note (amount hidden on BaseScan) + auto-settles (real USDC delivered, amount visible but unlinkable). Two BaseScan links per transaction. Toggle defaults OFF — when OFF, everything works exactly as before.
 - **Transaction History**: ✅ — AES-256-GCM sealed, backend stores ciphertext only.
 - **Sui mainnet**: ✅ at parity.
 - **Solana**: 🔒 PAUSED — needs ~3 SOL.
@@ -39,8 +39,7 @@ P5  USDC sender-hiding (permit)     ██████████████�
 P5.1 Rotating relayer + GasTreasury ████████████████ 100% ✅ DONE
 P5.2 Private Swap (Curve direct)    ████████████████ 100% ✅ DONE
 P5.3 ETH Send (Deposit + Stealth)   ████████████████ 100% ✅ DONE
-P6  Amount hiding (notes built,     ████░░░░░░░░░░░░  25% BUILT — awaiting merge
-     not merged)
+P6  Amount hiding (hidden toggle)   ████████████████ 100% ✅ DONE — toggle defaults OFF
 P7  Ethereum mainnet expansion      ░░░░░░░░░░░░░░░░   0% FUTURE
 ```
 
