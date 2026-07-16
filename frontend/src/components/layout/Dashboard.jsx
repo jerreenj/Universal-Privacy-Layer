@@ -411,9 +411,11 @@ export function Dashboard() {
                         const v = parseFloat(stealthBalance?.usdc || "0");
                         return v > 0 ? stealthBalance.usdc : "0";
                       }
-                      // ETH zero shows "0.0"
+                      // ETH zero shows "0.0" — cap at 6 decimals
+                      // to match the public wallet balance display.
                       const v = parseFloat(stealthBalance?.eth || "0");
-                      return v > 0 ? stealthBalance.eth : "0.0";
+                      if (v === 0) return "0.0";
+                      return v.toFixed(6);
                     })()}
                   </span>
                 </div>
@@ -436,7 +438,7 @@ export function Dashboard() {
                   <button onClick={() => setStealthFocusedToken(stealthFocusedToken === "usdc" ? "native" : "usdc")}
                     className="inline-flex items-center gap-1.5 hover:text-white transition-colors">
                     <span className="font-mono">{stealthFocusedToken === "usdc"
-                      ? (parseFloat(stealthBalance?.eth || "0") > 0 ? stealthBalance.eth : "0.0")
+                      ? (parseFloat(stealthBalance?.eth || "0") > 0 ? parseFloat(stealthBalance.eth).toFixed(6) : "0.0")
                       : (parseFloat(stealthBalance?.usdc || "0") > 0 ? stealthBalance.usdc : "0")}</span>
                     <span>{stealthFocusedToken === "usdc" ? (CHAINS[safeChain]?.symbol || "") : "USDC"}</span>
                     <ChevronDown className="w-3 h-3 text-white/30" />
