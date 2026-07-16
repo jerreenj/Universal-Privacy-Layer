@@ -237,9 +237,26 @@ export async function deriveStealthEOA(signer, entropy) {
     if (pkSecp === 0n) throw new Error("zero stealth key — re-attempt");
     const sk = new ethers.SigningKey("0x" + pkSecp.toString(16).padStart(64, "0"));
     const address = ethers.computeAddress("0x" + sk.publicKey.slice(4));
+
+    // Also derive a VIEW KEY from the same signature — used by the
+    // confidential notes system to decrypt hidden amounts. The view
+    // key is a separate field element (not a secp256k1 key) — it's
+    // used as a Poseidon hash input in the circuit, not for signing.
+    // Different HKDF info string → independent key from the same
+    // signature (no extra wallet popup).
+    const viewInfoStr = entropy
+        ? `upl-stealth:wallet-2:view:${entropy}`
+        : "upl-stealth:wallet-2:view";
+    const viewBytes = await hkdfFromSignature(sig, viewInfoStr, 32);
+    // The view key is a BN254 field element (not a secp256k1 scalar).
+    // Reduce mod the BN254 field prime.
+    const Q = BigInt("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001");
+    const viewKey = (BigInt("0x" + bytesToHex(viewBytes)) % Q).toString();
+
     return {
         address,
         privateKey: pkSecp.toString(16).padStart(64, "0"),
+        viewKey,
         entropy: entropy || null,
     };
 }
@@ -292,6 +309,7 @@ export function addAddressToArchive(ownerAddress, entry) {
         filtered.unshift({
             address: entry.address,
             privateKey: entry.privateKey,
+            viewKey: entry.viewKey || null,  // NEW — for hidden amount decryption
             entropy: entry.entropy || null,
             createdAt: entry.createdAt || Date.now(),
         });
@@ -304,6 +322,28 @@ export function addAddressToArchive(ownerAddress, entry) {
         // it up immediately on the next tick.
         localStorage.setItem(`upl:stealth-pk:${key}`, entry.privateKey);
     } catch {}
+}
+
+/**
+ * getViewKeyForArchiveEntry(entry) → string | null
+ * For old archive entries that don't have a viewKey field, derive
+ * it retroactively from the private key. The view key is derived
+ * as a BN254 field element from the stealth private key — this is
+ * a deterministic mapping so the same privateKey always produces
+ * the same viewKey.
+ *
+ * This avoids requiring the user to re-sign when they already have
+ * old stealth addresses without view keys.
+ */
+export function getViewKeyForArchiveEntry(entry) {
+    if (!entry?.privateKey) return null;
+    if (entry.viewKey) return entry.viewKey;
+    // Derive view key from the spend private key using a simple
+    // keccak256 reduction mod BN254 field prime. This is
+    // deterministic — same privateKey → same viewKey.
+    const hash = ethers.keccak256("0x" + entry.privateKey);
+    const Q = BigInt("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001");
+    return (BigInt(hash) % Q).toString();
 }
 
 /**
