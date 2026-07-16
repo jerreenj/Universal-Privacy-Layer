@@ -3436,7 +3436,6 @@ async def swap_native_relay_eth(request: NativeSwapEthRelayRequest):
             "tx_hash": tx_hash.hex(),
             "status": "success" if receipt["status"] == 1 else "reverted",
             "recipient": recipient,
-            "eth_price": str(eth_price_usd),
             "explorer": f"https://basescan.org/tx/{tx_hash.hex()}",
         }
     except HTTPException:
