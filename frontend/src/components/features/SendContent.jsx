@@ -65,6 +65,10 @@ export function SendContent() {
   // when it was generated, so permit signing happens locally; only
   // the signature leaves the browser. NO new contract, NO vault.
   const [archiveUsdc, setArchiveUsdc] = useState(null); // {address, privateKey, usdcBalance}
+  // Same as archiveUsdc but for ETH — reads each stealth's ETH
+  // balance and picks the one with the most ETH. Used for ETH
+  // Deposit (main → stealth) and ETH Stealth Send (stealth → recipient).
+  const [archiveEth, setArchiveEth] = useState(null);
   // Surfacing of permit-sign step so the UI doesn't lie about being
   // "Submitted" before the wallet actually pops.
   const [permitStep, setPermitStep] = useState(null);
@@ -137,6 +141,60 @@ export function SendContent() {
     })();
     return () => { cancelled = true; };
   }, [address, chain, token]);
+
+  // Read the user's stealth archive for ETH — same pattern as
+  // archiveUsdc but reads ETH balance instead. Picks the stealth
+  // with the most ETH.
+  useEffect(() => {
+    if (!address) { setArchiveEth(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = getAddressArchive(address);
+        if (!list.length) { if (!cancelled) setArchiveEth(null); return; }
+        const { readEthBalance } = await import("@/lib/balance-reader");
+        const probes = await Promise.all(list.map(async (entry) => {
+          try {
+            const w = new ethers.Wallet(entry.privateKey);
+            if (w.address.toLowerCase() !== entry.address.toLowerCase()) {
+              return { entry, balance: 0n, skip: true };
+            }
+            const bal = await readEthBalance(entry.address);
+            return { entry, balance: bal };
+          } catch { return { entry, balance: 0n }; }
+        }));
+        if (cancelled) return;
+        const positive = probes.filter(p => p.balance > 0n && !p.skip);
+        if (positive.length === 0) {
+          // No stealth with ETH — but still set the first archive
+          // entry so Deposit mode can use it as a destination.
+          if (list.length > 0) {
+            setArchiveEth({
+              address: list[0].address,
+              privateKey: list[0].privateKey,
+              balanceRaw: "0",
+              balanceHuman: "0.0",
+              total: 0,
+            });
+          } else {
+            setArchiveEth(null);
+          }
+          return;
+        }
+        positive.sort((a, b) => (b.balance > a.balance ? 1 : -1));
+        setArchiveEth({
+          address: positive[0].entry.address,
+          privateKey: positive[0].entry.privateKey,
+          balanceRaw: positive[0].balance.toString(),
+          balanceHuman: ethers.formatEther(positive[0].balance),
+          total: positive.length,
+        });
+      } catch {
+        if (!cancelled) setArchiveEth(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [address, chain]);
 
   /**
    * sendUsdcViaPermit — sign EIP-2612 permit with the user's
@@ -437,73 +495,148 @@ export function SendContent() {
     setSending(false);
   };
 
-  const sendEth = async () => {
+  // ETH dispatcher — routes by sendMode, same as USDC.
+  //   "deposit" → sendEthDeposit (main wallet → own stealth)
+  //   "stealth" → sendEthFromStealth (stealth → recipient, hidden)
+  const sendEth = () => {
+    if (sendMode === "deposit") return sendEthDeposit();
+    return sendEthFromStealth();
+  };
+
+  /**
+   * sendEthDeposit — DEPOSIT mode for ETH.
+   * Main wallet sends ETH directly to the user's OWN stealth
+   * address. Entry point into the privacy system for ETH.
+   * Main wallet appears once (unavoidable), then all future
+   * ETH sends use Stealth Send mode.
+   */
+  const sendEthDeposit = async () => {
+    if (!address) return toast.error("Connect wallet first");
+    if (!amount || parseFloat(amount) <= 0) return toast.error("Enter an amount");
+    if (!signer) return toast.error("Wallet not connected");
+    let stealthTarget = archiveEth?.address;
+    if (!stealthTarget) {
+      const list = getAddressArchive(address);
+      if (list.length > 0) {
+        stealthTarget = list[0].address;
+      } else {
+        return toast.error("No stealth address found. Generate one in Private Receive first.", { duration: 6000 });
+      }
+    }
+    setSending(true);
+    try {
+      const amountWei = ethers.parseEther(amount);
+      const tx = await signer.sendTransaction({
+        to: stealthTarget,
+        value: amountWei,
+      });
+      toast.success("Submitted — waiting for confirmation…");
+      const receipt = await tx.wait();
+      const hash = receipt?.hash || tx?.hash || "";
+      setTxHash(hash);
+      setSuccessPopup({
+        hash,
+        explorer: `${CHAINS[chain].explorer}/tx/${hash}`,
+        amount,
+        token: CHAINS[chain]?.symbol || "ETH",
+        to: stealthTarget,
+        chain: chain || "base",
+        isDeposit: true,
+      });
+
+      const envelope = await seal({
+        tx_hash:      hash,
+        from_address: address,
+        to_address:   stealthTarget,
+        amount_wei:   amountWei.toString(),
+        amount_human: amount,
+        chain:        chain || "base",
+        tx_type:      "deposit_eth_to_stealth",
+        status:       "confirmed",
+        client:       "metadata",
+      }, signer, address);
+      await axios.post(`${API}/transactions/record`, {
+        ...envelope,
+        tx_type: "deposit_eth_to_stealth",
+        status: "confirmed",
+        chain: chain || "base",
+      });
+
+      fetchBalance();
+      try { if (typeof fetchStealthBalance === "function") await fetchStealthBalance(); } catch {}
+      setAmount("");
+    } catch (e) {
+      const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Failed";
+      toast.error(msg);
+    }
+    setSending(false);
+  };
+
+  /**
+   * sendEthFromStealth — STEALTH SEND mode for ETH.
+   * The stealth wallet sends ETH directly to the recipient.
+   * Signs locally with the stealth's private key (no wallet popup).
+   * On BaseScan: from = stealth address (NOT main wallet).
+   * The stealth needs a tiny amount of ETH for gas (~$0.0001).
+   */
+  const sendEthFromStealth = async () => {
     if (!address) return toast.error("Connect wallet first");
     if (!to || !amount || parseFloat(amount) <= 0) return toast.error("Enter address and amount");
     const recipient = parseRecipient(to);
     if (!recipient) return toast.error("Invalid address — must be a raw 0x... address");
-    if (!signer) return toast.error("Wallet not connected");
+    if (!archiveEth) return toast.error("No ETH in your stealth. Use Deposit mode to fund your stealth first.", { duration: 6000 });
     setSending(true);
     try {
       const amountWei = ethers.parseEther(amount);
-      const ephemeralKey = "0x" + Array(64).fill(0).map(() =>
-        Math.floor(Math.random() * 16).toString(16)
-      ).join('');
-      const viewTag = Math.floor(Math.random() * 256);
 
-      const prepRes = await axios.post(`${API}/relayer/prepare-tx`, {
-        from_address: address,
-        stealth_address: recipient,
-        amount_wei: amountWei.toString(),
-        ephemeral_key: ephemeralKey,
-        view_tag: viewTag,
-        chain: chain || "base",
+      // Re-verify the stealth's live ETH balance.
+      const { readEthBalance } = await import("@/lib/balance-reader");
+      const liveBalance = await readEthBalance(archiveEth.address);
+      if (liveBalance < amountWei + 100000n) {
+        const liveHuman = ethers.formatEther(liveBalance);
+        return toast.error(`Stealth only has ${parseFloat(liveHuman).toFixed(6)} ETH. Deposit more first.`, { duration: 6000 });
+      }
+
+      // Sign with the stealth key locally — no wallet popup.
+      const provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
+      const stealthWallet = new ethers.Wallet(archiveEth.privateKey, provider);
+      const tx = await stealthWallet.sendTransaction({
+        to: recipient,
+        value: amountWei,
       });
-
-      const { domain, types, message } = prepRes.data.intent;
-      const signature = await signer.signTypedData(domain, types, message);
-
-      const submitRes = await axios.post(`${API}/relayer/submit`, {
-        intent: prepRes.data.intent,
-        signature,
-        from_address: address,
-        chain: chain || "base",
-      });
-
-      const relayTxHash = submitRes.data.relay_tx_hash || submitRes.data.tx_hash || "";
-      setTxHash(relayTxHash);
+      const receipt = await tx.wait();
+      const hash = receipt?.hash || tx?.hash || "";
+      setTxHash(hash);
       setSuccessPopup({
-        hash: relayTxHash,
-        explorer: `${CHAINS[chain].explorer}/tx/${relayTxHash}`,
+        hash,
+        explorer: `${CHAINS[chain].explorer}/tx/${hash}`,
         amount,
         token: CHAINS[chain]?.symbol || "ETH",
         to: recipient,
+        fromStealth: archiveEth.address,
         chain: chain || "base",
       });
 
       const envelope = await seal({
-        tx_hash:      relayTxHash,
-        from_address: address,
+        tx_hash:      hash,
+        from_address: archiveEth.address,
         to_address:   recipient,
         amount_wei:   amountWei.toString(),
         amount_human: amount,
         chain:        chain || "base",
         tx_type:      "private_send_eth",
-        status:       "pending",
+        status:       "confirmed",
         client:       "metadata",
       }, signer, address);
       await axios.post(`${API}/transactions/record`, {
         ...envelope,
         tx_type: "private_send_eth",
-        status: "pending",
+        status: "confirmed",
         chain: chain || "base",
       });
+
       fetchBalance();
-      try {
-        if (typeof fetchStealthBalance === "function") {
-          await fetchStealthBalance();
-        }
-      } catch {}
+      try { if (typeof fetchStealthBalance === "function") await fetchStealthBalance(); } catch {}
       setTo(""); setAmount("");
     } catch (e) {
       const msg = e.response?.data?.detail?.slice(0, 80) || e.message?.slice(0, 80) || "Failed";
@@ -519,10 +652,16 @@ export function SendContent() {
       <div className="flex items-center gap-2 text-xs text-white/40 bg-white/5 border border-white/10 px-3 py-2">
         <Lock className="w-3 h-3" />
         {token === "usdc"
-          ? (archiveUsdc
-              ? <>Permits signed by your stealth {archiveUsdc.address.slice(0, 6)}…{archiveUsdc.address.slice(-4)} — only that stealth address appears as the Transfer from on BaseScan.</>
-              : <>No stealth deposit detected — USDC sends are BLOCKED until you fund a stealth. Send USDC to your stealth address first, then send privately.</>)
-          : <>Routed through PrivacyRelayer on {CHAINS[chain]?.name} - your wallet never appears as sender</>}
+          ? (sendMode === "deposit"
+              ? <>Deposit USDC from your main wallet into your stealth. Your main wallet appears once — after this, use Stealth Send.</>
+              : (archiveUsdc
+                  ? <>Permits signed by your stealth {archiveUsdc.address.slice(0, 6)}…{archiveUsdc.address.slice(-4)} — only that stealth address appears as the Transfer from on BaseScan.</>
+                  : <>No USDC in your stealth. Switch to Deposit or fund your stealth first.</>))
+          : (sendMode === "deposit"
+              ? <>Deposit ETH from your main wallet into your stealth. Your main wallet appears once — after this, use Stealth Send.</>
+              : (archiveEth && parseFloat(archiveEth.balanceHuman) > 0
+                  ? <>Sent from your stealth {archiveEth.address.slice(0, 6)}…{archiveEth.address.slice(-4)} — your main wallet never appears on BaseScan.</>
+                  : <>No ETH in your stealth. Switch to Deposit or fund your stealth first.</>))}
       </div>
       {/* Token toggle */}
       <div className="flex items-center gap-3">
@@ -543,9 +682,9 @@ export function SendContent() {
           ))}
         </div>
       </div>
-      {/* Send-mode toggle — only shown for USDC. Controls how the
-          USDC is routed on-chain. ETH always uses the relayer. */}
-      {token === "usdc" && (
+      {/* Send-mode toggle — shown for BOTH USDC and ETH. Two modes:
+          Stealth Send (private, from stealth) and Deposit (main → stealth). */}
+      {(token === "usdc" || token === "eth") && (
         <div className="space-y-2">
           <label className="block text-xs text-gray-500 uppercase mb-1">Send mode</label>
           <div className="grid grid-cols-2 gap-2">
@@ -568,21 +707,31 @@ export function SendContent() {
             ))}
           </div>
           <p className="text-[10px] text-white/40 leading-relaxed">
-            {sendMode === "stealth" && (archiveUsdc
-              ? <>Sends from your stealth via the relayer — your main wallet AND stealth address stay hidden on BaseScan. Only the relayer appears. Stealth balance: {archiveUsdc.balanceHuman} USDC.</>
-              : <>Stealth Send needs USDC in your stealth. Switch to "Deposit" to fund your stealth first.</>)}
-            {sendMode === "deposit" && <>Moves USDC from your main wallet into your stealth address. This is the entry point — after this, use Stealth Send for private transfers. Your main wallet appears once (unavoidable — money is entering the privacy system).</>}
+            {sendMode === "stealth" && (
+              token === "usdc"
+                ? (archiveUsdc
+                    ? <>Sends from your stealth via the relayer — your main wallet AND stealth address stay hidden on BaseScan. Only the relayer appears. Stealth balance: {archiveUsdc.balanceHuman} USDC.</>
+                    : <>Stealth Send needs USDC in your stealth. Switch to "Deposit" to fund your stealth first.</>)
+                : (archiveEth && parseFloat(archiveEth.balanceHuman) > 0
+                    ? <>Sends ETH from your stealth directly — your main wallet stays hidden on BaseScan. Stealth balance: {parseFloat(archiveEth.balanceHuman).toFixed(6)} ETH.</>
+                    : <>Stealth Send needs ETH in your stealth. Switch to "Deposit" to fund your stealth first.</>)
+            )}
+            {sendMode === "deposit" && (
+              token === "usdc"
+                ? <>Moves USDC from your main wallet into your stealth address. Entry point — after this, use Stealth Send for private transfers.</>
+                : <>Moves ETH from your main wallet into your stealth address. Entry point — after this, use Stealth Send for private transfers.</>
+            )}
           </p>
         </div>
       )}
       {/* Recipient field — hidden in Deposit mode (destination is
           always the user's own stealth). In Stealth Send mode the
           user pastes the recipient's address. */}
-      {token === "usdc" && sendMode === "deposit" ? (
+      {(token === "usdc" || token === "eth") && sendMode === "deposit" ? (
         <div className="bg-blue-500/5 border border-blue-500/20 p-3 text-xs text-blue-300">
-          Depositing to your stealth address:{" "}
+          Depositing {token === "usdc" ? "USDC" : (CHAINS[chain]?.symbol || "ETH")} to your stealth address:{" "}
           <span className="font-mono">
-            {archiveUsdc?.address || getAddressArchive(address)?.[0]?.address || "— generate one in Private Receive first —"}
+            {(token === "usdc" ? archiveUsdc?.address : archiveEth?.address) || getAddressArchive(address)?.[0]?.address || "— generate one in Private Receive first —"}
           </span>
         </div>
       ) : (
@@ -602,7 +751,7 @@ export function SendContent() {
       <button data-testid="send-btn" onClick={send} disabled={sending}
         className="w-full py-3 bg-white text-black font-bold uppercase tracking-wider hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2">
         {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
-        Send {token === "usdc" ? "USDC" : "Privately"}
+        Send {token === "usdc" ? "USDC" : (CHAINS[chain]?.symbol || "ETH")}
       </button>
       {txHash && !successPopup && (
         <a href={`${CHAINS[chain].explorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
