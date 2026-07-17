@@ -3632,13 +3632,20 @@ async def confidential_note_seed(request: NoteSeedRequest):
 
         nonce_tx = w3.eth.get_transaction_count(relayer_addr)
         gas_price = w3.eth.gas_price
-        tx = seed_calldata.functions.seedNote(commitment_bytes).build_transaction({
+        # Encode the seedNote call manually to avoid gas estimation
+        # which can revert on some RPC nodes.
+        seed_selector = Web3.keccak(text="seedNote(bytes32)")[:4]
+        seed_calldata_raw = seed_selector + commitment_bytes
+        tx = {
             "from": relayer_addr,
+            "to": Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
+            "data": seed_calldata_raw,
             "nonce": nonce_tx,
-            "gas": 1000000,
+            "gas": 2000000,
             "gasPrice": gas_price,
             "chainId": config["chain_id"],
-        })
+            "value": 0,
+        }
         signed = w3.eth.account.sign_transaction(tx, relayer_key)
         raw = getattr(signed, 'raw_transaction', getattr(signed, 'rawTransaction', None))
         tx_hash = w3.eth.send_raw_transaction(raw)
@@ -3754,13 +3761,20 @@ async def confidential_note_submit(request: NoteSubmitRequest):
 
         nonce_tx = w3.eth.get_transaction_count(relayer_addr)
         gas_price = w3.eth.gas_price
-        tx = notes.functions.createNote(proofA, proofB, proofC, pubSignals).build_transaction({
+        # Use encode_abi to avoid gas estimation which can revert
+        create_calldata_raw = notes.functions.createNote(
+            proofA, proofB, proofC, pubSignals
+        )._encode_transaction_data()
+        tx = {
             "from": relayer_addr,
+            "to": Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
+            "data": create_calldata_raw,
             "nonce": nonce_tx,
-            "gas": 1000000,
+            "gas": 2000000,
             "gasPrice": gas_price,
             "chainId": config["chain_id"],
-        })
+            "value": 0,
+        }
         signed = w3.eth.account.sign_transaction(tx, relayer_key)
         raw = getattr(signed, 'raw_transaction', getattr(signed, 'rawTransaction', None))
         tx_hash = w3.eth.send_raw_transaction(raw)
