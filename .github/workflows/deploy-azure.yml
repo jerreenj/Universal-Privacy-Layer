@@ -60,7 +60,7 @@ jobs:
       # ─── 4. Build & tag the image ──────────────────────────────────────────
       - name: Build image
         run: |
-          docker build \
+          docker build --no-cache \
             -t ${{ vars.ACR_NAME }}.azurecr.io/privacycloak:${{ env.IMAGE_TAG }} \
             -t ${{ vars.ACR_NAME }}.azurecr.io/privacycloak:latest \
             .
