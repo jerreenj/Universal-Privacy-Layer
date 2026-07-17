@@ -3674,10 +3674,13 @@ async def confidential_note_seed(request: NoteSeedRequest):
 
         nonce_tx = w3.eth.get_transaction_count(relayer_addr)
         gas_price = w3.eth.gas_price
-        # Encode the seedNote call manually to avoid gas estimation
-        # which can revert on some RPC nodes.
-        seed_selector = Web3.keccak(text="seedNote(bytes32)")[:4]
-        seed_calldata_raw = seed_selector + commitment_bytes
+        # Encode the seedNote call using the contract ABI
+        # (avoids manual selector computation which produced wrong bytes)
+        seed_contract = w3.eth.contract(
+            address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
+            abi=[{"inputs":[{"name":"commitment","type":"bytes32"}],"name":"seedNote","outputs":[],"stateMutability":"nonpayable","type":"function"}],
+        )
+        seed_calldata_raw = seed_contract.encode_abi("seedNote", args=[commitment_bytes])
         tx = {
             "from": relayer_addr,
             "to": Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
