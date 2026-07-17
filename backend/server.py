@@ -3628,14 +3628,12 @@ async def confidential_note_seed(request: NoteSeedRequest):
         relayer_addr = Account.from_key(relayer_key).address
         depth = 20
 
-        # Build seedNote(bytes32) call
+        # Build seedNote(bytes32) call — selector HARDCODED to avoid
+        # any web3.py encoding bugs. seedNote(bytes32) = 0x86d185a3
         commitment_int = int(request.commitment)
-        # Convert to bytes32 — the contract expects bytes32, not uint256
         commitment_bytes = commitment_int.to_bytes(32, "big")
-        seed_calldata = w3.eth.contract(
-            address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
-            abi=[{"inputs":[{"name":"commitment","type":"bytes32"}],"name":"seedNote","outputs":[],"stateMutability":"nonpayable","type":"function"}],
-        )
+        SEED_SELECTOR_HEX = "86d185a3"
+        seed_calldata_raw = "0x" + SEED_SELECTOR_HEX + commitment_bytes.hex()
 
         # Read zero hashes + filledSubtrees BEFORE the insert.
         # MINIMIZE RPC calls to avoid 429 rate limiting.
@@ -3674,10 +3672,6 @@ async def confidential_note_seed(request: NoteSeedRequest):
 
         nonce_tx = w3.eth.get_transaction_count(relayer_addr)
         gas_price = w3.eth.gas_price
-        # Hardcode the correct seedNote selector — the dynamic computation
-        # was producing wrong bytes. seedNote(bytes32) = 0x86d185a3
-        SEED_SELECTOR = bytes.fromhex("86d185a3")
-        seed_calldata_raw = "0x" + (SEED_SELECTOR + commitment_bytes).hex()
         tx = {
             "from": relayer_addr,
             "to": Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
