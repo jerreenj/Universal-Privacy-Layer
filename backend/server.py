@@ -3620,6 +3620,7 @@ async def confidential_note_seed(request: NoteSeedRequest):
 
         w3 = get_w3("base")
         relayer_addr = Account.from_key(relayer_key).address
+        depth = 20
 
         # Build seedNote(bytes32) call
         commitment_int = int(request.commitment)
@@ -3629,6 +3630,29 @@ async def confidential_note_seed(request: NoteSeedRequest):
             address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
             abi=[{"inputs":[{"name":"commitment","type":"bytes32"}],"name":"seedNote","outputs":[],"stateMutability":"nonpayable","type":"function"}],
         )
+
+        # Read zero hashes + filledSubtrees BEFORE the insert — for
+        # right-child levels, the sibling is the pre-insert filledSubtrees
+        # value. After the insert, it's reset to zeros.
+        notes_contract_pre = w3.eth.contract(
+            address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
+            abi=_NOTES_ABI,
+        )
+        pre_next = notes_contract_pre.functions.nextLeafIndex().call()
+        zeros = []
+        for i in range(depth + 1):
+            try:
+                z = notes_contract_pre.functions.zeros(i).call()
+                zeros.append(int.from_bytes(z, "big"))
+            except:
+                zeros.append(0)
+        pre_filled = []
+        for i in range(depth):
+            try:
+                fs = notes_contract_pre.functions.filledSubtrees(i).call()
+                pre_filled.append(int.from_bytes(fs, "big"))
+            except:
+                pre_filled.append(0)
 
         nonce_tx = w3.eth.get_transaction_count(relayer_addr)
         gas_price = w3.eth.gas_price
@@ -3653,16 +3677,10 @@ async def confidential_note_seed(request: NoteSeedRequest):
 
         if receipt["status"] == 1:
             await _increment_relayer_tx_count()
-            # Read the leaf index (nextLeafIndex was incremented by seedNote)
-            notes_contract = w3.eth.contract(
-                address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
-                abi=_NOTES_ABI,
-            )
-            new_next = notes_contract.functions.nextLeafIndex().call()
-            leaf_index = new_next - 1  # the leaf we just inserted
-            new_root = notes_contract.functions.currentRoot().call()
+            leaf_index = pre_next  # the leaf we just inserted (pre-insert nextLeafIndex = our index)
+            new_root = notes_contract_pre.functions.currentRoot().call()
 
-            # Store the leaf in MongoDB for Merkle path computation
+            # Store the leaf in MongoDB
             await db.note_leaves.insert_one({
                 "index": int(leaf_index),
                 "commitment_int": str(commitment_int),
@@ -3670,39 +3688,20 @@ async def confidential_note_seed(request: NoteSeedRequest):
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
 
-            # Compute the Merkle path for THIS leaf directly
-            depth = 20
-            zeros = []
-            for i in range(depth + 1):
-                try:
-                    z = notes_contract.functions.zeros(i).call()
-                    zeros.append(int.from_bytes(z, "big"))
-                except:
-                    zeros.append(0)
-
+            # Compute the Merkle path using PRE-INSERT filledSubtrees
             merkle_path_elements = ["0"] * depth
             merkle_path_indices = ["0"] * depth
             for level in range(depth):
                 bit = (leaf_index >> level) & 1
                 merkle_path_indices[level] = str(bit)
                 if bit == 0:
-                    # Left child — sibling is the right subtree (zeros[level])
+                    # Left child — sibling is the right subtree = zeros[level]
                     merkle_path_elements[level] = str(zeros[level])
                 else:
-                    # Right child — sibling is the left subtree (filledSubtrees[level])
-                    # BUT: filledSubtrees has been reset to zeros after the insert.
-                    # The correct sibling was the PRE-insert value.
-                    # For the first right child at a level, that's zeros[level].
-                    # For subsequent right children, it's the previous left subtree
-                    # which we'd need to track. For now, use zeros (correct for
-                    # the first few inserts).
-                    merkle_path_elements[level] = str(zeros[level])
+                    # Right child — sibling is the LEFT subtree = pre-insert filledSubtrees[level]
+                    merkle_path_elements[level] = str(pre_filled[level])
         else:
-            notes_contract = w3.eth.contract(
-                address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
-                abi=_NOTES_ABI,
-            )
-            new_root = notes_contract.functions.currentRoot().call()
+            new_root = notes_contract_pre.functions.currentRoot().call()
             leaf_index = None
             merkle_path_elements = None
             merkle_path_indices = None
