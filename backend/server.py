@@ -130,7 +130,7 @@ def get_w3(chain_key: str):
         cfg = CHAIN_CONFIG.get(chain_key) if "CHAIN_CONFIG" in globals() else None
         rpc_url = (cfg or {}).get("rpc_url")
         if not rpc_url and chain_key == "base":
-            rpc_url = os.environ.get("BASE_RPC_URL", "https://mainnet.base.org")
+            rpc_url = os.environ.get("BASE_RPC_URL", "https://base.publicnode.com")
         if not rpc_url:
             raise HTTPException(status_code=400, detail=f"Unknown chain: {chain_key}")
         w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 10}))
@@ -3637,28 +3637,40 @@ async def confidential_note_seed(request: NoteSeedRequest):
             abi=[{"inputs":[{"name":"commitment","type":"bytes32"}],"name":"seedNote","outputs":[],"stateMutability":"nonpayable","type":"function"}],
         )
 
-        # Read zero hashes + filledSubtrees BEFORE the insert — for
-        # right-child levels, the sibling is the pre-insert filledSubtrees
-        # value. After the insert, it's reset to zeros.
+        # Read zero hashes + filledSubtrees BEFORE the insert.
+        # MINIMIZE RPC calls to avoid 429 rate limiting.
+        # Zero hashes are constant — cache them in a module-level
+        # variable after the first read.
+        global _cached_zeros
         notes_contract_pre = w3.eth.contract(
             address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
             abi=_NOTES_ABI,
         )
         pre_next = notes_contract_pre.functions.nextLeafIndex().call()
-        zeros = []
-        for i in range(depth + 1):
-            try:
-                z = notes_contract_pre.functions.zeros(i).call()
-                zeros.append(int.from_bytes(z, "big"))
-            except:
-                zeros.append(0)
-        pre_filled = []
-        for i in range(depth):
-            try:
-                fs = notes_contract_pre.functions.filledSubtrees(i).call()
-                pre_filled.append(int.from_bytes(fs, "big"))
-            except:
-                pre_filled.append(0)
+
+        # Read zeros only once (they never change after deploy)
+        if '_cached_zeros' not in globals() or not _cached_zeros:
+            _cached_zeros = []
+            for i in range(depth + 1):
+                try:
+                    z = notes_contract_pre.functions.zeros(i).call()
+                    _cached_zeros.append(int.from_bytes(z, "big"))
+                except:
+                    _cached_zeros.append(0)
+        zeros = _cached_zeros
+
+        # Only read filledSubtrees for levels where the leaf index
+        # has a right-child bit — skip the rest (they're zeros).
+        # This reduces 20 RPC calls to ~2-3 for early indices.
+        pre_filled = [0] * depth
+        for level in range(depth):
+            bit = (pre_next >> level) & 1
+            if bit == 1:
+                try:
+                    fs = notes_contract_pre.functions.filledSubtrees(level).call()
+                    pre_filled[level] = int.from_bytes(fs, "big")
+                except:
+                    pre_filled[level] = zeros[level]
 
         nonce_tx = w3.eth.get_transaction_count(relayer_addr)
         gas_price = w3.eth.gas_price
