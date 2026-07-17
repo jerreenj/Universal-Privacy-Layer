@@ -30,16 +30,36 @@ export function loadSnarkjs() {
 }
 
 // Lazily load circomlibjs for Poseidon (also a UMD bundle at public/zk-pool/).
+// circomlibjs uses WASM internally — buildPoseidon() returns a Promise
+// that resolves when the WASM module is ready.
 let _circomlibPromise = null;
 export function loadCircomlib() {
   if (_circomlibPromise) return _circomlibPromise;
   _circomlibPromise = new Promise((resolve, reject) => {
     if (typeof window === "undefined") return reject(new Error("circomlibjs requires browser"));
-    if (window.circomlibjs) return resolve(window.circomlibjs);
+    // Already loaded?
+    if (window.circomlibjs && typeof window.circomlibjs.buildPoseidon === "function") {
+      resolve(window.circomlibjs);
+      return;
+    }
     const s = document.createElement("script");
     s.src = `${ZK_ASSETS_BASE}/circomlibjs.bundle.js`;
     s.async = true;
-    s.onload = () => resolve(window.circomlibjs);
+    s.onload = () => {
+      // The UMD bundle assigns window.circomlibjs synchronously
+      // when the script executes. But some UMD wrappers need a
+      // microtask to settle. Try immediately, then retry.
+      const tryResolve = (attempts) => {
+        if (window.circomlibjs && typeof window.circomlibjs.buildPoseidon === "function") {
+          resolve(window.circomlibjs);
+        } else if (attempts > 0) {
+          setTimeout(() => tryResolve(attempts - 1), 50);
+        } else {
+          reject(new Error("circomlibjs loaded but buildPoseidon not found. window.circomlibjs: " + typeof window.circomlibjs));
+        }
+      };
+      tryResolve(5); // 5 retries × 50ms = 250ms max wait
+    };
     s.onerror = () => reject(new Error("Failed to load /zk-pool/circomlibjs.bundle.js"));
     document.head.appendChild(s);
   });
