@@ -3623,6 +3623,8 @@ async def confidential_note_seed(request: NoteSeedRequest):
 
         # Build seedNote(bytes32) call
         commitment_int = int(request.commitment)
+        # Convert to bytes32 — the contract expects bytes32, not uint256
+        commitment_bytes = commitment_int.to_bytes(32, "big")
         seed_calldata = w3.eth.contract(
             address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
             abi=[{"inputs":[{"name":"commitment","type":"bytes32"}],"name":"seedNote","outputs":[],"stateMutability":"nonpayable","type":"function"}],
@@ -3630,7 +3632,7 @@ async def confidential_note_seed(request: NoteSeedRequest):
 
         nonce_tx = w3.eth.get_transaction_count(relayer_addr)
         gas_price = w3.eth.gas_price
-        tx = seed_calldata.functions.seedNote(commitment_int).build_transaction({
+        tx = seed_calldata.functions.seedNote(commitment_bytes).build_transaction({
             "from": relayer_addr,
             "nonce": nonce_tx,
             "gas": 200000,
