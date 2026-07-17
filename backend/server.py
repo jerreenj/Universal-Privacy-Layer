@@ -3635,7 +3635,7 @@ async def confidential_note_seed(request: NoteSeedRequest):
         tx = seed_calldata.functions.seedNote(commitment_bytes).build_transaction({
             "from": relayer_addr,
             "nonce": nonce_tx,
-            "gas": 200000,
+            "gas": 1000000,
             "gasPrice": gas_price,
             "chainId": config["chain_id"],
         })
@@ -3757,7 +3757,7 @@ async def confidential_note_submit(request: NoteSubmitRequest):
         tx = notes.functions.createNote(proofA, proofB, proofC, pubSignals).build_transaction({
             "from": relayer_addr,
             "nonce": nonce_tx,
-            "gas": 400000,
+            "gas": 1000000,
             "gasPrice": gas_price,
             "chainId": config["chain_id"],
         })
