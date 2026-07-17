@@ -3519,7 +3519,7 @@ async def confidential_note_state():
             
             for leaf_doc in all_leaves:
                 idx = leaf_doc["index"]
-                current = leaf_doc["commitment_int"]
+                current = int(leaf_doc["commitment_int"])
                 for level in range(depth):
                     is_right = (idx >> level) & 1
                     if is_right:
@@ -3664,8 +3664,8 @@ async def confidential_note_seed(request: NoteSeedRequest):
 
             # Store the leaf in MongoDB for Merkle path computation
             await db.note_leaves.insert_one({
-                "index": leaf_index,
-                "commitment_int": commitment_int,
+                "index": int(leaf_index),
+                "commitment_int": str(commitment_int),
                 "tx_hash": tx_hash.hex(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
