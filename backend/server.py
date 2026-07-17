@@ -420,7 +420,7 @@ CHAIN_CONFIG = {
     "base": {
         "name": "Base",
         "chain_id": 8453,
-        "rpc_url": "https://mainnet.base.org",
+        "rpc_url": "https://base.publicnode.com",
         "explorer": "https://basescan.org",
         "symbol": "ETH",
         "color": "#0052FF",
@@ -7858,7 +7858,7 @@ async def swap_reverse_relay(request: ReverseSwapRelayRequest):
                 detail="Relayer wallet not configured. Set RELAYER_PRIVATE_KEY or drop scripts/.relayer-hot-wallet.txt.",
             )
 
-        rpc = CHAIN_CONFIG.get("base", {}).get("rpc_url", "https://mainnet.base.org")
+        rpc = CHAIN_CONFIG.get("base", {}).get("rpc_url", "https://base.publicnode.com")
         w3 = Web3(Web3.HTTPProvider(rpc))
         if not w3.is_connected():
             raise HTTPException(status_code=503, detail="Base RPC unreachable")
