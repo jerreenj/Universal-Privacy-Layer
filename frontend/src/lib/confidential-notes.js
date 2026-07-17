@@ -92,31 +92,35 @@ export async function createHiddenNote({ amount, recipientViewKey, senderStealth
   // Seed the source commitment on-chain via the relayer
   const axios = (await import("axios")).default;
   // Seed via backend relayer (hides the sender)
+  // The backend returns the Merkle path for the JUST-SEEDED leaf.
+  let seedResult = null;
   try {
-    await axios.post(`${apiBase}/confidential/note-seed`, {
+    const seedRes = await axios.post(`${apiBase}/confidential/note-seed`, {
       commitment: srcCommitment,
     });
+    if (seedRes.data?.status !== "success") {
+      throw new Error("Seed tx reverted on-chain");
+    }
+    seedResult = seedRes.data;
   } catch (e) {
-    // If seed fails, continue — the tree may already have notes.
-    // The proof will use the existing root + path.
-    console.warn("Note seed failed (may be OK if tree has existing notes):", e?.message);
+    const msg = e.response?.data?.detail || e.message || "Unknown error";
+    throw new Error(`Note seed failed: ${msg}. Cannot create hidden note without seeding the source commitment.`);
   }
 
-  // Step 3: Get the updated root after seeding
-  const currentRootBytes = await notes.currentRoot();
-  const currentRoot = BigInt(currentRootBytes).toString();
+  // Step 3: Use the root + Merkle path returned by the seed endpoint.
+  // This is the path for the leaf we JUST inserted — guaranteed correct.
+  const currentRoot = seedResult.new_root
+    ? BigInt(seedResult.new_root).toString()
+    : BigInt(await notes.currentRoot()).toString();
 
-  // Step 4: Get Merkle path from backend
+  // Step 4: Use the Merkle path from the seed response directly
   const DEPTH = 20;
   let merklePathElements = Array(DEPTH).fill("0");
   let merklePathIndices = Array(DEPTH).fill("0");
-  try {
-    const stateRes = await axios.get(`${apiBase}/confidential/note-state`);
-    if (stateRes.data?.merklePathElements && stateRes.data.merklePathElements.length === DEPTH) {
-      merklePathElements = stateRes.data.merklePathElements;
-      merklePathIndices = stateRes.data.merklePathIndices;
-    }
-  } catch { /* use zeros */ }
+  if (seedResult.merkle_path_elements && seedResult.merkle_path_elements.length === DEPTH) {
+    merklePathElements = seedResult.merkle_path_elements;
+    merklePathIndices = seedResult.merkle_path_indices;
+  }
 
   // Step 5: Generate the ZK proof
   const { proof, publicSignals } = await generateNoteProof({

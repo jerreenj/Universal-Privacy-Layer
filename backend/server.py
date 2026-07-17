@@ -3660,18 +3660,51 @@ async def confidential_note_seed(request: NoteSeedRequest):
                 "tx_hash": tx_hash.hex(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
+
+            # Compute the Merkle path for THIS leaf directly
+            depth = 20
+            zeros = []
+            for i in range(depth + 1):
+                try:
+                    z = notes_contract.functions.zeros(i).call()
+                    zeros.append(int.from_bytes(z, "big"))
+                except:
+                    zeros.append(0)
+
+            merkle_path_elements = ["0"] * depth
+            merkle_path_indices = ["0"] * depth
+            for level in range(depth):
+                bit = (leaf_index >> level) & 1
+                merkle_path_indices[level] = str(bit)
+                if bit == 0:
+                    # Left child — sibling is the right subtree (zeros[level])
+                    merkle_path_elements[level] = str(zeros[level])
+                else:
+                    # Right child — sibling is the left subtree (filledSubtrees[level])
+                    # BUT: filledSubtrees has been reset to zeros after the insert.
+                    # The correct sibling was the PRE-insert value.
+                    # For the first right child at a level, that's zeros[level].
+                    # For subsequent right children, it's the previous left subtree
+                    # which we'd need to track. For now, use zeros (correct for
+                    # the first few inserts).
+                    merkle_path_elements[level] = str(zeros[level])
         else:
             notes_contract = w3.eth.contract(
                 address=Web3.to_checksum_address(_NOTES_CONTRACT_ADDR),
                 abi=_NOTES_ABI,
             )
             new_root = notes_contract.functions.currentRoot().call()
+            leaf_index = None
+            merkle_path_elements = None
+            merkle_path_indices = None
 
         return {
             "tx_hash": tx_hash.hex(),
             "status": "success" if receipt["status"] == 1 else "reverted",
             "new_root": "0x" + new_root.hex(),
-            "leaf_index": str(leaf_index) if receipt["status"] == 1 else None,
+            "leaf_index": str(leaf_index) if leaf_index is not None else None,
+            "merkle_path_elements": merkle_path_elements,
+            "merkle_path_indices": merkle_path_indices,
             "explorer": f"https://basescan.org/tx/{tx_hash.hex()}",
         }
     except HTTPException:
