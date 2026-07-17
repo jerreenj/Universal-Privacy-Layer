@@ -3454,7 +3454,7 @@ async def swap_native_relay_eth(request: NativeSwapEthRelayRequest):
 # moves on-chain. Only hashes are recorded. The amount is hidden
 # between Privacy Cloak users.
 
-_NOTES_CONTRACT_ADDR = "0xd590df2ac8f4fd5fbd5ebd67e7c8f0838784128f"
+_NOTES_CONTRACT_ADDR = "0x84f51f9db1d251792b5b585f6034379af9b33255"
 _NOTES_VERIFIER_ADDR = "0x4F4cEC449297975c5b46347dB818b03dEe813aE0"
 
 _NOTES_ABI = json.loads(
@@ -3582,6 +3582,12 @@ async def confidential_note_state():
             "merkle_depth": depth,
             "merkle_path_elements": merkle_path_elements,
             "merkle_path_indices": merkle_path_indices,
+            # Return all leaves so the frontend can compute the path
+            # using circomlibjs Poseidon (which we can't do in Python).
+            # The frontend replays the tree insert algorithm to get
+            # the correct path for any leaf.
+            "zeros": [str(z) for z in zeros] if 'zeros' in dir() else [],
+            "leaves": [],
         }
     except Exception as e:
         logger.error(f"note-state error: {e}")
