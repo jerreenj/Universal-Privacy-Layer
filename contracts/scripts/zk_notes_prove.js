@@ -88,10 +88,8 @@ const fs = require("fs");
     merklePathIndices: new Array(MERKLE_DEPTH).fill('0'),
   };
 
-  const wasmPath = path.join(__dirname, "..", "circuits", "build",
-    "confidential_notes_build", "confidential_notes_js", "confidential_notes.wasm");
-  const zkeyPath = path.join(__dirname, "..", "circuits", "build",
-    "confidential_notes_build", "notes_final.zkey");
+  const wasmPath = path.join(__dirname, "..", "..", "frontend", "public", "zk-pool", "confidential_notes.wasm");
+  const zkeyPath = path.join(__dirname, "..", "..", "frontend", "public", "zk-pool", "notes_final.zkey");
 
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, wasmPath, zkeyPath);
 
@@ -110,8 +108,7 @@ const fs = require("fs");
   const c1 = proof.pi_c[1].toString();
 
   // Verify the proof is valid before emitting constants
-  const vkeyPath2 = path.join(__dirname, "..", "circuits", "build",
-    "confidential_notes_build", "notes_verification_key.json");
+  const vkeyPath2 = path.join(__dirname, "..", "..", "frontend", "public", "zk-pool", "notes_verification_key.json");
   const vkey2 = JSON.parse(fs.readFileSync(vkeyPath2, "utf8"));
   const isValid = await snarkjs.groth16.verify(vkey2, publicSignals, proof);
   console.error("Proof valid:", isValid);
