@@ -3821,6 +3821,15 @@ class NoteSettleRequest(BaseModel):
     proof_b: Optional[List[List[str]]] = None
     proof_c: Optional[List[str]] = None
     pub_signals: Optional[List[str]] = None
+    # Permit-based settle (P6-primary path): sender's stealth address
+    # signed an EIP-2612 permit authorising the relayer as spender.
+    # Relayer submits permit() + transferFrom() — sender's stealth
+    # USDC pays; relayer only pays gas. No USDC needed from relayer.
+    sender_stealth: Optional[str] = None
+    permit_v: Optional[int] = None
+    permit_r: Optional[str] = None   # hex bytes32 (0x-prefixed)
+    permit_s: Optional[str] = None   # hex bytes32 (0x-prefixed)
+    permit_deadline: Optional[int] = None  # unix seconds
 
 
 # NoteSettlement contract on Base mainnet
@@ -3869,6 +3878,113 @@ async def confidential_note_settle(request: NoteSettleRequest):
         relayer_addr = Account.from_key(relayer_key).address
         amount_int = int(request.amount)
         gas_price = w3.eth.gas_price
+
+        # ── PATH 2A: Permit-based settle (PRIMARY) ──────────────────────────
+        # Sender's stealth address holds the USDC. Sender signed an EIP-2612
+        # permit authorising the relayer as spender. Relayer submits:
+        #   tx1: USDC.permit(senderStealth, relayer, amount, deadline, v, r, s)
+        #   tx2: USDC.transferFrom(senderStealth, recipient, amount)
+        # Sender's stealth USDC pays. Relayer pays gas only.
+        has_permit = (
+            request.sender_stealth is not None
+            and request.permit_v is not None
+            and request.permit_r is not None
+            and request.permit_s is not None
+            and request.permit_deadline is not None
+        )
+
+        if has_permit:
+            sender_stealth = Web3.to_checksum_address(request.sender_stealth)
+
+            # MongoDB double-spend guard
+            nullifier_hash_permit = Web3.keccak(request.nullifier.encode()).hex()
+            existing_permit = await db.note_settlements.find_one({"nullifier_hash": nullifier_hash_permit})
+            if existing_permit:
+                raise HTTPException(status_code=400, detail="Note already settled")
+
+            USDC_PERMIT_SETTLE_ABI = json.loads(
+                '[{"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"},'
+                '{"name":"value","type":"uint256"},{"name":"deadline","type":"uint256"},'
+                '{"name":"v","type":"uint8"},{"name":"r","type":"bytes32"},'
+                '{"name":"s","type":"bytes32"}],"name":"permit","outputs":[],'
+                '"stateMutability":"nonpayable","type":"function"},'
+                '{"inputs":[{"name":"from","type":"address"},{"name":"to","type":"address"},'
+                '{"name":"value","type":"uint256"}],"name":"transferFrom",'
+                '"outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}]'
+            )
+            usdc_permit = w3.eth.contract(address=USDC_BASE, abi=USDC_PERMIT_SETTLE_ABI)
+
+            def _hex32(h: str) -> bytes:
+                raw = h[2:] if h.startswith("0x") else h
+                raw = raw.zfill(64)
+                return bytes.fromhex(raw)
+
+            nonce_tx_p = w3.eth.get_transaction_count(relayer_addr)
+
+            # tx1: record the permit authorisation on-chain
+            permit_tx = usdc_permit.functions.permit(
+                sender_stealth, relayer_addr, amount_int,
+                request.permit_deadline,
+                request.permit_v,
+                _hex32(request.permit_r),
+                _hex32(request.permit_s),
+            ).build_transaction({
+                "from": relayer_addr,
+                "nonce": nonce_tx_p,
+                "gas": 100000,
+                "gasPrice": gas_price,
+                "chainId": config["chain_id"],
+            })
+            signed_permit_tx = w3.eth.account.sign_transaction(permit_tx, relayer_key)
+            raw_permit = getattr(signed_permit_tx, 'raw_transaction',
+                                getattr(signed_permit_tx, 'rawTransaction', None))
+            permit_hash = w3.eth.send_raw_transaction(raw_permit)
+            receipt_permit = w3.eth.wait_for_transaction_receipt(permit_hash, timeout=120)
+
+            if receipt_permit["status"] != 1:
+                raise HTTPException(status_code=500, detail="Permit authorization failed on-chain")
+
+            # tx2: relayer (as spender) transfers USDC senderStealth → recipient
+            nonce_tx_p += 1
+            transfer_tx = usdc_permit.functions.transferFrom(
+                sender_stealth, recipient, amount_int,
+            ).build_transaction({
+                "from": relayer_addr,
+                "nonce": nonce_tx_p,
+                "gas": 150000,
+                "gasPrice": gas_price,
+                "chainId": config["chain_id"],
+            })
+            signed_transfer_tx = w3.eth.account.sign_transaction(transfer_tx, relayer_key)
+            raw_transfer = getattr(signed_transfer_tx, 'raw_transaction',
+                                  getattr(signed_transfer_tx, 'rawTransaction', None))
+            transfer_hash = w3.eth.send_raw_transaction(raw_transfer)
+            receipt_transfer = w3.eth.wait_for_transaction_receipt(transfer_hash, timeout=120)
+
+            if receipt_transfer["status"] != 1:
+                raise HTTPException(status_code=500, detail="Transfer failed on-chain (sender stealth may lack USDC)")
+
+            await db.note_settlements.insert_one({
+                "nullifier_hash": nullifier_hash_permit,
+                "recipient": recipient.lower(),
+                "sender_stealth": sender_stealth.lower(),
+                "amount": str(amount_int),
+                "permit_tx": permit_hash.hex(),
+                "transfer_tx": transfer_hash.hex(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            await _increment_relayer_tx_count()
+            await _increment_relayer_tx_count()
+
+            return {
+                "tx_hash": transfer_hash.hex(),
+                "permit_tx_hash": permit_hash.hex(),
+                "status": "success",
+                "recipient": recipient.lower(),
+                "amount": str(amount_int),
+                "on_chain_verification": False,
+                "explorer": f"https://basescan.org/tx/{transfer_hash.hex()}",
+            }
 
         # Check if ZK proof is provided for on-chain verification
         has_proof = (

@@ -170,19 +170,77 @@ export async function createHiddenNote({ amount, recipientViewKey, senderStealth
  * The amount IS visible at settlement (architectural limit) but
  * the settlement tx is detached from the note creation tx.
  *
+ * Uses EIP-2612 permit: sender's stealth key signs authorisation
+ * for the relayer to transferFrom(senderStealth, recipient, amount).
+ * Sender's stealth USDC pays — relayer only pays gas.
+ *
  * @param {object} opts
  * @param {string} opts.nullifier — note's nullifier (from witness)
  * @param {string} opts.secret — note's secret (from witness)
  * @param {string} opts.amount — raw amount (6-decimal USDC)
  * @param {string} opts.recipient — fresh stealth address to receive USDC
+ * @param {string} opts.senderStealthPrivateKey — sender's stealth private key (hex, no 0x)
  * @param {string} opts.apiBase — backend API URL
- * @returns {Promise<{settleTxHash}>}
+ * @returns {Promise<{settleTxHash, permitTxHash}>}
  */
-export async function autoSettleNote({ nullifier, secret, amount, recipient, apiBase }) {
+export async function autoSettleNote({ nullifier, secret, amount, recipient, senderStealthPrivateKey, apiBase }) {
   const axios = (await import("axios")).default;
 
-  // Generate the spend ZK proof in-browser
-  // nullifierHash = Poseidon(nullifier) — computed by the circuit
+  // Derive sender stealth address from private key (used as permit owner)
+  const pk = senderStealthPrivateKey.startsWith("0x")
+    ? senderStealthPrivateKey
+    : "0x" + senderStealthPrivateKey;
+  const stealthWallet = new ethers.Wallet(pk);
+  const senderStealth = stealthWallet.address;
+
+  // Fetch the current relayer hot-wallet address (= spender in permit)
+  const stateRes = await axios.get(`${apiBase}/relayer/state`);
+  const spender = stateRes.data?.current_relayer_address;
+  if (!spender) {
+    throw new Error("Backend relayer/state returned no address — relayer not configured");
+  }
+
+  // Read USDC nonce + name + version via raw fetch (same pattern as SendContent
+  // sendUsdcViaPermit — avoids ethers CORS failures on some Base RPCs)
+  const { readUsdcNonce, readUsdcName, readUsdcVersion } = await import("@/lib/balance-reader");
+  const [nonce, name, version] = await Promise.all([
+    readUsdcNonce(senderStealth),
+    readUsdcName().catch(() => "USD Coin"),
+    readUsdcVersion().catch(() => "2"),
+  ]);
+
+  const deadline = Math.floor(Date.now() / 1000) + 600; // 10 min
+  const USDC_ADDR = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+  const domain = {
+    name,
+    version,
+    chainId: 8453,
+    verifyingContract: USDC_ADDR,
+  };
+  const types = {
+    Permit: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "nonce", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+  };
+  const message = {
+    owner: senderStealth,
+    spender,
+    value: amount,
+    nonce: nonce.toString(),
+    deadline,
+  };
+
+  // Sign permit with sender's stealth key — silent, no wallet popup
+  const sig = await stealthWallet.signTypedData(domain, types, message);
+  const parsed = ethers.Signature.from(sig);
+
+  // Generate the spend ZK proof in-browser (best-effort; fallback to no proof
+  // if snarkjs/circomlibjs not loaded — settle still works via permit path)
   let proofData = {};
   try {
     const { loadCircomlib } = await import("@/lib/zk-browser");
@@ -212,9 +270,7 @@ export async function autoSettleNote({ nullifier, secret, amount, recipient, api
       pub_signals: publicSignals.map(String),
     };
   } catch (e) {
-    // If proof generation fails, fall back to no-proof settlement
-    // (MongoDB double-spend guard, relayer sends USDC directly)
-    console.warn("Spend proof generation failed, using fallback:", e?.message);
+    console.warn("Spend proof generation failed (permit settle still proceeds):", e?.message);
   }
 
   const res = await axios.post(`${apiBase}/confidential/note-settle`, {
@@ -222,9 +278,15 @@ export async function autoSettleNote({ nullifier, secret, amount, recipient, api
     secret,
     amount,
     recipient,
+    sender_stealth: senderStealth,
+    permit_v: parsed.v,
+    permit_r: parsed.r,
+    permit_s: parsed.s,
+    permit_deadline: deadline,
     ...proofData,
   });
-  return { settleTxHash: res.data.tx_hash };
+
+  return { settleTxHash: res.data.tx_hash, permitTxHash: res.data.permit_tx_hash };
 }
 
 /**
@@ -256,12 +318,15 @@ export async function sendWithHiddenAmount({
     apiBase,
   });
 
-  // Step 2: Auto-settle — send real USDC to the recipient
+  // Step 2: Auto-settle — send real USDC to the recipient via permit.
+  // Sender's stealth key signs the permit authorising the relayer; relayer
+  // submits permit() + transferFrom(). Sender's stealth USDC pays.
   const settleResult = await autoSettleNote({
     nullifier: noteResult.witness.nullifier,
     secret: noteResult.witness.secret,
     amount: noteResult.witness.amount,
     recipient: recipientAddress,
+    senderStealthPrivateKey,
     apiBase,
   });
 
