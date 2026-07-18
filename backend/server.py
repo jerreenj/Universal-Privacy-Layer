@@ -3454,8 +3454,8 @@ async def swap_native_relay_eth(request: NativeSwapEthRelayRequest):
 # moves on-chain. Only hashes are recorded. The amount is hidden
 # between Privacy Cloak users.
 
-_NOTES_CONTRACT_ADDR = "0x84f51f9db1d251792b5b585f6034379af9b33255"
-_NOTES_VERIFIER_ADDR = "0x4F4cEC449297975c5b46347dB818b03dEe813aE0"
+_NOTES_CONTRACT_ADDR = "0xfa656c13f2B1DE7d346F472ca87F8DBBD911ED09"
+_NOTES_VERIFIER_ADDR = "0x4C55c3ded9eA8b40Cd018E2b641f85a89285329C"
 
 _NOTES_ABI = json.loads(
     '[{"inputs":[{"name":"proofA","type":"uint256[2]"},{"name":"proofB","type":"uint256[2][2]"},'

@@ -20,7 +20,7 @@ import { ethers } from "ethers";
 import { generateNoteProof, generateSpendProof, randomFieldElement } from "@/lib/zk-browser";
 import { getAddressArchive, getViewKeyForArchiveEntry } from "@/lib/wallet-stealth";
 
-const NOTES_ADDR = "0x84f51f9db1d251792b5b585f6034379af9b33255";
+const NOTES_ADDR = "0xfa656c13f2B1DE7d346F472ca87F8DBBD911ED09";
 const NOTES_ABI = [
   "function createNote(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256[4] pubSignals) external",
   "function seedNote(bytes32 commitment) external",

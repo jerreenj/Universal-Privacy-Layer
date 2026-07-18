@@ -19,7 +19,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # --- backend/server.py: replace _NOTES_CONTRACT_ADDR + _NOTES_VERIFIER_ADDR ---
 server_py = REPO_ROOT / "backend" / "server.py"
-text = server_py.read_text()
+text = server_py.read_text(encoding="utf-8")
 
 old_notes_addr = re.search(r'_NOTES_CONTRACT_ADDR\s*=\s*"(0x[0-9a-fA-F]+)"', text)
 old_verifier_addr = re.search(r'_NOTES_VERIFIER_ADDR\s*=\s*"(0x[0-9a-fA-F]+)"', text)
@@ -34,22 +34,22 @@ if old_verifier_addr:
     text = text.replace(f'_NOTES_VERIFIER_ADDR = "{old_v}"', f'_NOTES_VERIFIER_ADDR = "{NEW_VERIFIER}"')
     print(f"  server.py: _NOTES_VERIFIER_ADDR  {old_v} -> {NEW_VERIFIER}")
 
-server_py.write_text(text)
+server_py.write_text(text, encoding="utf-8")
 
 # --- frontend/src/lib/confidential-notes.js: replace NOTES_ADDR ---
 notes_js = REPO_ROOT / "frontend" / "src" / "lib" / "confidential-notes.js"
-js_text = notes_js.read_text()
+js_text = notes_js.read_text(encoding="utf-8")
 old_js_addr = re.search(r'NOTES_ADDR\s*=\s*"(0x[0-9a-fA-F]+)"', js_text)
 if old_js_addr:
     old_j = old_js_addr.group(1)
     js_text = js_text.replace(f'NOTES_ADDR = "{old_j}"', f'NOTES_ADDR = "{NEW_NOTES}"')
     print(f"  confidential-notes.js: NOTES_ADDR  {old_j} -> {NEW_NOTES}")
-notes_js.write_text(js_text)
+notes_js.write_text(js_text, encoding="utf-8")
 
 # --- deployed_base.json: update confidential_notes + confidential_notes_verifier ---
 manifest = REPO_ROOT / "contracts" / "deployed_base.json"
 if manifest.exists():
-    data = json.loads(manifest.read_text())
+    data = json.loads(manifest.read_text(encoding="utf-8"))
     if "base" in data:
         old_cn = data["base"].get("confidential_notes", "<none>")
         data["base"]["confidential_notes"] = NEW_NOTES
@@ -57,6 +57,6 @@ if manifest.exists():
         old_cv = data["base"].get("confidential_notes_verifier", "<none>")
         data["base"]["confidential_notes_verifier"] = NEW_VERIFIER
         print(f"  deployed_base.json: confidential_notes_verifier  {old_cv} -> {NEW_VERIFIER}")
-    manifest.write_text(json.dumps(data, indent=2) + "\n")
+    manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 print("Done.")
