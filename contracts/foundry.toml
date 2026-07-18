@@ -42,4 +42,15 @@ fs_permissions = [
 # scripts/prove_withdraw_ffi.js for snarkjs proof generation.
 ffi = true
 
+# Snarkjs-generated verifiers are NOT formatted — exclude them from
+# `forge fmt --check` to avoid CI failures on every regeneration.
+[fmt]
+exclude = [
+    "src/ConfidentialNotesVerifier.sol",
+    "src/SpendVerifier.sol",
+    "src/ConfidentialTransferVerifier.sol",
+    "src/Verifier.sol",
+    "src/PoseidonT3.sol",
+]
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
