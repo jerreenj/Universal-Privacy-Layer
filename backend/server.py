@@ -5193,9 +5193,33 @@ async def _increment_relayer_tx_count():
 async def get_relayer_state():
     """Returns the current relayer wallet address, tx count, and
     rotation count. Useful for monitoring + knowing when the next
-    rotation will happen."""
+    rotation will happen.
+
+    If the in-memory state has no address yet (e.g. first boot before
+    MongoDB doc is populated), fall back to the address derived from
+    the same key source that the settle/send handlers use (env var or
+    hot-wallet keyfile). This is the authoritative relayer address.
+    """
+    address = _current_relayer_state.get("address")
+
+    # Fall back: derive address from the actual relayer key the backend will
+    # use. Without this, `/api/relayer/state` returns null on first boot and
+    # frontend EIP-2612 permits are signed with a null spender, causing permit
+    # authorisation to revert on-chain.
+    if not address:
+        fallback_key = (
+            os.environ.get("RELAYER_PRIVATE_KEY")
+            or _read_hot_wallet_keyfile()
+            or os.environ.get("DEPLOYER_PRIVATE_KEY")
+        )
+        if fallback_key:
+            try:
+                address = Account.from_key(fallback_key).address
+            except Exception:
+                address = None
+
     return {
-        "current_relayer_address": _current_relayer_state.get("address"),
+        "current_relayer_address": address,
         "tx_count": _current_relayer_state.get("tx_count", 0),
         "rotations": _current_relayer_state.get("rotations", 0),
         "rotation_threshold": RELAYER_ROTATION_THRESHOLD,
