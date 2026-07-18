@@ -3878,8 +3878,27 @@ async def confidential_note_settle(request: NoteSettleRequest):
             and request.pub_signals is not None
         )
 
+        # Pre-check: does NoteSettlement have enough USDC for PATH 1?
+        # If not, fall through to PATH 2 (direct transfer + MongoDB guard).
+        settlement_has_usdc = False
         if has_proof:
+            try:
+                USDC_ABI_MIN = json.loads(
+                    '[{"inputs":[{"name":"owner","type":"address"}],'
+                    '"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],'
+                    '"stateMutability":"view","type":"function"}]'
+                )
+                usdc_check = w3.eth.contract(address=USDC_BASE, abi=USDC_ABI_MIN)
+                settlement_bal = usdc_check.functions.balanceOf(
+                    Web3.to_checksum_address(_NOTE_SETTLEMENT_ADDR)
+                ).call()
+                settlement_has_usdc = settlement_bal >= amount_int
+            except Exception:
+                settlement_has_usdc = False
+
+        if has_proof and settlement_has_usdc:
             # PATH 1: On-chain ZK verification via NoteSettlement contract
+            # Only used when NoteSettlement is funded with USDC.
             settlement = w3.eth.contract(
                 address=Web3.to_checksum_address(_NOTE_SETTLEMENT_ADDR),
                 abi=_NOTE_SETTLEMENT_ABI,
