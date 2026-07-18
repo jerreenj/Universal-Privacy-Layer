@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {ConfidentialNotes} from "../src/ConfidentialNotes.sol";
-import {Groth16Verifier as ConfidentialNotesVerifier} from "../src/ConfidentialNotesVerifier.sol";
+import {ConfidentialNotesVerifier} from "../src/ConfidentialNotesVerifier.sol";
 import {PoseidonT3} from "../src/PoseidonT3.sol";
 
 /// @title ConfidentialNotes Test — real Groth16 proof, zero-leak

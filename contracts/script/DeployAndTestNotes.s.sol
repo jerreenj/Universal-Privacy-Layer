@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Script, console} from "forge-std/Script.sol";
 import {ConfidentialNotes} from "../src/ConfidentialNotes.sol";
-import {Groth16Verifier as ConfidentialNotesVerifier} from "../src/ConfidentialNotesVerifier.sol";
+import {ConfidentialNotesVerifier} from "../src/ConfidentialNotesVerifier.sol";
 
 /**
  * DeployAndTestNotes.s.sol

@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {ConfidentialNotes} from "../src/ConfidentialNotes.sol";
-import {Groth16Verifier} from "../src/ConfidentialNotesVerifier.sol";
+import {ConfidentialNotesVerifier} from "../src/ConfidentialNotesVerifier.sol";
 
 contract DeployNotesVerifier is Script {
     function run() external {
@@ -13,7 +13,7 @@ contract DeployNotesVerifier is Script {
         vm.startBroadcast(deployerPk);
 
         // 1. Deploy new verifier from current notes_final.zkey
-        Groth16Verifier verifier = new Groth16Verifier();
+        ConfidentialNotesVerifier verifier = new ConfidentialNotesVerifier();
         console2.log("ConfidentialNotesVerifier:", address(verifier));
 
         // 2. Deploy ConfidentialNotes with new verifier

@@ -33,7 +33,7 @@ pragma solidity ^0.8.20;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {PoseidonT3} from "./PoseidonT3.sol";
-import {Groth16Verifier as ConfidentialNotesVerifier} from "./ConfidentialNotesVerifier.sol";
+import {ConfidentialNotesVerifier} from "./ConfidentialNotesVerifier.sol";
 
 contract ConfidentialNotes is Ownable, ReentrancyGuard {
     using PoseidonT3 for *;

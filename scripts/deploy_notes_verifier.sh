@@ -88,7 +88,7 @@ log "Broadcasting DeployNotesVerifier.s.sol..."
 BROADCAST_JSON="${CONTRACTS_DIR}/broadcast/DeployNotesVerifier.s.sol/8453/run-latest.json"
 [ -f "${BROADCAST_JSON}" ] || die "Broadcast JSON not found at ${BROADCAST_JSON}."
 
-NEW_VERIFIER_ADDR="$(grep -A1 '"contractName": "Groth16Verifier"' "${BROADCAST_JSON}" \
+NEW_VERIFIER_ADDR="$(grep -A1 '"contractName": "ConfidentialNotesVerifier"' "${BROADCAST_JSON}" \
     | grep '"contractAddress"' | sed 's/.*: "\(0x[0-9a-fA-F]*\)".*/\1/' | head -1)"
 NEW_NOTES_ADDR="$(grep -A1 '"contractName": "ConfidentialNotes"' "${BROADCAST_JSON}" \
     | grep '"contractAddress"' | sed 's/.*: "\(0x[0-9a-fA-F]*\)".*/\1/' | head -1)"
