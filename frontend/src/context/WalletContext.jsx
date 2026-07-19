@@ -58,6 +58,20 @@ const MOBILE_WALLET_LINKS = {
       android: "https://play.google.com/store/apps/details?id=com.wallet.crypto.trustapp",
     },
   },
+  phantom: {
+    // Phantom supports opening a dapp in its in-app browser via
+    // a custom scheme and a universal link. Works on both iOS and
+    // Android. If the app isn't installed, the install-toast directs
+    // the user to phantom.app which has both store links.
+    universal: (dapp) =>
+      `https://phantom.app/ul/browse/${dapp}?ref=${encodeURIComponent(dapp)}`,
+    scheme: (dapp) =>
+      `phantom://browse/${dapp}`,
+    install: {
+      ios: "https://apps.apple.com/app/phantom/id1598432977",
+      android: "https://play.google.com/store/apps/details?id=app.phantom",
+    },
+  },
   rainbow: {
     // Rainbow: uses their own universal link format.
     universal: (dapp) =>
