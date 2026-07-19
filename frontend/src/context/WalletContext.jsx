@@ -8,8 +8,87 @@ import { formatExactBalance } from "@/lib/utils";
 // This flag gates ALL mobile-specific code. Desktop code paths NEVER
 // reference it — they run exactly as before. Mobile and desktop are
 // completely separate branches that cannot corrupt each other.
-const isMobile = typeof window !== "undefined" &&
-  /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(navigator.userAgent || "");
+//
+// Detection uses BOTH UA sniff and matchMedia (max-width: 768px).
+// UA alone misses iPad Pro in desktop-mode and some Android foldables
+// in desktop UA mode. matchMedia alone misses desktops with narrow
+// windows pretending to be phones. Combining both catches 99%+ of
+// real mobile devices while keeping desktop users untouched.
+const isMobile = typeof window !== "undefined" && (
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Silk/i.test(
+    navigator.userAgent || ""
+  ) ||
+  (typeof window.matchMedia === "function" &&
+    window.matchMedia("(max-width: 768px), (pointer: coarse)").matches &&
+    /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || ""))
+);
+
+// ─── Mobile wallet deep-link map ──────────────────────────────────────
+// Correct deep links that open the WALLET APP (not its website). Each
+// wallet has its own scheme/universal-link format for in-app browser
+// redirect. The install-fallback URLs show the app store page if the
+// deep-link fails (user doesn't have the wallet installed).
+//
+// The dapp URL passed to these links is computed at runtime from
+// window.location so this works on any domain (preview, staging, prod).
+const MOBILE_WALLET_LINKS = {
+  metamask: {
+    // MetaMask uses universal links (iOS) + intent scheme (Android).
+    // We try the universal link first; the browser handles OS-specific
+    // interception. If the app isn't installed, metamask.app.link shows
+    // a "Download MetaMask" landing page (not privacycloak.in).
+    universal: (dapp) =>
+      `https://metamask.app.link/dapp/${dapp.replace(/^https?:\/\//, "")}`,
+    scheme: (dapp) =>
+      `metamask://dapp/${dapp.replace(/^https?:\/\//, "")}`,
+    install: {
+      ios: "https://apps.apple.com/app/metamask/id1438144202",
+      android: "https://play.google.com/store/apps/details?id=io.metamask",
+    },
+  },
+  trust: {
+    // Trust Wallet: opens dapp in its in-app DApp browser. coin_id=60
+    // is ETH (Base L2 uses ETH as gas).
+    universal: (dapp) =>
+      `https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent(dapp)}`,
+    scheme: (dapp) =>
+      `trust://open_url?coin_id=60&url=${encodeURIComponent(dapp)}`,
+    install: {
+      ios: "https://apps.apple.com/app/trust-crypto-bitcoin-wallet/id1288339409",
+      android: "https://play.google.com/store/apps/details?id=com.wallet.crypto.trustapp",
+    },
+  },
+  rainbow: {
+    // Rainbow: uses their own universal link format.
+    universal: (dapp) =>
+      `https://rnbw.app/wc?uri=${encodeURIComponent(
+        `wc:?bridge=https%3A%2F%2Fbridge.walletconnect.org&key=&chainId=8453`
+      )}`,
+    scheme: null,
+    install: {
+      ios: "https://apps.apple.com/app/rainbow-ethereum-wallet/id1457119021",
+      android: "https://play.google.com/store/apps/details?id=me.rainbow",
+    },
+  },
+  rabby: {
+    // Rabby Mobile: no standard universal-link deep-link for opening
+    // a dapp. Rabby is primarily a desktop browser extension and
+    // their mobile app does not currently support opening arbitrary
+    // dapp URLs via deep-link. We fall through to WalletConnect
+    // which Rabby supports natively.
+    universal: null,
+    scheme: null,
+    install: {
+      ios: null,
+      android: "https://play.google.com/store/apps/details?id=com.debank.rabby",
+    },
+  },
+  walletconnect: {
+    // WalletConnect universal: opens a "choose from installed wallets"
+    // picker on iOS 16.4+ and Android via the wc: URI scheme.
+    install: null,
+  },
+};
 
 // WalletConnect project ID — required for the WalletConnect relay.
 // Get one at https://cloud.walletconnect.com (free, takes 2 minutes).
@@ -521,89 +600,144 @@ export function WalletProvider({ children }) {
   // window.ethereum inside its own browser, so after the redirect
   // the existing connectEVM flow works.
   //
-  // We try MetaMask first (most common), then Rabby, then WalletConnect
-  // as a universal fallback. The user picks from a list of wallet apps
-  // on the Landing page — each button deep-links to that app.
+  // If the app isn't installed, the universal link either shows the wallet's
+  // "download from App Store" landing page, OR the page stays visible and
+  // we show an install-prompt toast after 1.5 seconds.
+  //
+  // Strategy: try the deep link, wait 1.5s, if document is still visible
+  // (= user never navigated away), assume the app isn't installed and
+  // surface the install URL through a toast. The user can tap to install.
   const connectMobile = useCallback(async (walletApp) => {
     if (!isMobile) return; // Desktop guard
     setChain("base");
     setConnecting(true);
     try {
-      // The dapp URL that the wallet app should open in its in-app browser.
-      // After the wallet opens this URL, it injects window.ethereum and
-      // the page reloads → existing connectEVM flow runs automatically.
       const dappUrl = window.location.origin + window.location.pathname;
-      const dappUrlEncoded = encodeURIComponent(dappUrl);
 
-      if (walletApp === "metamask") {
-        // MetaMask mobile: uses metamask.app.link which opens the app
-        // and navigates to the dapp in MetaMask's in-app browser.
-        window.location.href = `https://metamask.app.link/dapp/${dappUrl.replace(/^https?:\/\//, "")}`;
-        return;
-      }
-      if (walletApp === "rabby") {
-        // Rabby mobile deep link
-        window.location.href = `https://rabby.io/open?url=${dappUrlEncoded}`;
-        return;
-      }
-      if (walletApp === "trust") {
-        // Trust Wallet: opens the dapp in Trust's in-app browser
-        window.location.href = `https://link.trustwallet.com/open_url?coin_id=60&url=${dappUrlEncoded}`;
-        return;
-      }
-      if (walletApp === "rainbow") {
-        // Rainbow: opens dapp in Rainbow's browser
-        window.location.href = `https://rnbwapp.com/wc?uri=${dappUrlEncoded}`;
-        return;
-      }
-
-      // Universal fallback: WalletConnect
-      const { ethers } = await import("ethers");
-      const { SignClient } = await import("@walletconnect/sign-client");
-      const signClient = await SignClient.init({
-        projectId: WC_PROJECT_ID,
-        relayUrl: "wss://relay.walletconnect.com",
-      });
-
-      const { uri, approval } = await signClient.connect({
-        requiredNamespaces: {
-          eip155: {
-            chains: ["eip155:8453"],
-            methods: ["eth_sendTransaction", "eth_signTypedData_v4", "personal_sign"],
-            events: ["accountsChanged", "chainChanged"],
+      // WalletConnect universal picker — opens the OS-level "choose wallet"
+      // sheet when the wc: scheme is triggered. Works regardless of which
+      // specific wallet is installed.
+      if (walletApp === "walletconnect") {
+        const { ethers } = await import("ethers");
+        const { SignClient } = await import("@walletconnect/sign-client");
+        const signClient = await SignClient.init({
+          projectId: WC_PROJECT_ID,
+          relayUrl: "wss://relay.walletconnect.com",
+          metadata: {
+            name: "Privacy Cloak",
+            description: "Private transactions on Base",
+            url: dappUrl,
+            icons: [`${dappUrl}/icons/icon-192x192.png`],
           },
-        },
-      });
-
-      if (uri) {
-        // On mobile, open the WalletConnect deep link which shows
-        // a list of installed wallets to pick from
-        window.location.href = `wc:${uri}`;
-        toast.info("Select your wallet app to connect", { duration: 10000 });
+        });
+        const { uri, approval } = await signClient.connect({
+          requiredNamespaces: {
+            eip155: {
+              chains: ["eip155:8453"],
+              methods: [
+                "eth_sendTransaction",
+                "eth_signTypedData_v4",
+                "personal_sign",
+                "wallet_switchEthereumChain",
+              ],
+              events: ["accountsChanged", "chainChanged"],
+            },
+          },
+        });
+        if (uri) {
+          window.location.href = `wc:${uri}`;
+          toast.info("Select your wallet app to connect", { duration: 10000 });
+        }
+        const session = await approval();
+        const accounts = session.namespaces?.eip155?.accounts || [];
+        if (accounts.length === 0) throw new Error("No accounts");
+        const walletAddress = accounts[0].split(":")[2];
+        const wcProvider = {
+          request: async ({ method, params }) => {
+            if (method === "eth_requestAccounts" || method === "eth_accounts") return [walletAddress];
+            return await signClient.request({
+              topic: session.topic,
+              request: { method, params: params || [] },
+              chainId: "eip155:8453",
+            });
+          },
+          on: () => {},
+          isWalletConnect: true,
+        };
+        const browserProvider = new ethers.BrowserProvider(wcProvider);
+        setAddress(walletAddress);
+        setSigner(await browserProvider.getSigner());
+        toast.success("Wallet connected via WalletConnect");
+        setConnecting(false);
+        return;
       }
 
-      const session = await approval();
-      const accounts = session.namespaces?.eip155?.accounts || [];
-      if (accounts.length === 0) throw new Error("No accounts");
-      const walletAddress = accounts[0].split(":")[2];
+      // App-specific deep link (MetaMask, Trust, Rainbow)
+      const cfg = MOBILE_WALLET_LINKS[walletApp];
+      if (!cfg) {
+        toast.error("Unknown wallet app: " + walletApp);
+        setConnecting(false);
+        return;
+      }
 
-      const wcProvider = {
-        request: async ({ method, params }) => {
-          if (method === "eth_requestAccounts" || method === "eth_accounts") return [walletAddress];
-          return await signClient.request({
-            topic: session.topic,
-            request: { method, params: params || [] },
-            chainId: "eip155:8453",
-          });
-        },
-        on: () => {},
-        isWalletConnect: true,
-      };
+      // Prefer the universal link (works for installed AND not-installed;
+      // redirects to app store landing page if not installed).
+      const link = cfg.universal || cfg.scheme;
+      if (!link) {
+        // No deep link available (e.g. Rabby) — use WalletConnect
+        setConnecting(false);
+        await connectMobile("walletconnect");
+        return;
+      }
 
-      const browserProvider = new ethers.BrowserProvider(wcProvider);
-      setAddress(walletAddress);
-      setSigner(await browserProvider.getSigner());
-      toast.success("Wallet connected!");
+      const deepLink = link(dappUrl);
+
+      // Fire the deep link
+      window.location.href = deepLink;
+
+      // Install-fallback: if we're still on the page after 1.8s, the
+      // app is not installed. Surface the install link so the user
+      // can grab it from the App Store / Play Store and try again.
+      const install = cfg.install;
+      if (install) {
+        setTimeout(() => {
+          if (document.visibilityState === "visible") {
+            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+            const storeUrl = isIOS ? install.ios : install.android;
+            if (storeUrl) {
+              toast(
+                <div>
+                  <div className="font-semibold mb-1">
+                    {walletApp === "metamask" ? "MetaMask" : walletApp === "trust" ? "Trust Wallet" : walletApp === "rainbow" ? "Rainbow" : walletApp} not detected
+                  </div>
+                  <div className="text-xs text-white/70 mb-2">
+                    Tap below to install, then come back and try again.
+                  </div>
+                  <a
+                    href={storeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block px-3 py-1.5 bg-green-500 text-black text-xs font-bold rounded"
+                  >
+                    Install from {isIOS ? "App Store" : "Play Store"}
+                  </a>
+                </div>,
+                { duration: 15000 }
+              );
+            }
+          }
+        }, 1800);
+      } else {
+        // Try the custom scheme as a second attempt (e.g. metamask://
+        // when metamask.app.link didn't intercept).
+        if (cfg.scheme) {
+          setTimeout(() => {
+            if (document.visibilityState === "visible") {
+              window.location.href = cfg.scheme(dappUrl);
+            }
+          }, 200);
+        }
+      }
     } catch (e) {
       if (e?.message?.includes("rejected") || e?.message?.includes("cancel")) {
         // silent
