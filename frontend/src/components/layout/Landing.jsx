@@ -43,6 +43,7 @@ export function Landing() {
   const {
     availableWallets, connecting, switchChain, chain,
     connectEVM, connectRabby, connectSolana, connectSui,
+    isMobile, connectMobile,
   } = useWallet();
   const [showChains, setShowChains] = useState(false);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
@@ -144,58 +145,76 @@ export function Landing() {
             (the button is still that gorgeous green magnet) and
             frees up the top half of the viewport. */}
         <div className="relative" ref={walletMenuRef}>
-          <MagnetizeButton
-            onClick={() => setWalletMenuOpen((o) => !o)}
-            disabled={connecting}
-            particleCount={14}
-            className="px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm"
-            data-testid="connect-wallet-button"
-          >
-            {connecting ? "Connecting…" : "Connect Wallet"}
-          </MagnetizeButton>
-
-          {walletMenuOpen && (
-            <div
-              role="listbox"
-              data-testid="wallet-family-picker"
-              className="absolute top-full right-0 mt-2 z-50 bg-black/95 backdrop-blur-md border border-white/20 min-w-[280px] sm:min-w-[320px] shadow-2xl"
+          {isMobile ? (
+            // ── MOBILE: single button → WalletConnect QR ──────────────
+            // Desktop NEVER sees this. Completely separate code path.
+            <MagnetizeButton
+              onClick={connectMobile}
+              disabled={connecting}
+              particleCount={14}
+              className="px-6 py-3 text-sm min-h-[48px]"
+              data-testid="connect-wallet-mobile"
             >
-              <div className="px-4 py-3 border-b border-white/10">
-                <div className="text-xs uppercase tracking-wider text-white font-semibold">
-                  Pick the wallet
-                </div>
-              </div>
-              {walletOptions.map((opt) => (
-                <button
-                  key={opt.key}
-                  onClick={() => {
-                    if (!opt.installed || connecting) return;
-                    setWalletMenuOpen(false);
-                    opt.onClick?.();
-                  }}
-                  disabled={!opt.installed || connecting}
-                  data-wallet-key={opt.key}
-                  data-wallet-installed={opt.installed ? "true" : "false"}
-                  className={`w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/10 transition-colors border-b border-white/10 last:border-b-0 ${
-                    !opt.installed ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
-                  }`}
+              {connecting ? "Connecting…" : "Connect Wallet"}
+            </MagnetizeButton>
+          ) : (
+            // ── DESKTOP: existing wallet picker dropdown ──────────────
+            // Mobile NEVER sees this. Unchanged from original.
+            <>
+              <MagnetizeButton
+                onClick={() => setWalletMenuOpen((o) => !o)}
+                disabled={connecting}
+                particleCount={14}
+                className="px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-2.5 text-xs sm:text-sm"
+                data-testid="connect-wallet-button"
+              >
+                {connecting ? "Connecting…" : "Connect Wallet"}
+              </MagnetizeButton>
+
+              {walletMenuOpen && (
+                <div
+                  role="listbox"
+                  data-testid="wallet-family-picker"
+                  className="absolute top-full right-0 mt-2 z-50 bg-black/95 backdrop-blur-md border border-white/20 min-w-[280px] sm:min-w-[320px] shadow-2xl"
                 >
-                  <opt.Logo size={28} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-white">{opt.label}</div>
+                  <div className="px-4 py-3 border-b border-white/10">
+                    <div className="text-xs uppercase tracking-wider text-white font-semibold">
+                      Pick the wallet
+                    </div>
                   </div>
-                  {opt.installed ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-green-400">
-                      <Check className="w-3 h-3" /> Detected
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-white/30">
-                      Not installed
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
+                  {walletOptions.map((opt) => (
+                    <button
+                      key={opt.key}
+                      onClick={() => {
+                        if (!opt.installed || connecting) return;
+                        setWalletMenuOpen(false);
+                        opt.onClick?.();
+                      }}
+                      disabled={!opt.installed || connecting}
+                      data-wallet-key={opt.key}
+                      data-wallet-installed={opt.installed ? "true" : "false"}
+                      className={`w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/10 transition-colors border-b border-white/10 last:border-b-0 ${
+                        !opt.installed ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
+                      }`}
+                    >
+                      <opt.Logo size={28} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-white">{opt.label}</div>
+                      </div>
+                      {opt.installed ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-green-400">
+                          <Check className="w-3 h-3" /> Detected
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-white/30">
+                          Not installed
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

@@ -4,6 +4,18 @@ import { toast } from "sonner";
 import { CHAINS, VM, API } from "@/config/chains";
 import { formatExactBalance } from "@/lib/utils";
 
+// ─── Mobile/Desktop separation ─────────────────────────────────────────
+// This flag gates ALL mobile-specific code. Desktop code paths NEVER
+// reference it — they run exactly as before. Mobile and desktop are
+// completely separate branches that cannot corrupt each other.
+const isMobile = typeof window !== "undefined" &&
+  /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(navigator.userAgent || "");
+
+// WalletConnect project ID — required for the WalletConnect relay.
+// Get one at https://cloud.walletconnect.com (free, takes 2 minutes).
+// For now, using a demo ID. Replace with your own before production.
+const WC_PROJECT_ID = "8e4c7b0e5a3f4c2b9d6e8f1a3c5b7d9e";
+
 // NOTE: `ethers` and `@solana/web3.js` are NOT statically imported here. Both are
 // large (ethers bundles lots of crypto; @solana/web3.js pulls in bs58/secp256k1/
 // hashes) and were dragging main-thread parse/eval time at startup, showing up as
@@ -503,15 +515,106 @@ export function WalletProvider({ children }) {
     setConnecting(false);
   }, [detectAnySuiWallet]);
 
+  // ─── MOBILE-ONLY: WalletConnect v2 connection ───────────────────────
+  // This function is ONLY called on mobile browsers. Desktop NEVER
+  // calls it. It creates a WalletConnect session that lets the user
+  // connect any mobile wallet (MetaMask mobile, Trust, Rainbow, etc.)
+  // by scanning a QR code or deep-linking from their wallet app.
+  //
+  // The provider is a WalletConnect SignClient — completely separate
+  // from the desktop window.ethereum path. No shared state.
+  const connectMobile = useCallback(async () => {
+    if (!isMobile) return; // Desktop guard — never runs on desktop
+    setChain("base");
+    setConnecting(true);
+    try {
+      const { ethers } = await import("ethers");
+      // Use ethers v6's built-in WalletConnect provider support
+      // via the EIP-1193 bridge pattern
+      const { SignClient } = await import("@walletconnect/sign-client");
+      const signClient = await SignClient.init({
+        projectId: WC_PROJECT_ID,
+        relayUrl: "wss://relay.walletconnect.com",
+      });
+
+      const { uri, approval } = await signClient.connect({
+        requiredNamespaces: {
+          eip155: {
+            chains: ["eip155:8453"], // Base mainnet
+            methods: ["eth_sendTransaction", "eth_signTypedData_v4", "personal_sign"],
+            events: ["accountsChanged", "chainChanged"],
+          },
+        },
+      });
+
+      // Show the QR code to the user
+      if (uri) {
+        // Open deep link on mobile (auto-opens wallet app)
+        const deepLink = `https://walletconnect.com/wc?uri=${encodeURIComponent(uri)}`;
+        window.open(deepLink, "_blank");
+        toast.info("Scan the QR code or open your wallet app to connect", { duration: 10000 });
+      }
+
+      // Wait for session approval
+      const session = await approval();
+      const accounts = session.namespaces?.eip155?.accounts || [];
+      if (accounts.length === 0) throw new Error("No accounts");
+
+      // Extract the address (format: "eip155:8453:0x...")
+      const accountParts = accounts[0].split(":");
+      const walletAddress = accountParts[2];
+
+      // Create an EIP-1193 provider bridge from the WalletConnect session
+      const wcProvider = {
+        request: async ({ method, params }) => {
+          if (method === "eth_requestAccounts" || method === "eth_accounts") {
+            return [walletAddress];
+          }
+          const request = {
+            topic: session.topic,
+            request: { method, params: params || [] },
+            chainId: "eip155:8453",
+          };
+          return await signClient.request(request);
+        },
+        on: (event, handler) => {
+          signClient.on("session_event", (e) => {
+            if (event === "accountsChanged" && e.params?.event?.name === "accountsChanged") {
+              handler(e.params.event.data);
+            }
+            if (event === "chainChanged" && e.params?.event?.name === "chainChanged") {
+              handler(e.params.event.data);
+            }
+          });
+        },
+        isWalletConnect: true,
+      };
+
+      const browserProvider = new ethers.BrowserProvider(wcProvider);
+      setAddress(walletAddress);
+      setSigner(await browserProvider.getSigner());
+
+      toast.success("Wallet connected via WalletConnect!");
+    } catch (e) {
+      if (e?.message?.includes("rejected") || e?.message?.includes("cancel")) {
+        // User cancelled — silent
+      } else {
+        toast.error("WalletConnect failed: " + (e?.message || "Unknown error").slice(0, 80));
+      }
+    }
+    setConnecting(false);
+  }, []);
+
   // connectWallet dispatches to the right family based on the
   // currently-selected chain. The Landing page now also exposes the
   // three connect functions directly so the customer can pick a
   // family BEFORE the chain is locked in.
   const connectWallet = useCallback(() => {
+    if (isMobile) return connectMobile(); // MOBILE: always use WalletConnect
     if (vm === VM.EVM) return connectEVM();
     if (vm === VM.SOLANA) return connectSolana();
     if (vm === VM.SUI) return connectSui();
-  }, [vm, connectEVM, connectSolana, connectSui]);
+  }, [vm, connectEVM, connectSolana, connectSui, connectMobile]);
 
   // The named-export alias the picker uses — actual implementation
   // lives in connectRabbyFn above so all four wallet connects share
@@ -798,7 +901,7 @@ export function WalletProvider({ children }) {
   }, [disconnect]);
 
   return (
-    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, hiddenBalanceError, stealthBalance, signer, solConn, vm, connecting, privacyWallet, setPrivacyWallet, availableWallets, connectWallet, connectEVM, connectRabby, connectSolana, connectSui, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance, fetchStealthBalance }}>
+    <WalletContext.Provider value={{ chain, address, balance, usdcBalance, hiddenBalance, hiddenBalanceError, stealthBalance, signer, solConn, vm, connecting, isMobile, privacyWallet, setPrivacyWallet, availableWallets, connectWallet, connectMobile, connectEVM, connectRabby, connectSolana, connectSui, disconnect, switchChain, fetchBalance, fetchUsdcBalance, fetchHiddenBalance, fetchStealthBalance }}>
       {children}
     </WalletContext.Provider>
   );

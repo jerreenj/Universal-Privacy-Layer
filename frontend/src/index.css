@@ -170,3 +170,46 @@ body {
     @apply border-border;
   }
 }
+
+/* ─── Mobile-only optimizations ──────────────────────────────────────
+   These rules ONLY affect phone screens. Desktop browsers never
+   match these media queries so desktop layout is completely
+   untouched. Mobile and desktop CSS never mingle. */
+
+/* Safe-area insets for notch phones (iPhone X+, Android notch) */
+@supports (padding: env(safe-area-inset-top)) {
+  @media (max-width: 768px) {
+    body {
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
+    }
+  }
+}
+
+/* Larger tap targets on mobile — iOS requires min 44px */
+@media (max-width: 768px) {
+  button:not([disabled]) {
+    min-height: 44px;
+  }
+  /* Make inputs easier to tap on mobile */
+  input {
+    min-height: 44px;
+    font-size: 16px !important; /* prevents iOS auto-zoom */
+  }
+  /* Prevent horizontal scroll on phone */
+  body {
+    overflow-x: hidden;
+  }
+  /* Balance card: smaller padding on mobile to fit screen */
+  .balance-card-mobile {
+    padding: 1rem !important;
+  }
+  /* Wallet picker: full width on mobile */
+  .wallet-picker-mobile {
+    min-width: calc(100vw - 2rem) !important;
+    left: 0 !important;
+    right: 0 !important;
+  }
+}

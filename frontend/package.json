@@ -35,6 +35,8 @@
     "@radix-ui/react-toggle-group": "^1.1.7",
     "@radix-ui/react-tooltip": "^1.2.4",
     "@solana/web3.js": "^1.98.4",
+    "@walletconnect/modal": "^2.7.0",
+    "@walletconnect/sign-client": "^2.23.10",
     "assert": "^2.1.0",
     "axios": "^1.8.4",
     "buffer": "^6.0.3",
