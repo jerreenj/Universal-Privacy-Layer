@@ -515,22 +515,45 @@ export function WalletProvider({ children }) {
     setConnecting(false);
   }, [detectAnySuiWallet]);
 
-  // ─── MOBILE-ONLY: WalletConnect v2 connection ───────────────────────
-  // This function is ONLY called on mobile browsers. Desktop NEVER
-  // calls it. It creates a WalletConnect session that lets the user
-  // connect any mobile wallet (MetaMask mobile, Trust, Rainbow, etc.)
-  // by scanning a QR code or deep-linking from their wallet app.
+  // ─── MOBILE-ONLY: Direct deep-link to wallet apps ───────────────────
+  // On mobile, the simplest reliable way to connect is to redirect
+  // directly to the wallet app's in-app browser. The wallet injects
+  // window.ethereum inside its own browser, so after the redirect
+  // the existing connectEVM flow works.
   //
-  // The provider is a WalletConnect SignClient — completely separate
-  // from the desktop window.ethereum path. No shared state.
-  const connectMobile = useCallback(async () => {
-    if (!isMobile) return; // Desktop guard — never runs on desktop
+  // We try MetaMask first (most common), then Rabby, then WalletConnect
+  // as a universal fallback. The user picks from a list of wallet apps
+  // on the Landing page — each button deep-links to that app.
+  const connectMobile = useCallback(async (walletApp) => {
+    if (!isMobile) return; // Desktop guard
     setChain("base");
     setConnecting(true);
     try {
+      const currentUrl = encodeURIComponent(window.location.href);
+
+      if (walletApp === "metamask") {
+        // Deep link to MetaMask in-app browser
+        window.location.href = `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`;
+        return;
+      }
+      if (walletApp === "rabby") {
+        // Rabby mobile deep link
+        window.location.href = `https://rabby.io/open?url=${currentUrl}`;
+        return;
+      }
+      if (walletApp === "trust") {
+        // Trust Wallet deep link
+        window.location.href = `https://link.trustwallet.com/open_url?coin_id=60&url=${currentUrl}`;
+        return;
+      }
+      if (walletApp === "rainbow") {
+        // Rainbow deep link
+        window.location.href = `https://rnbwapp.com/wc?uri=${currentUrl}`;
+        return;
+      }
+
+      // Universal fallback: WalletConnect
       const { ethers } = await import("ethers");
-      // Use ethers v6's built-in WalletConnect provider support
-      // via the EIP-1193 bridge pattern
       const { SignClient } = await import("@walletconnect/sign-client");
       const signClient = await SignClient.init({
         projectId: WC_PROJECT_ID,
@@ -540,66 +563,47 @@ export function WalletProvider({ children }) {
       const { uri, approval } = await signClient.connect({
         requiredNamespaces: {
           eip155: {
-            chains: ["eip155:8453"], // Base mainnet
+            chains: ["eip155:8453"],
             methods: ["eth_sendTransaction", "eth_signTypedData_v4", "personal_sign"],
             events: ["accountsChanged", "chainChanged"],
           },
         },
       });
 
-      // Show the QR code to the user
       if (uri) {
-        // Open deep link on mobile (auto-opens wallet app)
-        const deepLink = `https://walletconnect.com/wc?uri=${encodeURIComponent(uri)}`;
-        window.open(deepLink, "_blank");
-        toast.info("Scan the QR code or open your wallet app to connect", { duration: 10000 });
+        // On mobile, open the WalletConnect deep link which shows
+        // a list of installed wallets to pick from
+        window.location.href = `wc:${uri}`;
+        toast.info("Select your wallet app to connect", { duration: 10000 });
       }
 
-      // Wait for session approval
       const session = await approval();
       const accounts = session.namespaces?.eip155?.accounts || [];
       if (accounts.length === 0) throw new Error("No accounts");
+      const walletAddress = accounts[0].split(":")[2];
 
-      // Extract the address (format: "eip155:8453:0x...")
-      const accountParts = accounts[0].split(":");
-      const walletAddress = accountParts[2];
-
-      // Create an EIP-1193 provider bridge from the WalletConnect session
       const wcProvider = {
         request: async ({ method, params }) => {
-          if (method === "eth_requestAccounts" || method === "eth_accounts") {
-            return [walletAddress];
-          }
-          const request = {
+          if (method === "eth_requestAccounts" || method === "eth_accounts") return [walletAddress];
+          return await signClient.request({
             topic: session.topic,
             request: { method, params: params || [] },
             chainId: "eip155:8453",
-          };
-          return await signClient.request(request);
-        },
-        on: (event, handler) => {
-          signClient.on("session_event", (e) => {
-            if (event === "accountsChanged" && e.params?.event?.name === "accountsChanged") {
-              handler(e.params.event.data);
-            }
-            if (event === "chainChanged" && e.params?.event?.name === "chainChanged") {
-              handler(e.params.event.data);
-            }
           });
         },
+        on: () => {},
         isWalletConnect: true,
       };
 
       const browserProvider = new ethers.BrowserProvider(wcProvider);
       setAddress(walletAddress);
       setSigner(await browserProvider.getSigner());
-
-      toast.success("Wallet connected via WalletConnect!");
+      toast.success("Wallet connected!");
     } catch (e) {
       if (e?.message?.includes("rejected") || e?.message?.includes("cancel")) {
-        // User cancelled — silent
+        // silent
       } else {
-        toast.error("WalletConnect failed: " + (e?.message || "Unknown error").slice(0, 80));
+        toast.error("Connection failed: " + (e?.message || "Unknown").slice(0, 80));
       }
     }
     setConnecting(false);

@@ -146,17 +146,66 @@ export function Landing() {
             frees up the top half of the viewport. */}
         <div className="relative" ref={walletMenuRef}>
           {isMobile ? (
-            // ── MOBILE: single button → WalletConnect QR ──────────────
-            // Desktop NEVER sees this. Completely separate code path.
-            <MagnetizeButton
-              onClick={connectMobile}
-              disabled={connecting}
-              particleCount={14}
-              className="px-6 py-3 text-sm min-h-[48px]"
-              data-testid="connect-wallet-mobile"
-            >
-              {connecting ? "Connecting…" : "Connect Wallet"}
-            </MagnetizeButton>
+            // ── MOBILE: wallet app picker — direct deep links ────────
+            // Desktop NEVER sees this. Each button redirects directly
+            // to the wallet app's in-app browser where window.ethereum
+            // is injected, then the existing connectEVM flow works.
+            <>
+              <MagnetizeButton
+                onClick={() => setWalletMenuOpen((o) => !o)}
+                disabled={connecting}
+                particleCount={14}
+                className="px-6 py-3 text-sm min-h-[48px] w-full"
+                data-testid="connect-wallet-mobile"
+              >
+                {connecting ? "Opening wallet…" : "Connect Wallet"}
+              </MagnetizeButton>
+
+              {walletMenuOpen && (
+                <div
+                  className="fixed top-full left-0 right-0 mt-2 z-50 bg-black/95 backdrop-blur-md border border-white/20 shadow-2xl"
+                  data-testid="mobile-wallet-picker"
+                >
+                  <div className="px-4 py-3 border-b border-white/10">
+                    <div className="text-xs uppercase tracking-wider text-white font-semibold">
+                      Open in wallet app
+                    </div>
+                  </div>
+                  {[
+                    { key: "metamask", label: "MetaMask", color: "#F6851B" },
+                    { key: "rabby", label: "Rabby", color: "#0066FF" },
+                    { key: "trust", label: "Trust Wallet", color: "#3375BB" },
+                    { key: "rainbow", label: "Rainbow", color: "#001A72" },
+                  ].map((app) => (
+                    <button
+                      key={app.key}
+                      onClick={() => {
+                        setWalletMenuOpen(false);
+                        connectMobile(app.key);
+                      }}
+                      disabled={connecting}
+                      className="w-full text-left px-4 py-4 flex items-center gap-3 hover:bg-white/10 transition-colors border-b border-white/10 last:border-b-0 min-h-[56px]"
+                    >
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: app.color }}>
+                        {app.label[0]}
+                      </div>
+                      <div className="text-sm font-semibold text-white">{app.label}</div>
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => {
+                      setWalletMenuOpen(false);
+                      connectMobile("walletconnect");
+                    }}
+                    disabled={connecting}
+                    className="w-full text-left px-4 py-4 flex items-center gap-3 hover:bg-white/10 transition-colors min-h-[56px]"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold">W</div>
+                    <div className="text-sm font-semibold text-white">Other (WalletConnect)</div>
+                  </button>
+                </div>
+              )}
+            </>
           ) : (
             // ── DESKTOP: existing wallet picker dropdown ──────────────
             // Mobile NEVER sees this. Unchanged from original.
@@ -245,24 +294,24 @@ export function Landing() {
         </div>
       )}
 
-      <div className="pt-16 md:pt-20 flex justify-center">
-        <div className="w-[200px] h-[200px] md:w-[350px] md:h-[350px]">
+      <div className="pt-16 md:pt-20 flex justify-center items-center min-h-[40vh]">
+        <div className="w-[160px] h-[160px] sm:w-[200px] sm:h-[200px] md:w-[350px] md:h-[350px]">
           <RotatingEarth width={350} height={350} />
         </div>
       </div>
 
-      <div className="text-center px-4 md:px-6 mt-6 md:mt-10">
-        <h1 className="font-heading text-2xl sm:text-4xl md:text-6xl font-bold tracking-tight text-white mb-3 md:mb-6">
+      <div className="text-center px-4 md:px-6 mt-4 sm:mt-6 md:mt-10 pb-20">
+        <h1 className="font-heading text-xl sm:text-2xl md:text-6xl font-bold tracking-tight text-white mb-2 sm:mb-3 md:mb-6">
           Privacy Cloak
         </h1>
-        <p className="text-white/40 text-xs sm:text-sm md:text-base mb-5 md:mb-8 max-w-md mx-auto px-2">
+        <p className="text-white/40 text-xs sm:text-sm md:text-base mb-4 sm:mb-5 md:mb-8 max-w-md mx-auto px-2">
           Private transactions across every chain. One interface, all networks.
         </p>
 
-        <div className="flex items-center justify-center gap-4 sm:gap-8 md:gap-12 mb-6 md:mb-8">
+        <div className="flex items-center justify-center gap-4 sm:gap-8 md:gap-12 mb-4 sm:mb-6 md:mb-8">
           {[["100%", "Private"], [LIVE_COUNT.toString(), "Chains"], ["10", "Pillars"]].map(([val, lbl]) => (
             <div key={lbl} className="text-center">
-              <span className="block text-lg sm:text-xl md:text-2xl font-bold text-white">{val}</span>
+              <span className="block text-base sm:text-lg md:text-2xl font-bold text-white">{val}</span>
               <span className="text-[9px] sm:text-[10px] text-white/40 uppercase tracking-wider">{lbl}</span>
             </div>
           ))}
