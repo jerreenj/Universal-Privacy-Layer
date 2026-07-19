@@ -14,7 +14,7 @@ const isMobile = typeof window !== "undefined" &&
 // WalletConnect project ID — required for the WalletConnect relay.
 // Get one at https://cloud.walletconnect.com (free, takes 2 minutes).
 // For now, using a demo ID. Replace with your own before production.
-const WC_PROJECT_ID = "8e4c7b0e5a3f4c2b9d6e8f1a3c5b7d9e";
+const WC_PROJECT_ID = "98c28388af8623ff03c9f7624d5abbf6";
 
 // NOTE: `ethers` and `@solana/web3.js` are NOT statically imported here. Both are
 // large (ethers bundles lots of crypto; @solana/web3.js pulls in bs58/secp256k1/
