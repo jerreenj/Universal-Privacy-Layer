@@ -113,10 +113,8 @@ export function Landing() {
       key: "rabby",
       label: "Rabby",
       brandColor: "#7C3AED",
-      // Rabby on iOS has no mobile app — no iOS app exists at all.
-      // Rabby on Android has WalletConnect fallback inside connectMobile.
-      deepLinkAvailable: !isIOS,
-      noteLabel: isIOS ? "Not available on iOS" : null,
+      // Rabby uses WalletConnect on both iOS and Android
+      deepLinkAvailable: true,
     },
     {
       key: "phantom",
