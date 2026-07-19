@@ -294,13 +294,17 @@ export function Landing() {
         </div>
       )}
 
-      <div className="pt-16 md:pt-20 flex justify-center items-center min-h-[40vh]">
-        <div className="w-[160px] h-[160px] sm:w-[200px] sm:h-[200px] md:w-[350px] md:h-[350px]">
-          <RotatingEarth width={350} height={350} />
+      {/* Globe — hidden on mobile (was a disturbing nuisance on phones).
+          Desktop keeps it. */}
+      {!isMobile && (
+        <div className="pt-16 md:pt-20 flex justify-center items-center min-h-[40vh]">
+          <div className="w-[200px] h-[200px] md:w-[350px] md:h-[350px]">
+            <RotatingEarth width={350} height={350} />
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="text-center px-4 md:px-6 mt-4 sm:mt-6 md:mt-10 pb-20">
+      <div className={`text-center px-4 md:px-6 pb-20 ${isMobile ? "pt-20" : "mt-4 sm:mt-6 md:mt-10"}`}>
         <h1 className="font-heading text-xl sm:text-2xl md:text-6xl font-bold tracking-tight text-white mb-2 sm:mb-3 md:mb-6">
           Privacy Cloak
         </h1>

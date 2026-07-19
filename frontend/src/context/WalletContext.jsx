@@ -529,26 +529,31 @@ export function WalletProvider({ children }) {
     setChain("base");
     setConnecting(true);
     try {
-      const currentUrl = encodeURIComponent(window.location.href);
+      // The dapp URL that the wallet app should open in its in-app browser.
+      // After the wallet opens this URL, it injects window.ethereum and
+      // the page reloads → existing connectEVM flow runs automatically.
+      const dappUrl = window.location.origin + window.location.pathname;
+      const dappUrlEncoded = encodeURIComponent(dappUrl);
 
       if (walletApp === "metamask") {
-        // Deep link to MetaMask in-app browser
-        window.location.href = `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`;
+        // MetaMask mobile: uses metamask.app.link which opens the app
+        // and navigates to the dapp in MetaMask's in-app browser.
+        window.location.href = `https://metamask.app.link/dapp/${dappUrl.replace(/^https?:\/\//, "")}`;
         return;
       }
       if (walletApp === "rabby") {
         // Rabby mobile deep link
-        window.location.href = `https://rabby.io/open?url=${currentUrl}`;
+        window.location.href = `https://rabby.io/open?url=${dappUrlEncoded}`;
         return;
       }
       if (walletApp === "trust") {
-        // Trust Wallet deep link
-        window.location.href = `https://link.trustwallet.com/open_url?coin_id=60&url=${currentUrl}`;
+        // Trust Wallet: opens the dapp in Trust's in-app browser
+        window.location.href = `https://link.trustwallet.com/open_url?coin_id=60&url=${dappUrlEncoded}`;
         return;
       }
       if (walletApp === "rainbow") {
-        // Rainbow deep link
-        window.location.href = `https://rnbwapp.com/wc?uri=${currentUrl}`;
+        // Rainbow: opens dapp in Rainbow's browser
+        window.location.href = `https://rnbwapp.com/wc?uri=${dappUrlEncoded}`;
         return;
       }
 
@@ -608,6 +613,38 @@ export function WalletProvider({ children }) {
     }
     setConnecting(false);
   }, []);
+
+  // ─── AUTO-CONNECT in wallet in-app browser ──────────────────────────
+  // When the user is redirected from the wallet app deep link, the
+  // page loads inside the wallet's in-app browser which injects
+  // window.ethereum. We detect this and auto-connect using the
+  // existing desktop connectEVM flow — no picker needed.
+  useEffect(() => {
+    if (!isMobile) return; // Desktop guard
+    if (!window.ethereum) return; // No injected provider yet
+    // We're inside a wallet's in-app browser — auto-connect
+    const autoConnect = async () => {
+      try {
+        const provider = window.ethereum;
+        const accounts = await provider.request({ method: "eth_requestAccounts" });
+        if (accounts && accounts.length > 0) {
+          const { ethers } = await import("ethers");
+          const browserProvider = new ethers.BrowserProvider(provider);
+          setAddress(accounts[0]);
+          setSigner(await browserProvider.getSigner());
+          // Switch to Base
+          try {
+            await provider.request({
+              method: "wallet_switchEthereumChain",
+              params: [{ chainId: CHAINS.base.chainId }],
+            });
+          } catch {}
+          toast.success("Wallet connected!");
+        }
+      } catch {}
+    };
+    autoConnect();
+  }, []); // Run once on mount
 
   // connectWallet dispatches to the right family based on the
   // currently-selected chain. The Landing page now also exposes the
