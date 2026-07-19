@@ -666,28 +666,18 @@ export function WalletProvider({ children }) {
       };
 
       // ── Rabby special-case ────────────────────────────────────────
-      // Rabby mobile has no deep link for opening a dapp URL. Rather
-      // than silently routing to MetaMask via WalletConnect (the old
-      // bug), surface the install action immediately so the user knows
-      // what to do. Rabby's iOS app doesn't exist, so on iOS we show
-      // a "not available on iOS, try another" message.
+      // Rabby mobile uses WalletConnect on BOTH iOS and Android.
+      // Rabby iOS app DOES exist and supports WalletConnect.
+      // Fire the WalletConnect picker and label it as "Rabby via WalletConnect"
+      // so the user knows what's happening.
       if (walletApp === "rabby") {
-        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
-        if (isIOS) {
-          showInstallToast("Rabby", MOBILE_WALLET_LINKS.rabby.install);
-          setConnecting(false);
-          return;
-        }
-        // On Android, Rabby uses WalletConnect internally. Fire the
-        // WalletConnect picker but label it as "Rabby via WalletConnect"
-        // so the user knows what's happening.
         toast("Opening Rabby via WalletConnect…", { duration: 3000 });
         await openWalletConnectPicker(dappUrl);
         setConnecting(false);
         return;
       }
 
-      // ── Deep-link wallets (MetaMask, Trust, Rainbow) ──────────────
+      // ── Deep-link wallets (MetaMask, Trust, Rainbow, Phantom) ─────
       const cfg = MOBILE_WALLET_LINKS[walletApp];
       if (!cfg) {
         // Unknown wallet key — fall through to WalletConnect.
@@ -829,13 +819,30 @@ export function WalletProvider({ children }) {
           const browserProvider = new ethers.BrowserProvider(provider);
           setAddress(accounts[0]);
           setSigner(await browserProvider.getSigner());
-          // Switch to Base
+          setChain("base"); // Set Base in React state
+          // Switch wallet to Base chain
           try {
             await provider.request({
               method: "wallet_switchEthereumChain",
               params: [{ chainId: CHAINS.base.chainId }],
             });
-          } catch {}
+          } catch (switchError) {
+            // Error 4902 = chain not added. Try adding Base first.
+            if (switchError.code === 4902) {
+              try {
+                await provider.request({
+                  method: "wallet_addEthereumChain",
+                  params: [{
+                    chainId: CHAINS.base.chainId,
+                    chainName: "Base",
+                    nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+                    rpcUrls: ["https://mainnet.base.org"],
+                    blockExplorerUrls: ["https://basescan.org"],
+                  }],
+                });
+              } catch {}
+            }
+          }
           toast.success("Wallet connected!");
         }
       } catch {}

@@ -227,14 +227,14 @@ export function Landing() {
             <MagnetizeButton
               onClick={() => setWalletMenuOpen(true)}
               disabled={connecting}
-              particleCount={20}
+              particleCount={0}
               className="w-full py-4 text-base min-h-[60px]"
               data-testid="connect-wallet-mobile"
             >
-              {connecting ? "Opening wallet…" : "Connect Wallet"}
+              {connecting ? "Connecting…" : "Connect Wallet"}
             </MagnetizeButton>
-            <div className="mt-3 text-[10px] text-white/30 text-center">
-              Opens securely in your wallet's built-in browser
+            <div className="mt-3 text-[11px] text-white/30 text-center">
+              Opens securely in your wallet&apos;s browser
             </div>
           </div>
 
