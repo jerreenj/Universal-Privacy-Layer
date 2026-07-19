@@ -600,13 +600,17 @@ export function WalletProvider({ children }) {
   // window.ethereum inside its own browser, so after the redirect
   // the existing connectEVM flow works.
   //
-  // If the app isn't installed, the universal link either shows the wallet's
-  // "download from App Store" landing page, OR the page stays visible and
-  // we show an install-prompt toast after 1.5 seconds.
-  //
-  // Strategy: try the deep link, wait 1.5s, if document is still visible
-  // (= user never navigated away), assume the app isn't installed and
-  // surface the install URL through a toast. The user can tap to install.
+  // Strategy per wallet:
+  //   - MetaMask / Trust / Rainbow → fire deep link immediately (instant).
+  //     If the app isn't installed, fire the custom scheme as a 200ms
+  //     fallback, then if the page is still visible after 1s show the
+  //     install-toast. (Faster than the old 1.8s wait.)
+  //   - Rabby → Rabby mobile has NO deep link for opening a dapp
+  //     (it's mainly a desktop browser extension). We do NOT fall
+  //     through to WalletConnect here — that would just open the OS
+  //     picker which silently routes to MetaMask. Instead, show the
+  //     install-toast immediately so the user knows they need Rabby.
+  //   - WalletConnect → always the universal fallback (last resort).
   const connectMobile = useCallback(async (walletApp) => {
     if (!isMobile) return; // Desktop guard
     setChain("base");
@@ -614,130 +618,112 @@ export function WalletProvider({ children }) {
     try {
       const dappUrl = window.location.origin + window.location.pathname;
 
-      // WalletConnect universal picker — opens the OS-level "choose wallet"
-      // sheet when the wc: scheme is triggered. Works regardless of which
-      // specific wallet is installed.
-      if (walletApp === "walletconnect") {
-        const { ethers } = await import("ethers");
-        const { SignClient } = await import("@walletconnect/sign-client");
-        const signClient = await SignClient.init({
-          projectId: WC_PROJECT_ID,
-          relayUrl: "wss://relay.walletconnect.com",
-          metadata: {
-            name: "Privacy Cloak",
-            description: "Private transactions on Base",
-            url: dappUrl,
-            icons: [`${dappUrl}/icons/icon-192x192.png`],
-          },
-        });
-        const { uri, approval } = await signClient.connect({
-          requiredNamespaces: {
-            eip155: {
-              chains: ["eip155:8453"],
-              methods: [
-                "eth_sendTransaction",
-                "eth_signTypedData_v4",
-                "personal_sign",
-                "wallet_switchEthereumChain",
-              ],
-              events: ["accountsChanged", "chainChanged"],
-            },
-          },
-        });
-        if (uri) {
-          window.location.href = `wc:${uri}`;
-          toast.info("Select your wallet app to connect", { duration: 10000 });
+      // Helper: show an install toast for a wallet we couldn't deep-link to.
+      const showInstallToast = (walletLabel, installUrls) => {
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+        const storeUrl = isIOS ? installUrls?.ios : installUrls?.android;
+        toast(
+          <div>
+            <div className="font-semibold mb-1">{walletLabel} not detected</div>
+            {storeUrl ? (
+              <>
+                <div className="text-xs text-white/70 mb-2">
+                  Tap to install from {isIOS ? "App Store" : "Play Store"}, then
+                  come back and try again.
+                </div>
+                <a
+                  href={storeUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block px-3 py-1.5 bg-green-500 text-black text-xs font-bold rounded"
+                >
+                  Install {walletLabel}
+                </a>
+              </>
+            ) : (
+              <div className="text-xs text-white/70">
+                {walletLabel} isn't available on {isIOS ? "iOS" : "this device"}.
+                Try another wallet.
+              </div>
+            )}
+          </div>,
+          { duration: 12000 }
+        );
+      };
+
+      // ── Rabby special-case ────────────────────────────────────────
+      // Rabby mobile has no deep link for opening a dapp URL. Rather
+      // than silently routing to MetaMask via WalletConnect (the old
+      // bug), surface the install action immediately so the user knows
+      // what to do. Rabby's iOS app doesn't exist, so on iOS we show
+      // a "not available on iOS, try another" message.
+      if (walletApp === "rabby") {
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+        if (isIOS) {
+          showInstallToast("Rabby", MOBILE_WALLET_LINKS.rabby.install);
+          setConnecting(false);
+          return;
         }
-        const session = await approval();
-        const accounts = session.namespaces?.eip155?.accounts || [];
-        if (accounts.length === 0) throw new Error("No accounts");
-        const walletAddress = accounts[0].split(":")[2];
-        const wcProvider = {
-          request: async ({ method, params }) => {
-            if (method === "eth_requestAccounts" || method === "eth_accounts") return [walletAddress];
-            return await signClient.request({
-              topic: session.topic,
-              request: { method, params: params || [] },
-              chainId: "eip155:8453",
-            });
-          },
-          on: () => {},
-          isWalletConnect: true,
-        };
-        const browserProvider = new ethers.BrowserProvider(wcProvider);
-        setAddress(walletAddress);
-        setSigner(await browserProvider.getSigner());
-        toast.success("Wallet connected via WalletConnect");
+        // On Android, Rabby uses WalletConnect internally. Fire the
+        // WalletConnect picker but label it as "Rabby via WalletConnect"
+        // so the user knows what's happening.
+        toast("Opening Rabby via WalletConnect…", { duration: 3000 });
+        await openWalletConnectPicker(dappUrl);
         setConnecting(false);
         return;
       }
 
-      // App-specific deep link (MetaMask, Trust, Rainbow)
+      // ── Deep-link wallets (MetaMask, Trust, Rainbow) ──────────────
       const cfg = MOBILE_WALLET_LINKS[walletApp];
       if (!cfg) {
-        toast.error("Unknown wallet app: " + walletApp);
+        // Unknown wallet key — fall through to WalletConnect.
+        await openWalletConnectPicker(dappUrl);
         setConnecting(false);
         return;
       }
 
-      // Prefer the universal link (works for installed AND not-installed;
-      // redirects to app store landing page if not installed).
-      const link = cfg.universal || cfg.scheme;
-      if (!link) {
-        // No deep link available (e.g. Rabby) — use WalletConnect
+      const universal = cfg.universal ? cfg.universal(dappUrl) : null;
+      const scheme = cfg.scheme ? cfg.scheme(dappUrl) : null;
+
+      if (!universal && !scheme) {
+        // No deep link available — show install toast.
+        showInstallToast(
+          walletApp === "rainbow" ? "Rainbow"
+          : walletApp === "trust" ? "Trust Wallet"
+          : walletApp === "metamask" ? "MetaMask"
+          : walletApp,
+          cfg.install
+        );
         setConnecting(false);
-        await connectMobile("walletconnect");
         return;
       }
 
-      const deepLink = link(dappUrl);
+      // Fire the universal link immediately. OS intercepts it if the
+      // app is installed and navigates away. If not, the page stays
+      // visible and we chain the scheme fallback after 200ms.
+      window.location.href = universal;
 
-      // Fire the deep link
-      window.location.href = deepLink;
-
-      // Install-fallback: if we're still on the page after 1.8s, the
-      // app is not installed. Surface the install link so the user
-      // can grab it from the App Store / Play Store and try again.
-      const install = cfg.install;
-      if (install) {
-        setTimeout(() => {
-          if (document.visibilityState === "visible") {
-            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
-            const storeUrl = isIOS ? install.ios : install.android;
-            if (storeUrl) {
-              toast(
-                <div>
-                  <div className="font-semibold mb-1">
-                    {walletApp === "metamask" ? "MetaMask" : walletApp === "trust" ? "Trust Wallet" : walletApp === "rainbow" ? "Rainbow" : walletApp} not detected
-                  </div>
-                  <div className="text-xs text-white/70 mb-2">
-                    Tap below to install, then come back and try again.
-                  </div>
-                  <a
-                    href={storeUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-block px-3 py-1.5 bg-green-500 text-black text-xs font-bold rounded"
-                  >
-                    Install from {isIOS ? "App Store" : "Play Store"}
-                  </a>
-                </div>,
-                { duration: 15000 }
-              );
-            }
-          }
-        }, 1800);
-      } else {
-        // Try the custom scheme as a second attempt (e.g. metamask://
-        // when metamask.app.link didn't intercept).
-        if (cfg.scheme) {
-          setTimeout(() => {
-            if (document.visibilityState === "visible") {
-              window.location.href = cfg.scheme(dappUrl);
-            }
-          }, 200);
+      const schemeFire = () => {
+        if (document.visibilityState === "visible" && scheme) {
+          window.location.href = scheme;
         }
-      }
+      };
+      setTimeout(schemeFire, 250);
+
+      // Install-fallback toast. Reduced from 1.8s to 1s — most OS
+      // deep-link interceptions happen in <500ms, so this is plenty.
+      const installFire = () => {
+        if (document.visibilityState === "visible" && cfg.install) {
+          showInstallToast(
+            walletApp === "rainbow" ? "Rainbow"
+            : walletApp === "trust" ? "Trust Wallet"
+            : walletApp === "metamask" ? "MetaMask"
+            : walletApp,
+            cfg.install
+          );
+        }
+      };
+      setTimeout(installFire, 1000);
     } catch (e) {
       if (e?.message?.includes("rejected") || e?.message?.includes("cancel")) {
         // silent
@@ -746,6 +732,69 @@ export function WalletProvider({ children }) {
       }
     }
     setConnecting(false);
+  }, []);
+
+  // ─── WalletConnect picker (standalone helper, called from connectMobile) ─
+  const openWalletConnectPicker = useCallback(async (dappUrl) => {
+    try {
+      const { ethers } = await import("ethers");
+      const { SignClient } = await import("@walletconnect/sign-client");
+      const signClient = await SignClient.init({
+        projectId: WC_PROJECT_ID,
+        relayUrl: "wss://relay.walletconnect.com",
+        metadata: {
+          name: "Privacy Cloak",
+          description: "Private transactions on Base",
+          url: dappUrl || window.location.origin,
+          icons: [`${dappUrl || window.location.origin}/icons/icon-192x192.png`],
+        },
+      });
+      const { uri, approval } = await signClient.connect({
+        requiredNamespaces: {
+          eip155: {
+            chains: ["eip155:8453"],
+            methods: [
+              "eth_sendTransaction",
+              "eth_signTypedData_v4",
+              "personal_sign",
+              "wallet_switchEthereumChain",
+            ],
+            events: ["accountsChanged", "chainChanged"],
+          },
+        },
+      });
+      if (uri) {
+        window.location.href = `wc:${uri}`;
+        toast("Select your wallet from the list", { duration: 8000 });
+      }
+      const session = await approval();
+      const accounts = session.namespaces?.eip155?.accounts || [];
+      if (accounts.length === 0) throw new Error("No accounts");
+      const walletAddress = accounts[0].split(":")[2];
+      const wcProvider = {
+        request: async ({ method, params }) => {
+          if (method === "eth_requestAccounts" || method === "eth_accounts") return [walletAddress];
+          return await signClient.request({
+            topic: session.topic,
+            request: { method, params: params || [] },
+            chainId: "eip155:8453",
+          });
+        },
+        on: () => {},
+        isWalletConnect: true,
+      };
+      const browserProvider = new ethers.BrowserProvider(wcProvider);
+      setAddress(walletAddress);
+      setSigner(await browserProvider.getSigner());
+      toast.success("Wallet connected via WalletConnect");
+    } catch (e) {
+      if (e?.message?.includes("rejected") || e?.message?.includes("cancel")) {
+        // silent
+      } else {
+        toast.error("WalletConnect failed: " + (e?.message || "Unknown").slice(0, 80));
+      }
+      throw e;
+    }
   }, []);
 
   // ─── AUTO-CONNECT in wallet in-app browser ──────────────────────────
