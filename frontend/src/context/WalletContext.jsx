@@ -668,10 +668,10 @@ export function WalletProvider({ children }) {
       // ── Rabby special-case ────────────────────────────────────────
       // Rabby mobile uses WalletConnect on BOTH iOS and Android.
       // Rabby iOS app DOES exist and supports WalletConnect.
-      // Fire the WalletConnect picker and label it as "Rabby via WalletConnect"
-      // so the user knows what's happening.
+      // Fire the WalletConnect picker and show clear guidance that
+      // the user must select Rabby from the wallet list.
       if (walletApp === "rabby") {
-        toast("Opening Rabby via WalletConnect…", { duration: 3000 });
+        toast.info("A wallet picker will appear. Select Rabby from the list to connect.", { duration: 6000 });
         await openWalletConnectPicker(dappUrl);
         setConnecting(false);
         return;
@@ -756,7 +756,23 @@ export function WalletProvider({ children }) {
       const { uri, approval } = await signClient.connect({
         requiredNamespaces: {
           eip155: {
-            chains: ["eip155:8453"],
+            chains: ["eip155:8453"], // Base chain (required)
+            methods: [
+              "eth_sendTransaction",
+              "eth_signTypedData_v4",
+              "personal_sign",
+              "wallet_switchEthereumChain",
+            ],
+            events: ["accountsChanged", "chainChanged"],
+          },
+        },
+        optionalNamespaces: {
+          eip155: {
+            chains: [
+              "eip155:1",      // Ethereum mainnet (optional fallback)
+              "eip155:10",     // Optimism (optional fallback)
+              "eip155:42161",  // Arbitrum (optional fallback)
+            ],
             methods: [
               "eth_sendTransaction",
               "eth_signTypedData_v4",
@@ -769,12 +785,46 @@ export function WalletProvider({ children }) {
       });
       if (uri) {
         window.location.href = `wc:${uri}`;
-        toast("Select your wallet from the list", { duration: 8000 });
+        toast("Select Rabby from the list", { duration: 8000 });
       }
       const session = await approval();
       const accounts = session.namespaces?.eip155?.accounts || [];
       if (accounts.length === 0) throw new Error("No accounts");
       const walletAddress = accounts[0].split(":")[2];
+      const connectedChain = accounts[0].split(":")[1];
+      
+      // Force switch to Base if not already on Base
+      if (connectedChain !== "8453") {
+        try {
+          await signClient.request({
+            topic: session.topic,
+            chainId: "eip155:8453",
+            request: {
+              method: "wallet_switchEthereumChain",
+              params: [{ chainId: "0x2105" }], // Base chain ID in hex
+            },
+          });
+        } catch (switchError) {
+          // If Base isn't added, add it
+          if (switchError?.code === 4902) {
+            await signClient.request({
+              topic: session.topic,
+              chainId: "eip155:8453",
+              request: {
+                method: "wallet_addEthereumChain",
+                params: [{
+                  chainId: "0x2105",
+                  chainName: "Base",
+                  nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+                  rpcUrls: ["https://mainnet.base.org"],
+                  blockExplorerUrls: ["https://basescan.org"],
+                }],
+              },
+            });
+          }
+        }
+      }
+      
       const wcProvider = {
         request: async ({ method, params }) => {
           if (method === "eth_requestAccounts" || method === "eth_accounts") return [walletAddress];
@@ -790,7 +840,8 @@ export function WalletProvider({ children }) {
       const browserProvider = new ethers.BrowserProvider(wcProvider);
       setAddress(walletAddress);
       setSigner(await browserProvider.getSigner());
-      toast.success("Wallet connected via WalletConnect");
+      setChain("base"); // Set Base in React state
+      toast.success("Wallet connected on Base");
     } catch (e) {
       if (e?.message?.includes("rejected") || e?.message?.includes("cancel")) {
         // silent
