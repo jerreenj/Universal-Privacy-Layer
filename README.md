@@ -249,6 +249,20 @@ Designed to prevent linkage back to your identity.
 | **Progressive Web App** | Installable on mobile and desktop with offline caching, service worker support, and native-like experience. |
 | **Developer API** | Full programmatic access with API key management. Build privacy features into your own applications. |
 
+## Mobile Support
+
+Full mobile-optimized experience at [privacycloak.in](https://privacycloak.in) on iOS and Android.
+
+| Wallet | Mobile Connection | Chain |
+|:-------|:-----------------|:------|
+| **MetaMask** | Deep link (`metamask.app.link` or `metamask://`) opens MetaMask's in-app browser | Base (auto-switched) |
+| **Rabby** | WalletConnect — user selects Rabby from the picker | Base (auto-switched via `wallet_switchEthereumChain`) |
+| **Phantom** | Deep link (`phantom.app/ul/browse`) opens Phantom's in-app browser | Base (auto-switched) |
+
+**Installable PWA:** Add to Home Screen for app-like experience. Service worker with network-first caching, 8 PNG manifest icons (72-512px), iOS Safari standalone mode.
+
+**Chain guard:** Auto-connect verifies the wallet is on Base (`0x2105`). If the wallet stays on a different chain, a warning toast names the current network instead of silently mislabeling it as Base.
+
 <br>
 
 ---
