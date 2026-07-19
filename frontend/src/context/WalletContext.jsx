@@ -4,6 +4,23 @@ import { toast } from "sonner";
 import { CHAINS, VM, API } from "@/config/chains";
 import { formatExactBalance } from "@/lib/utils";
 
+// ─── Network name helper for error messages ──────────────────────────
+// Converts chain ID (decimal) to human-readable network name.
+function getNetworkName(chainId) {
+  const networks = {
+    1: "Ethereum Mainnet",
+    5: "Goerli Testnet",
+    10: "Optimism",
+    56: "BSC",
+    137: "Polygon",
+    8453: "Base",
+    42161: "Arbitrum One",
+    43114: "Avalanche",
+    11155111: "Sepolia Testnet",
+  };
+  return networks[chainId] || `Unknown Network (${chainId})`;
+}
+
 // ─── Mobile/Desktop separation ─────────────────────────────────────────
 // This flag gates ALL mobile-specific code. Desktop code paths NEVER
 // reference it — they run exactly as before. Mobile and desktop are
@@ -870,33 +887,56 @@ export function WalletProvider({ children }) {
           const browserProvider = new ethers.BrowserProvider(provider);
           setAddress(accounts[0]);
           setSigner(await browserProvider.getSigner());
-          setChain("base"); // Set Base in React state
-          // Switch wallet to Base chain
-          try {
-            await provider.request({
-              method: "wallet_switchEthereumChain",
-              params: [{ chainId: CHAINS.base.chainId }],
-            });
-          } catch (switchError) {
-            // Error 4902 = chain not added. Try adding Base first.
-            if (switchError.code === 4902) {
-              try {
-                await provider.request({
-                  method: "wallet_addEthereumChain",
-                  params: [{
-                    chainId: CHAINS.base.chainId,
-                    chainName: "Base",
-                    nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-                    rpcUrls: ["https://mainnet.base.org"],
-                    blockExplorerUrls: ["https://basescan.org"],
-                  }],
-                });
-              } catch {}
+          
+          // Check current chain BEFORE trying to switch
+          const currentChainHex = await provider.request({ method: "eth_chainId" });
+          const currentChainDec = parseInt(currentChainHex, 16);
+          
+          // Only switch if we're NOT already on Base
+          if (currentChainDec !== CHAINS.base.chainIdDec) {
+            try {
+              await provider.request({
+                method: "wallet_switchEthereumChain",
+                params: [{ chainId: CHAINS.base.chainId }],
+              });
+            } catch (switchError) {
+              // Error 4902 = chain not added. Try adding Base first.
+              if (switchError.code === 4902) {
+                try {
+                  await provider.request({
+                    method: "wallet_addEthereumChain",
+                    params: [{
+                      chainId: CHAINS.base.chainId,
+                      chainName: "Base",
+                      nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+                      rpcUrls: ["https://mainnet.base.org"],
+                      blockExplorerUrls: ["https://basescan.org"],
+                    }],
+                  });
+                } catch {}
+              } else {
+                // User rejected chain switch or other error — log it
+                console.warn("Chain switch failed:", switchError.message);
+              }
             }
           }
-          toast.success("Wallet connected!");
+          
+          // Verify we're actually on Base after switch attempt
+          const finalChainHex = await provider.request({ method: "eth_chainId" });
+          const finalChainDec = parseInt(finalChainHex, 16);
+          
+          if (finalChainDec === CHAINS.base.chainIdDec) {
+            setChain("base"); // Set Base in React state
+            toast.success("Wallet connected on Base!");
+          } else {
+            // We're not on Base — warn user
+            setChain("base"); // Still set state to base for UI
+            toast.error(`Warning: Wallet is on ${getNetworkName(finalChainDec)}, not Base. Some features may not work.`, { duration: 5000 });
+          }
         }
-      } catch {}
+      } catch (e) {
+        console.error("Auto-connect failed:", e);
+      }
     };
     autoConnect();
   }, []); // Run once on mount
