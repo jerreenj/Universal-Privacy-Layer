@@ -32,83 +32,46 @@ export function loadSnarkjs() {
 // Lazily load circomlibjs for Poseidon.
 // circomlibjs is bundled as a static asset at public/zk-pool/.
 // The UMD wrapper uses `this` which may be undefined in strict mode
-// browsers. We try the script-tag approach first, then fall back to
-// a dynamic import of the npm package (works if the bundler includes it).
+// browsers. We create a non-module script (which has this=window).
+// 
+// IMPORTANT: Do NOT use `import("circomlibjs")` - we want circomlibjs
+// loaded from the static bundle only, never bundled by webpack.
 let _circomlibPromise = null;
 export function loadCircomlib() {
   if (_circomlibPromise) return _circomlibPromise;
-  _circomlibPromise = new Promise(async (resolve, reject) => {
+  _circomlibPromise = new Promise((resolve, reject) => {
     if (typeof window === "undefined") {
-      // Node.js / SSR — use direct import
-      try {
-        const lib = await import("circomlibjs");
-        resolve(lib);
-      } catch (e) {
-        reject(new Error("circomlibjs import failed: " + e.message));
-      }
+      reject(new Error("circomlibjs requires browser environment"));
       return;
     }
 
-    // Browser — try loading the UMD bundle via script tag
-    // But first check if already loaded
+    // Check if already loaded
     if (window.circomlibjs && typeof window.circomlibjs.buildPoseidon === "function") {
       resolve(window.circomlibjs);
       return;
     }
 
-    // The UMD bundle uses `this` as the global — but in a script tag
-    // with type=module or in strict mode, `this` is undefined.
-    // Fix: we wrap the bundle evaluation by setting `this = window`.
-    // We do this by creating a non-module script (which has this=window).
+    // Load the UMD bundle via script tag
     const s = document.createElement("script");
     s.src = `${ZK_ASSETS_BASE}/circomlibjs.bundle.js`;
     // DON'T set type="module" — classic scripts have this=window
     s.async = true;
 
-    let resolved = false;
     const timeout = setTimeout(() => {
-      if (!resolved) {
-        // Fallback: try dynamic import of the npm package
-        import("circomlibjs").then(lib => {
-          resolved = true;
-          resolve(lib);
-        }).catch(() => {
-          if (!resolved) reject(new Error("circomlibjs failed to load via both script tag and dynamic import"));
-        });
-      }
-    }, 3000);
+      reject(new Error("circomlibjs load timeout (>5s) - check /zk-pool/circomlibjs.bundle.js"));
+    }, 5000);
 
     s.onload = () => {
-      if (resolved) return;
       clearTimeout(timeout);
       if (window.circomlibjs && typeof window.circomlibjs.buildPoseidon === "function") {
-        resolved = true;
         resolve(window.circomlibjs);
       } else {
-        // UMD didn't assign to window (strict mode issue).
-        // Try dynamic import as fallback.
-        import("circomlibjs").then(lib => {
-          if (!resolved) {
-            resolved = true;
-            resolve(lib);
-          }
-        }).catch(e => {
-          if (!resolved) reject(new Error("circomlibjs loaded but window.circomlibjs undefined and dynamic import failed: " + e.message));
-        });
+        reject(new Error("circomlibjs.bundle.js loaded but window.circomlibjs undefined - UMD bundle may be corrupted"));
       }
     };
-    s.onerror = () => {
-      if (resolved) return;
+    s.onerror = (e) => {
       clearTimeout(timeout);
-      // Try dynamic import as fallback
-      import("circomlibjs").then(lib => {
-        if (!resolved) {
-          resolved = true;
-          resolve(lib);
-        }
-      }).catch(() => {
-        if (!resolved) reject(new Error("Failed to load circomlibjs via script tag and dynamic import"));
-      });
+      reject(new Error("Failed to load /zk-pool/circomlibjs.bundle.js - run scripts/build_zk_browser.sh"));
     };
     document.head.appendChild(s);
   });
