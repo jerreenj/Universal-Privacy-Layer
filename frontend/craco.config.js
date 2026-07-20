@@ -28,6 +28,55 @@ let webpackConfig = {
         fs: false,
       };
 
+      // Bundle optimization: split heavy crypto/blockchain libraries into
+      // separate chunks to reduce main bundle size and break up the 2.9MB
+      // monster chunk (8326). Each library gets its own chunk for better
+      // caching and loading performance.
+      webpackConfig.optimization = webpackConfig.optimization || {};
+      webpackConfig.optimization.splitChunks = {
+        ...webpackConfig.optimization.splitChunks,
+        chunks: "all",
+        cacheGroups: {
+          ...webpackConfig.optimization.splitChunks?.cacheGroups,
+          // Split ethers into its own chunk (~500KB)
+          ethers: {
+            test: /[\\/]node_modules[\\/](ethers|@ethersproject)/,
+            name: "ethers",
+            priority: 20,
+          },
+          // Split WalletConnect into its own chunk (~400KB)
+          walletconnect: {
+            test: /[\\/]node_modules[\\/]@walletconnect/,
+            name: "walletconnect",
+            priority: 20,
+          },
+          // Split Solana web3.js into its own chunk (~600KB)
+          solana: {
+            test: /[\\/]node_modules[\\/]@solana/,
+            name: "solana",
+            priority: 20,
+          },
+          // Split Sui SDK into its own chunk (~800KB)
+          sui: {
+            test: /[\\/]node_modules[\\/]@mysten/,
+            name: "sui",
+            priority: 20,
+          },
+          // Split ZK libraries (snarkjs + circomlibjs) (~550KB combined)
+          zk: {
+            test: /[\\/]node_modules[\\/](snarkjs|circomlibjs)/,
+            name: "zk",
+            priority: 20,
+          },
+          // Keep default vendor chunk for other libraries
+          defaultVendors: {
+            test: /[\\/]node_modules[\\/]/,
+            name: "vendors",
+            priority: 10,
+          },
+        },
+      };
+
       const webpack = require("webpack");
       webpackConfig.plugins = webpackConfig.plugins || [];
       webpackConfig.plugins.push(
