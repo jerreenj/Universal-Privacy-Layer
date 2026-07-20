@@ -72,8 +72,8 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
     event PrepaidWithdrawn(address indexed depositor, uint256 amount);
 
     // ─── Fee configuration ─────────────────────────────────────────────────
-    // Stored as basis points for the backend's `feeBps()` view. 5 bps = 0.05%.
-    uint256 private _feeBps = 5;
+    // Stored as basis points for the backend's `feeBps()` view. 100 bps = 1%.
+    uint256 private _feeBps = 100;
     uint256 public constant FEE_DENOMINATOR = 10000;
     uint256 public constant MAX_FEE_BPS = 100; // hard cap = 1%
 
@@ -94,6 +94,11 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
     // until set, in which case `relayAndAnnounce` reverts (use the announce-less
     // `relay()` if no registry is wired). `relay()` remains unaffected.
     address public registry;
+
+    // ─── Revenue wallet ────────────────────────────────────────────────────
+    // Address where accumulated protocol fees are withdrawn. Set by owner.
+    // Owner can rotate this address at any time.
+    address public revenueWallet;
 
     constructor() Ownable(msg.sender) {
         // Solo-relayer MVP: the deployer IS the relayer. Rotate via setRelayer()
@@ -132,6 +137,14 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
     function setRegistry(address newRegistry) external onlyOwner {
         require(newRegistry != address(0), "Zero registry");
         registry = newRegistry;
+    }
+
+    /// @notice Set the revenue wallet where accumulated fees are withdrawn.
+    ///         Owner-only. Zero address is rejected. Owner can rotate this
+    ///         address at any time by calling this function again.
+    function setRevenueWallet(address newWallet) external onlyOwner {
+        require(newWallet != address(0), "Zero revenue wallet");
+        revenueWallet = newWallet;
     }
 
     // ─── Core entry — the ONLY function the backend calls ─────────────────
@@ -282,6 +295,19 @@ contract PrivacyRelayer is ReentrancyGuard, Ownable {
         (bool ok,) = to.call{value: amount}("");
         require(ok, "Fee withdrawal failed");
         emit FeesWithdrawn(to, amount);
+    }
+
+    /// @notice Convenience function: withdraw accrued fees to the configured
+    ///         revenueWallet. Reverts if revenueWallet has not been set via
+    ///         setRevenueWallet(). Owner-only.
+    function withdrawAccumulatedFees() external onlyOwner nonReentrant {
+        require(revenueWallet != address(0), "Revenue wallet not configured");
+        uint256 amount = accumulatedFees;
+        require(amount > 0, "No fees to withdraw");
+        accumulatedFees = 0;
+        (bool ok,) = payable(revenueWallet).call{value: amount}("");
+        require(ok, "Fee withdrawal to revenue wallet failed");
+        emit FeesWithdrawn(revenueWallet, amount);
     }
 
     /// @notice Set the fee in basis points. Hard-capped at MAX_FEE_BPS (1%).

@@ -32,7 +32,7 @@ contract PrivacyRelayerTest is Test {
     address internal deployer = address(this);
     // A throwaway stealth recipient for the forward tests.
     address internal recipient = address(0xB0B);
-    uint256 internal constant FEE_BPS = 5; // constructor default
+    uint256 internal constant FEE_BPS = 100; // constructor default (1%)
     uint256 internal constant FEE_DENOM = 10_000;
 
     function setUp() public {
