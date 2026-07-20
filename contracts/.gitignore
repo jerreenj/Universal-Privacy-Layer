@@ -1,40 +1,17 @@
-# Compiler files
-cache/
-out/
-
-# Dependencies — fetched via `forge install` (forge-std, openzeppelin-contracts).
-# Not committed: keeps the monorepo clean (honest language stats) and avoids
-# nested-submodule path issues in a monorepo. CI runs `forge install` before build.
+# Dependencies
+node_modules/
 lib/
 
-# Commonly ignored directories
-.logs/
-.ignore/
-
-# Ignores broadcast logs (deploy artifacts — not needed in repo)
+# Build artifacts  
+cache/
+out/
 broadcast/
 
-# Docs
-docs/
-
-# Dotenv file
+# Environment files
 .env
-.env.*
-!.env.example
 
-# ─── ZK circuit build artifacts (Phase 3) ──────────────────────────
-# Large and/or secret-derived binaries: never commit. The proving key (.zkey)
-# and wasm witness generator are distributed via release/CDN at frontend build
-# time (P3.6), the Powers of Tau transcript (.ptau) is kept offline by the
-# ceremony organizer.
-circuits/build/
-circuits/**/*.r1cs
-circuits/**/*.wasm
-circuits/**/*.sym
-circuits/**/*.zkey
-circuits/**/*.ptau
-circuits/**/proof.json
-circuits/**/public.json
-circuits/**/vkey.json
-circuits/**/verification_key.json
-circuits/**/*_js/
+# OS files
+.DS_Store
+
+# Foundry
+foundry.lock

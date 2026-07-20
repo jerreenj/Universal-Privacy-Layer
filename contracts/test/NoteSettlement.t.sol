@@ -36,6 +36,9 @@ contract NoteSettlementTest is Test {
     function test_invalid_proof_reverts() public {
         MockVerifierReject rejectVerifier = new MockVerifierReject();
         NoteSettlement badSettlement = new NoteSettlement(address(rejectVerifier));
+        
+        // Set revenue wallet before testing proof validation
+        badSettlement.setRevenueWallet(address(0x999));
 
         uint256[2] memory proofA = [uint256(1), uint256(2)];
         uint256[2][2] memory proofB = [[uint256(3), uint256(4)], [uint256(5), uint256(6)]];

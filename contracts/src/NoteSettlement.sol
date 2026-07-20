@@ -42,16 +42,60 @@ contract NoteSettlement is Ownable, ReentrancyGuard {
     // Spent nullifier set — prevents double-settlement
     mapping(uint256 => bool) public settledNullifiers;
 
+    // ─── Fee configuration ──────────────────────────────────────────────────
+    // 100 basis points = 1% settlement fee. Owner can reduce via setFeeBps().
+    // Capped at MAX_FEE_BPS = 100 (1%) — cannot be raised above 1%.
+    uint256 private _feeBps = 100;
+    uint256 public constant FEE_DENOMINATOR = 10000;
+    uint256 public constant MAX_FEE_BPS = 100;
+
+    // ─── Revenue wallet ─────────────────────────────────────────────────────
+    // Address where settlement fees are sent. Set by owner.
+    address public revenueWallet;
+
     event NoteSettled(uint256 indexed nullifierHash, address recipient, uint256 amount);
     event USDCFunded(uint256 amount);
+    event FeeRateUpdated(uint256 oldRate, uint256 newRate);
+    event RevenueWalletUpdated(address indexed oldWallet, address indexed newWallet);
 
     constructor(address _verifier) Ownable(msg.sender) {
         verifier = _verifier;
     }
 
+    // ─── Owner admin: fee & revenue wallet ───────────────────────────────────
+    /**
+     * @notice Set the revenue wallet address. Owner-only. Fee is sent here on
+     *         every settlement. Must be set before settlements are allowed.
+     * @param newWallet The address that will receive settlement fees.
+     */
+    function setRevenueWallet(address newWallet) external onlyOwner {
+        require(newWallet != address(0), "Zero revenue wallet");
+        address oldWallet = revenueWallet;
+        revenueWallet = newWallet;
+        emit RevenueWalletUpdated(oldWallet, newWallet);
+    }
+
+    /**
+     * @notice Update the settlement fee. Owner-only. Can only REDUCE the fee,
+     *         never increase it above MAX_FEE_BPS (100 bps = 1%).
+     * @param newFeeBps New fee in basis points (must be <= MAX_FEE_BPS).
+     */
+    function setFeeBps(uint256 newFeeBps) external onlyOwner {
+        require(newFeeBps <= MAX_FEE_BPS, "Fee exceeds maximum");
+        uint256 oldRate = _feeBps;
+        _feeBps = newFeeBps;
+        emit FeeRateUpdated(oldRate, newFeeBps);
+    }
+
+    /// @notice Read the current settlement fee in basis points.
+    function feeBps() external view returns (uint256) {
+        return _feeBps;
+    }
+
     /**
      * @notice Settle a confidential note — redeem it for real USDC.
      *         Called by the relayer. The relayer fronts the USDC.
+     *         1% fee is sent to revenue wallet, 99% goes to recipient.
      *
      * @param proofA     Groth16 proof part A (2 elements)
      * @param proofB     Groth16 proof part B (2x2 elements)
@@ -66,6 +110,8 @@ contract NoteSettlement is Ownable, ReentrancyGuard {
         uint256[2] calldata pubSignals,
         address recipient
     ) external nonReentrant {
+        require(revenueWallet != address(0), "Revenue wallet not set");
+        
         uint256 nullifierHash = pubSignals[0];
         uint256 amount = pubSignals[1];
 
@@ -79,12 +125,21 @@ contract NoteSettlement is Ownable, ReentrancyGuard {
         // Mark as settled (CEI pattern)
         settledNullifiers[nullifierHash] = true;
 
-        // Transfer USDC to recipient
-        // The relayer (or this contract) must hold enough USDC.
-        // The contract is funded by the owner (who collects USDC
-        // from the note creation flow).
-        (bool success,) = USDC.call(abi.encodeWithSelector(0xa9059cbb, recipient, amount));
-        require(success, "USDC transfer failed");
+        // Calculate fee (1% of amount)
+        uint256 fee = (amount * _feeBps) / FEE_DENOMINATOR;
+        uint256 recipientAmount = amount - fee;
+
+        // Transfer fee to revenue wallet
+        if (fee > 0) {
+            (bool feeSuccess,) = USDC.call(abi.encodeWithSelector(0xa9059cbb, revenueWallet, fee));
+            require(feeSuccess, "Fee transfer failed");
+        }
+
+        // Transfer USDC to recipient (99% of amount)
+        if (recipientAmount > 0) {
+            (bool success,) = USDC.call(abi.encodeWithSelector(0xa9059cbb, recipient, recipientAmount));
+            require(success, "USDC transfer failed");
+        }
 
         emit NoteSettled(nullifierHash, recipient, amount);
     }

@@ -37,7 +37,11 @@ contract PrivacyPoolTest is Test {
     MockGroth16Verifier internal mockTrue;
     MockGroth16Verifier internal mockFalse;
 
+    address internal revenueWallet = address(0xDEAD);
+
     uint256 internal constant DENOM = 0.1 ether;
+    uint256 internal constant FEE_BPS = 100; // 1% fee
+    uint256 internal constant FEE_DENOM = 10_000;
     // Mirrors PrivacyPool.MERKLE_DEPTH (contract constants are not reachable
     // via the type name in Solidity, only via an instance getter). Asserted at
     // runtime below via pool.zeros(DEPTH) (would revert if they diverged).
@@ -52,6 +56,7 @@ contract PrivacyPoolTest is Test {
         uint256[] memory _denoms = new uint256[](1);
         _denoms[0] = DENOM;
         pool = new PrivacyPool(address(mockTrue), _denoms);
+        pool.setRevenueWallet(revenueWallet);
         vm.deal(address(this), 100 ether);
     }
 
@@ -164,19 +169,25 @@ contract PrivacyPoolTest is Test {
     }
 
     /// @notice With the always-true mock, a withdraw against a known root + a
-    ///         fresh nullifier pays out and marks the nullifier spent.
+    ///         fresh nullifier pays out (99% to recipient, 1% fee to revenue wallet)
+    ///         and marks the nullifier spent.
     function test_WithdrawPaysOutAndMarksNullifier() public {
         bytes32 commitment = bytes32(uint256(0xCAFE));
         pool.deposit{value: DENOM}(commitment, DENOM);
         uint256 root = uint256(pool.currentRootOf(DENOM));
         address recipient = address(0xB0B);
         uint256 nullifierHash = 0x111;
-        uint256 balBefore = recipient.balance;
+        uint256 recipientBalBefore = recipient.balance;
+        uint256 revenueBalBefore = revenueWallet.balance;
 
         uint256[3] memory pub = [nullifierHash, root, uint256(uint160(recipient))];
         pool.withdraw([uint256(1), 2], [[uint256(3), 4], [uint256(5), 6]], [uint256(7), 8], pub);
 
-        assertEq(recipient.balance, balBefore + DENOM, "recipient not paid");
+        uint256 fee = (DENOM * FEE_BPS) / FEE_DENOM;
+        uint256 recipientAmount = DENOM - fee;
+        
+        assertEq(recipient.balance, recipientBalBefore + recipientAmount, "recipient not paid 99%");
+        assertEq(revenueWallet.balance, revenueBalBefore + fee, "revenue wallet not paid 1% fee");
         assertTrue(pool.nullifierHashes(nullifierHash), "nullifier not marked spent");
     }
 

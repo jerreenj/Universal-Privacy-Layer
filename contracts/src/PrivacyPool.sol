@@ -43,6 +43,17 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
 
     Groth16Verifier public immutable verifier;
 
+    // ─── Fee configuration ──────────────────────────────────────────────────
+    // 100 basis points = 1% withdrawal fee. Owner can reduce via setFeeBps().
+    // Capped at MAX_FEE_BPS = 100 (1%) — cannot be raised above 1%.
+    uint256 private _feeBps = 100;
+    uint256 public constant FEE_DENOMINATOR = 10000;
+    uint256 public constant MAX_FEE_BPS = 100;
+
+    // ─── Revenue wallet ─────────────────────────────────────────────────────
+    // Address where withdrawal fees are sent. Set by owner.
+    address public revenueWallet;
+
     // ─── Per-denomination tree state ─────────────────────────────────────
     struct DenomTree {
         bytes32[20] filledSubtrees;
@@ -66,6 +77,8 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
     event Deposit(bytes32 indexed commitment, uint256 indexed denomination, uint32 indexed leafIndex, bytes32 root);
     event Withdrawal(address indexed recipient, uint256 nullifierHash, bytes32 root);
     event Sweep(address indexed to, uint256 amount);
+    event FeeRateUpdated(uint256 oldRate, uint256 newRate);
+    event RevenueWalletUpdated(address indexed oldWallet, address indexed newWallet);
 
     // ─── Errors ────────────────────────────────────────────────────────────
     error MustPayExactDenomination();
@@ -77,6 +90,9 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
     error RecipientZero();
     error DenominationNotEnabled(uint256 denomination);
     error ZeroDenomination();
+    error FeeExceedsMaximum();
+    error FeeTransferFailed();
+    error RevenueWalletNotSet();
 
     constructor(address _verifier, uint256[] memory _initialDenominations) Ownable(msg.sender) {
         if (_verifier == address(0)) revert RecipientZero();
@@ -126,6 +142,36 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
         t.roots[0] = t.currentRoot;
 
         emit DenominationAdded(denomination);
+    }
+
+    // ─── Owner admin: fee & revenue wallet ───────────────────────────────────
+    /**
+     * @notice Set the revenue wallet address. Owner-only. Fee is sent here on
+     *         every withdrawal. Must be set before withdrawals are allowed.
+     * @param newWallet The address that will receive withdrawal fees.
+     */
+    function setRevenueWallet(address newWallet) external onlyOwner {
+        if (newWallet == address(0)) revert RecipientZero();
+        address oldWallet = revenueWallet;
+        revenueWallet = newWallet;
+        emit RevenueWalletUpdated(oldWallet, newWallet);
+    }
+
+    /**
+     * @notice Update the withdrawal fee. Owner-only. Can only REDUCE the fee,
+     *         never increase it above MAX_FEE_BPS (100 bps = 1%).
+     * @param newFeeBps New fee in basis points (must be <= MAX_FEE_BPS).
+     */
+    function setFeeBps(uint256 newFeeBps) external onlyOwner {
+        if (newFeeBps > MAX_FEE_BPS) revert FeeExceedsMaximum();
+        uint256 oldRate = _feeBps;
+        _feeBps = newFeeBps;
+        emit FeeRateUpdated(oldRate, newFeeBps);
+    }
+
+    /// @notice Read the current withdrawal fee in basis points.
+    function feeBps() external view returns (uint256) {
+        return _feeBps;
     }
 
     // ─── Deposit ──────────────────────────────────────────────────────────
@@ -194,7 +240,21 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
         uint256 denomination = _findDenomByRoot(root);
         if (denomination == 0) revert UnknownRoot(); // safety — root vanished mid-call
 
-        (bool ok,) = recipient.call{value: denomination}("");
+        // ─── Fee collection (1% to revenue wallet) ─────────────────────────
+        if (revenueWallet == address(0)) revert RevenueWalletNotSet();
+        
+        // Calculate fee: 1% of denomination (100 bps / 10000 = 1%)
+        uint256 fee = (denomination * _feeBps) / FEE_DENOMINATOR;
+        uint256 recipientAmount = denomination - fee;
+
+        // Send fee to revenue wallet first (separate from recipient transfer)
+        if (fee > 0) {
+            (bool feeOk,) = payable(revenueWallet).call{value: fee}("");
+            if (!feeOk) revert FeeTransferFailed();
+        }
+
+        // Send remainder to recipient
+        (bool ok,) = recipient.call{value: recipientAmount}("");
         if (!ok) revert TransferFailed();
 
         emit Withdrawal(recipient, nullifierHash, root);
