@@ -59,6 +59,9 @@ contract PrivacyPoolE2ETest is Test {
         _denoms[0] = DENOM;
         pool = new PrivacyPool(address(verifier), _denoms);
         vm.deal(address(this), 100 ether);
+        
+        // Set revenue wallet (required for withdraw with fees)
+        pool.setRevenueWallet(address(0xDEAD));
     }
 
     // Helper: build the proof arrays from the constants above.
@@ -90,8 +93,10 @@ contract PrivacyPoolE2ETest is Test {
         uint256 balBefore = RECIPIENT.balance;
         pool.withdraw(a, b, c, pub);
 
-        // 3. Recipient paid + nullifier marked spent.
-        assertEq(RECIPIENT.balance, balBefore + DENOM, "recipient not paid by real proof");
+        // 3. Recipient paid (minus 1% fee) + nullifier marked spent.
+        uint256 fee = (DENOM * 100) / 10000; // 1% fee = 0.001 ether
+        uint256 expectedAfterFee = DENOM - fee; // 0.099 ether
+        assertEq(RECIPIENT.balance, balBefore + expectedAfterFee, "recipient not paid by real proof (after 1% fee)");
         assertTrue(pool.nullifierHashes(NULLIFIER_HASH), "nullifier not spent after real withdraw");
     }
 
@@ -100,9 +105,9 @@ contract PrivacyPoolE2ETest is Test {
     function testRevert_RealProofDoubleSpend() public {
         pool.deposit{value: DENOM}(COMMITMENT, DENOM);
         (uint256[2] memory a, uint256[2][2] memory b, uint256[2] memory c, uint256[3] memory pub) = _proof();
-        pool.withdraw(a, b, c, pub); // first withdraw OK
+        pool.withdraw(a, b, c, pub); // first withdraw OK (pays recipient 0.099 ether after 1% fee)
         vm.expectRevert(PrivacyPool.NullifierAlreadySpent.selector);
-        pool.withdraw(a, b, c, pub); // same nullifier -> revert
+        pool.withdraw(a, b, c, pub); // same nullifier -> revert (revenue wallet already received its 0.001 ether)
     }
 
     /// @notice A tampered proof (wrong proofC) is rejected by the real verifier.
