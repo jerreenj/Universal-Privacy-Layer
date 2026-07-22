@@ -86,7 +86,7 @@ P7  Ethereum mainnet expansion      ░░░░░░░░░░░░░░�
 | Vector | Visible | Plan |
 |---|---|---|
 | **Amount** | Visible on ERC20 Transfer event | **P6**: confidential notes system (built + deployed, awaiting merge) |
-| PrivacyPool ceremony | Self-run 1-party | MPC upgrade path documented |
+| PrivacyPool ceremony | Self-run 1-party | MPC upgrade documented |
 
 ---
 
