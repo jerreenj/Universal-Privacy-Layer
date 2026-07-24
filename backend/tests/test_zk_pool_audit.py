@@ -44,7 +44,11 @@ def test_zk_pool_state_no_name_error_when_address_loaded(monkeypatch):
     effects out, so the audit's forwarding through _try_import_zk_merkle()
     is the only path that matters."""
     # Monkey-patch _load_deployed_addresses so it returns a non-zero pool addr
-    from backend import server as server_mod
+    # NOTE: import `server` directly (not `from backend import server`) — the
+    # conftest puts the backend/ dir itself on sys.path, so the package-prefix
+    # form raises ModuleNotFoundError. This matches the pattern used by every
+    # other passing test (test_relayer_state, test_deployments, etc.).
+    import server as server_mod
 
     def _fake_load_deployed_addresses(static_contracts):
         return {
@@ -101,7 +105,7 @@ def test_zk_pool_state_no_name_error_when_address_loaded(monkeypatch):
 
 def test_zk_merkle_old_zero_fallback_removed():
     """Audit #2 regression: _get_fallback_constants() is gone."""
-    from backend import zk_merkle
+    import zk_merkle
     assert not hasattr(zk_merkle, "_get_fallback_constants"), (
         "Audit #2 regression: zero-array _get_fallback_constants was removed "
         "because shipping it would make every commitment indistinguishable. "
@@ -119,7 +123,7 @@ def test_zk_merkle_loader_raises_on_missing_circomlib(tmp_path, monkeypatch):
     # The simplest reliable check: invoke _load_poseidon_constants inside
     # a process where the circomlib file is unreachable (rename it). The
     # function must raise.
-    import backend.zk_merkle as zm
+    import zk_merkle as zm
     circuits_dir = (zm.Path(__file__).parent if hasattr(zm, "Path") else
                     __import__("pathlib").Path(__file__).parent)
     real_consts = (
@@ -161,7 +165,7 @@ def test_zk_merkle_loader_raises_on_missing_circomlib(tmp_path, monkeypatch):
 def test_try_import_zk_merkle_returns_incremental_merkle_tree():
     """Audit #4 regression: the helper that fixed #1 already gives us the
     Merkle tree class. We assert the helper continues to return it."""
-    from backend import server as server_mod
+    import server as server_mod
     imt, *_ = server_mod._try_import_zk_merkle()
     # In a test environment WITHOUT circomlib, the helper returns None —
     # that's the correct, safe behavior — and the audit-failure mode was
