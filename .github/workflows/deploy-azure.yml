@@ -71,12 +71,21 @@ jobs:
           docker push --all-tags ${{ vars.ACR_NAME }}.azurecr.io/privacycloak
 
       # ─── 6. Update the Container App to the new image ──────────────────────
+      # --revision-suffix: forces Azure to spawn a NEW revision on every push,
+      # even when the image/env spec looks identical to the running one. Without
+      # this, `az containerapp update` can treat an update as a no-op and leave
+      # the OLD revision serving traffic — the "CI green but stale code running"
+      # trap we've been bitten by. Suffix must be <=32 chars, lowercase
+      # alphanumeric + hyphens, and unique per run, so we use run number + UTC ts.
       - name: Deploy to Container Apps
         run: |
+          SUFFIX="r${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%d%H%M%S)"
+          echo "Forcing new revision with suffix: $SUFFIX"
           az containerapp update \
             --resource-group ${{ vars.ACA_RESOURCE_GROUP }} \
             --name ${{ vars.ACA_APP_NAME }} \
-            --image ${{ vars.ACR_NAME }}.azurecr.io/privacycloak:${{ env.IMAGE_TAG }}
+            --image ${{ vars.ACR_NAME }}.azurecr.io/privacycloak:${{ env.IMAGE_TAG }} \
+            --revision-suffix "$SUFFIX"
 
       - name: Sync RELAYER_PRIVATE_KEY secret
         env:

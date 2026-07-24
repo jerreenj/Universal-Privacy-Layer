@@ -8186,6 +8186,8 @@ if STATIC_DIR.is_dir():
     # content-hashed by the CRA build (e.g. main.9135b4e0.js) so they are
     # safe to cache aggressively — the hash changes on every build, so a
     # new deploy produces new URLs that bypass any cache automatically.
+    # We add a long max-age here so repeat visits are instant, while still
+    # being safe because the filename changes on every build.
     app.mount(
         "/static",
         StaticFiles(directory=str(STATIC_DIR / "static")),
@@ -8199,6 +8201,18 @@ if STATIC_DIR.is_dir():
     # the server, producing ChunkLoadError + blank pages after every
     # redeploy. Same for service-worker.js (must always be re-fetched so
     # the new SW version activates immediately).
+    #
+    # NOTE: this no-cache rule must apply whether index.html is reached
+    # via the SPA fallback (full_path empty / unknown route) OR via a
+    # direct request for the literal filename "/index.html". The real-file
+    # branch below used to serve "/index.html" with NO cache headers, which
+    # let CDNs cache the stale shell — fixed 2026-07-24.
+    NO_CACHE_HEADERS = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
     @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     async def serve_spa(full_path: str):
         # If the file exists in build dir, serve it (favicon, manifest, etc.)
@@ -8208,22 +8222,12 @@ if STATIC_DIR.is_dir():
             # get stuck on an old SW version that controls caching for
             # the entire site.
             if full_path == "service-worker.js":
-                return FileResponse(
-                    str(file_path),
-                    headers={
-                        "Cache-Control": "no-cache, no-store, must-revalidate",
-                        "Pragma": "no-cache",
-                        "Expires": "0",
-                    },
-                )
+                return FileResponse(str(file_path), headers=NO_CACHE_HEADERS)
+            # index.html by direct name: same no-cache rule as the SPA
+            # fallback (it is the same unhashed shell).
+            if full_path == "index.html":
+                return FileResponse(str(file_path), headers=NO_CACHE_HEADERS)
             return FileResponse(str(file_path))
         # index.html (SPA fallback): never cache, so the browser always
         # gets the latest chunk-hash references.
-        return FileResponse(
-            str(STATIC_DIR / "index.html"),
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
-        )
+        return FileResponse(str(STATIC_DIR / "index.html"), headers=NO_CACHE_HEADERS)
