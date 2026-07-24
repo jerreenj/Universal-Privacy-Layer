@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { Lock, PenLine, Loader2, Send, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
@@ -32,7 +32,7 @@ export function OnChainRelayer() {
       const ephemeralKey = "0x" + Array(64).fill(0).map(() => Math.floor(Math.random() * 16).toString(16)).join('');
       const viewTag = Math.floor(Math.random() * 256);
       const res = await axios.post(`${API}/relayer/prepare-tx`, {
-        from_address: address, stealth_address: to, amount_wei: ethers.parseEther(amount).toString(),
+        from_address: address, stealth_address: to, amount_wei: ethersUtils.parseEther(amount).toString(),
         ephemeral_key: ephemeralKey, view_tag: viewTag, chain
       });
       setIntent(res.data);

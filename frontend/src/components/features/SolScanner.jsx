@@ -37,7 +37,7 @@ export function SolScanner() {
     setLoading(false);
   }, [limit, afterId]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line
   useEffect(() => { scan(); }, []);
 
   return (

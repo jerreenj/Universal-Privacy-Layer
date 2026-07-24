@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { Link } from "react-router-dom";
 import { Lock, Loader2, Shield, Hash, Download, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { toast } from "sonner";

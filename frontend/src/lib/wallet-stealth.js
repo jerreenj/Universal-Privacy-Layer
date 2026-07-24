@@ -38,7 +38,7 @@
  * publicly observable by definition.
  */
 
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 
 // Domain separator for the meta-derivation personal_sign. We use a
 // PLAIN-STRING message directly (no solidityPacked encoding) to
@@ -70,7 +70,7 @@ export async function signMetaDomain(signer, chainId) {
  */
 export async function hkdfFromSignature(signatureBytes, info, length = 32) {
   // ethers' sha256 doesn't include HMAC; roll our own using subtle.
-  const sigBytes = ethers.getBytes(signatureBytes);
+  const sigBytes = ethersUtils.toUtf8Bytes(signatureBytes);
   const ikm = sigBytes; // (could pad to longer; 65 bytes is fine for HKDF)
   // HKDF-Extract per RFC 5869: PRK = HMAC-SHA-256(salt=HashLen zeros, ikm).
   // IMPORTANT: subtle.importKey rejects EMPTY keys with
@@ -82,7 +82,7 @@ export async function hkdfFromSignature(signatureBytes, info, length = 32) {
   let prev = new Uint8Array(0);
   let counter = 1;
   let written = 0;
-  const infoBytes = ethers.toUtf8Bytes(info);
+  const infoBytes = ethersUtils.toUtf8Bytes(info);
   while (written < length) {
     const block = await hmacSha256(prk, concat([infoBytes, new Uint8Array([counter])]));
     prev = block;

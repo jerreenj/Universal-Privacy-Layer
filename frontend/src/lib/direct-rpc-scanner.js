@@ -20,7 +20,7 @@
  * bytes32,uint64)` — keccak256 of the canonical signature:
  *   0x36dc5c0e7bfc146265bf9c47595b8ebcd5e9224c10daaf65e8b8e6fe17629080
  */
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 
 export const STEALTH_REGISTRY_BY_CHAIN = {
   // chain alias -> { registry address, optional honest-fallback }

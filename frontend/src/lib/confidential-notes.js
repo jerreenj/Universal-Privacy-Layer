@@ -16,7 +16,7 @@
  * All private keys stay in the browser. The backend only sees
  * public signals + the settlement request.
  */
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { generateNoteProof, generateSpendProof, randomFieldElement } from "@/lib/zk-browser";
 import { getAddressArchive, getViewKeyForArchiveEntry } from "@/lib/wallet-stealth";
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { ArrowUpRight, ArrowDownLeft, History, Loader2 } from "lucide-react";
 import { API } from "@/config/chains";
 import { useWallet } from "@/context/WalletContext";

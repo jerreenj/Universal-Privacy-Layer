@@ -20,7 +20,7 @@
  * "Confirm in MetaMask" (transaction).
  */
 import { useState } from "react";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { ArrowUpRight, Shield, Loader2, ExternalLink, Check } from "lucide-react";
 import { toast } from "sonner";
 import { deriveStealthAddress } from "../../utils/stealth";

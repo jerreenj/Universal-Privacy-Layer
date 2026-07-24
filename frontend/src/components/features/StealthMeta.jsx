@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Copy, Check, Shield, RefreshCw, ChevronDown, ChevronUp, History, Lock } from "lucide-react";
 import { toast } from "sonner";
 import axios from "axios";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { API } from "../../config/chains";
 import {
   deriveStealthEOA,

@@ -19,7 +19,7 @@
  */
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { Lock, Send, Loader2, Check, Download, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
@@ -67,8 +67,8 @@ export function ConfidentialTransfer() {
 
   async function fetchVaultInfo() {
     try {
-      const provider = new ethers.JsonRpcProvider(CHAINS.base.rpcUrl);
-      const vault = new ethers.Contract(VAULT_ADDRESS, VAULT_ABI, provider);
+      const provider = await ethersUtils.createJsonRpcProvider(CHAINS.base.rpcUrl);
+      const vault = await ethersUtils.createContract(VAULT_ADDRESS, VAULT_ABI, provider);
       const [root, count, reserve] = await Promise.all([
         vault.currentRootOf(),
         vault.depositCount(),
@@ -77,7 +77,7 @@ export function ConfidentialTransfer() {
       setVaultInfo({
         root: root,
         notes: count,
-        reserve: ethers.formatUnits(reserve, 6),
+         reserve: ethersUtils.formatUnits(reserve, 6),
       });
     } catch {}
   }

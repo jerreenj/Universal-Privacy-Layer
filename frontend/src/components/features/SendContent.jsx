@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { Zap, Lock, Loader2, ExternalLink, CheckCircle2, X, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";
@@ -86,7 +86,7 @@ export function SendContent() {
   const parseRecipient = (raw) => {
     if (!raw) return null;
     const s = String(raw).trim();
-    return ethers.isAddress(s) ? s : null;
+    return ethersUtils.isAddress(s) ? s : null;
   };
 
   /**
@@ -118,7 +118,7 @@ export function SendContent() {
             // in the archive entry. A corrupted/mismatched entry
             // would sign a permit with the wrong key, causing the
             // relayer's transferFrom to fail.
-            const w = new ethers.Wallet(entry.privateKey);
+            const w = await ethersUtils.createWallet(entry.privateKey);
             if (w.address.toLowerCase() !== entry.address.toLowerCase()) {
               return { entry, balance: 0n, skip: true };
             }
@@ -134,9 +134,9 @@ export function SendContent() {
           address: positive[0].entry.address,
           privateKey: positive[0].entry.privateKey,
           balanceRaw: positive[0].balance.toString(),
-          balanceHuman: ethers.formatUnits(positive[0].balance, 6),
+          balanceHuman: ethersUtils.formatUnits(positive[0].balance, 6),
           total: positive.length,
-          totalBalance: ethers.formatUnits(
+          totalBalance: ethersUtils.formatUnits(
             positive.reduce((a, p) => a + p.balance, 0n), 6),
         });
       } catch {
@@ -159,7 +159,7 @@ export function SendContent() {
         const { readEthBalance } = await import("@/lib/balance-reader");
         const probes = await Promise.all(list.map(async (entry) => {
           try {
-            const w = new ethers.Wallet(entry.privateKey);
+            const w = await ethersUtils.createWallet(entry.privateKey);
             if (w.address.toLowerCase() !== entry.address.toLowerCase()) {
               return { entry, balance: 0n, skip: true };
             }
@@ -190,7 +190,7 @@ export function SendContent() {
           address: positive[0].entry.address,
           privateKey: positive[0].entry.privateKey,
           balanceRaw: positive[0].balance.toString(),
-          balanceHuman: ethers.formatEther(positive[0].balance),
+          balanceHuman: ethersUtils.formatEther(positive[0].balance),
           total: positive.length,
         });
       } catch {
@@ -228,7 +228,7 @@ export function SendContent() {
       const usdcAddr = CHAINS[chain]?.contracts?.usdc ||
         "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
       const decimals = 6;
-      const amountRaw = ethers.parseUnits(amount, decimals);
+      const amountRaw = ethersUtils.parseUnits(amount, decimals);
 
       // CRITICAL: re-read the stealth's ACTUAL on-chain USDC balance
       // right before signing. The archive balance might be stale
@@ -240,7 +240,7 @@ export function SendContent() {
       const { readUsdcBalance } = await import("@/lib/balance-reader");
       const liveBalance = await readUsdcBalance(archiveUsdc.address);
       if (liveBalance < amountRaw) {
-        const liveHuman = ethers.formatUnits(liveBalance, 6);
+        const liveHuman = ethersUtils.formatUnits(liveBalance, 6);
         return toast.error(
           `Stealth ${archiveUsdc.address.slice(0, 6)}…${archiveUsdc.address.slice(-4)} only has ${liveHuman} USDC. Use Deposit mode to add more.`,
           { duration: 6000 }
@@ -251,7 +251,7 @@ export function SendContent() {
       // its private key is in the archive. The browser signs EIP-712
       // permit WITH THIS wallet, NOT the customer's main wallet.
       // Only the signature leaves the browser (no key, no plaintext).
-      const stealthWallet = new ethers.Wallet(archiveUsdc.privateKey);
+      const stealthWallet = await ethersUtils.createWallet(archiveUsdc.privateKey);
       // Read nonces + DOMAIN_SEPARATOR + name + version via raw
       // fetch — ethers JsonRpcProvider silently fails on browser
       // CORS preflights for some Base RPCs, which was causing the
@@ -311,7 +311,7 @@ export function SendContent() {
       // key (stored in localStorage). The customer's main wallet
       // never sees, never signs.
       const sig = await stealthWallet.signTypedData(domain, types, message);
-      const { v, r, s } = ethers.Signature.from(sig);
+      const { v, r, s } = await ethersUtils.parseSignature(sig);
 
       setPermitStep("submitting");
       const submitRes = await axios.post(`${API}/usdc-permit-forwarder/submit`, {
@@ -525,8 +525,8 @@ export function SendContent() {
       const usdcAddr = CHAINS[chain]?.contracts?.usdc ||
         "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
       const decimals = 6;
-      const amountRaw = ethers.parseUnits(amount, decimals);
-      const usdc = new ethers.Contract(usdcAddr,
+      const amountRaw = ethersUtils.parseUnits(amount, decimals);
+      const usdc = await ethersUtils.createContract(usdcAddr,
         ["function transfer(address to, uint256 amount) returns (bool)"],
         signer);
       const tx = await usdc.transfer(stealthTarget, amountRaw);
@@ -609,7 +609,7 @@ export function SendContent() {
     }
     setSending(true);
     try {
-      const amountWei = ethers.parseEther(amount);
+      const amountWei = ethersUtils.parseEther(amount);
       const tx = await signer.sendTransaction({
         to: stealthTarget,
         value: amountWei,
@@ -673,19 +673,19 @@ export function SendContent() {
     if (!archiveEth) return toast.error("No ETH in your stealth. Use Deposit mode to fund your stealth first.", { duration: 6000 });
     setSending(true);
     try {
-      const amountWei = ethers.parseEther(amount);
+      const amountWei = ethersUtils.parseEther(amount);
 
       // Re-verify the stealth's live ETH balance.
       const { readEthBalance } = await import("@/lib/balance-reader");
       const liveBalance = await readEthBalance(archiveEth.address);
       if (liveBalance < amountWei + 100000n) {
-        const liveHuman = ethers.formatEther(liveBalance);
+        const liveHuman = ethersUtils.formatEther(liveBalance);
         return toast.error(`Stealth only has ${parseFloat(liveHuman).toFixed(6)} ETH. Deposit more first.`, { duration: 6000 });
       }
 
       // Sign with the stealth key locally — no wallet popup.
-      const provider = new ethers.JsonRpcProvider(CHAINS[chain]?.rpcUrl);
-      const stealthWallet = new ethers.Wallet(archiveEth.privateKey, provider);
+      const provider = await ethersUtils.createProvider(CHAINS[chain]?.rpcUrl);
+      const stealthWallet = await ethersUtils.createWallet(archiveEth.privateKey, provider);
       const tx = await stealthWallet.sendTransaction({
         to: recipient,
         value: amountWei,

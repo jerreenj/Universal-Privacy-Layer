@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { Check, Key, AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { API } from "@/config/chains";
@@ -37,8 +37,8 @@ export function DualSeedSetup() {
     if (!address) return toast.error("Connect main wallet first");
     setLoading(true);
     try {
-      const spendKey = ethers.keccak256(ethers.toUtf8Bytes(privacySeed + "_spend"));
-      const viewKey = ethers.keccak256(ethers.toUtf8Bytes(privacySeed + "_view"));
+      const spendKey = await ethersUtils.keccak256(await ethersUtils.toUtf8Bytes(privacySeed + "_spend"));
+      const viewKey = await ethersUtils.keccak256(await ethersUtils.toUtf8Bytes(privacySeed + "_view"));
       await axios.post(`${API}/wallet/register-privacy`, { main_address: address, privacy_spend_key: spendKey, privacy_view_key: viewKey });
       setPrivacyWallet({ spendKey, viewKey, registered: true });
       setMainSeed(''); setPrivacySeed(''); setCreated(null);

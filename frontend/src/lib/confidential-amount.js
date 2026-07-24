@@ -32,7 +32,7 @@
  * small-denomination, and the customer's EOA is the only address that
  * ever appears as msg.sender (atomic vault call, no public router hop).
  */
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 
 /// @notice Domain separator hard-coded into the on-chain commitment
 ///         scheme. Matches `uint8(0x42)` inside ConfidentialNativePrivateSwap.sol.

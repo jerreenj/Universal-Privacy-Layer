@@ -19,7 +19,7 @@
  */
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { Loader2, ExternalLink, Check, Lock, ArrowDown, CheckCircle2, X } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";

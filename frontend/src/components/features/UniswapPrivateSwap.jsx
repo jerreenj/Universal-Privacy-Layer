@@ -1,6 +1,6 @@
 import { useState } from "react";
 import axios from "axios";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { Shield, TrendingUp, RefreshCw, Loader2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { API, CHAINS } from "@/config/chains";

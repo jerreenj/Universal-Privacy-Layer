@@ -162,7 +162,7 @@ export function Dashboard() {
     } catch {}
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line
   useEffect(() => {
     // ALWAYS start on USDC. We deliberately do NOT read a stale
     // localStorage preference — the pilot asked for USDC primary by
@@ -194,7 +194,7 @@ export function Dashboard() {
     };
   }, [tokenMenuOpen]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line
   useEffect(() => {
     // Take over scroll management from the browser.
     if ("scrollRestoration" in history) {
@@ -215,7 +215,7 @@ export function Dashboard() {
     fromHash(); // sync on mount
     window.addEventListener("popstate", fromHash);
     return () => window.removeEventListener("popstate", fromHash);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, []);
 
   // ── Scroll-preservation across feature navigation ─────────────────

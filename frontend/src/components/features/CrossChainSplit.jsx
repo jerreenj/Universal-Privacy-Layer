@@ -1,6 +1,6 @@
 import { useState } from "react";
 import axios from "axios";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import {
   Fingerprint, Plus, Minus, Check, AlertTriangle, Loader2, Zap, Split, ExternalLink
 } from "lucide-react";

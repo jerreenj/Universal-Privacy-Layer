@@ -28,7 +28,7 @@
  *   Proxy private key + address cached in localStorage so the
  *   customer doesn't re-sign every session.
  */
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import axios from "axios";
 import { getAddressArchive } from "./wallet-stealth";
 import { readUsdcBalance, readEthBalance } from "./balance-reader";

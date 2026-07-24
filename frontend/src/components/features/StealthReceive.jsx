@@ -12,7 +12,7 @@
  *      sweep any matches into the customer's normal wallet.
  */
 import { useState, useCallback, useEffect } from "react";
-import { ethers } from "ethers";
+import * as ethersUtils from "@/lib/ethers-lazy";
 import { QRCodeSVG } from "qrcode.react";
 import { ScanLine, Loader2, ArrowDownLeft, ExternalLink, Zap, Upload, Key, QrCode, Download } from "lucide-react";
 import { toast } from "sonner";
