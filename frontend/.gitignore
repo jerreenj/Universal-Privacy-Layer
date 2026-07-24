@@ -5,6 +5,11 @@
 /.pnp
 .pnp.js
 
+# lockfiles — this project uses Yarn (yarn.lock is the source of truth).
+# Never commit npm's package-lock.json alongside yarn.lock; it causes
+# drift and CI ambiguity.
+package-lock.json
+
 # testing
 /coverage
 
