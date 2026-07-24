@@ -36,7 +36,7 @@ contract NoteSettlementTest is Test {
     function test_invalid_proof_reverts() public {
         MockVerifierReject rejectVerifier = new MockVerifierReject();
         NoteSettlement badSettlement = new NoteSettlement(address(rejectVerifier));
-        
+
         // Set revenue wallet before testing proof validation
         badSettlement.setRevenueWallet(address(0x999));
 

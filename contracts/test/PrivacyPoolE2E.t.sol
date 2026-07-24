@@ -59,7 +59,7 @@ contract PrivacyPoolE2ETest is Test {
         _denoms[0] = DENOM;
         pool = new PrivacyPool(address(verifier), _denoms);
         vm.deal(address(this), 100 ether);
-        
+
         // Set revenue wallet (required for withdraw with fees)
         pool.setRevenueWallet(address(0xDEAD));
     }

@@ -42,10 +42,14 @@ fs_permissions = [
 # scripts/prove_withdraw_ffi.js for snarkjs proof generation.
 ffi = true
 
-# Snarkjs-generated verifiers are NOT formatted — exclude them from
+# Snarkjs-generated verifiers are NOT formatted — ignore them from
 # `forge fmt --check` to avoid CI failures on every regeneration.
+# NOTE: the correct key is `ignore` (Foundry 1.7+). The prior `exclude`
+# key was never recognized — forge warned "Found unknown `exclude` config
+# key" and the verifiers were silently NOT excluded, which is why
+# test_forge_fmt_clean kept failing on ConfidentialNotesVerifier.sol.
 [fmt]
-exclude = [
+ignore = [
     "src/ConfidentialNotesVerifier.sol",
     "src/SpendVerifier.sol",
     "src/ConfidentialTransferVerifier.sol",

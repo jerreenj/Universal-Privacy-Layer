@@ -242,7 +242,7 @@ contract PrivacyPool is Ownable, ReentrancyGuard {
 
         // ─── Fee collection (1% to revenue wallet) ─────────────────────────
         if (revenueWallet == address(0)) revert RevenueWalletNotSet();
-        
+
         // Calculate fee: 1% of denomination (100 bps / 10000 = 1%)
         uint256 fee = (denomination * _feeBps) / FEE_DENOMINATOR;
         uint256 recipientAmount = denomination - fee;

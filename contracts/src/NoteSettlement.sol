@@ -111,7 +111,7 @@ contract NoteSettlement is Ownable, ReentrancyGuard {
         address recipient
     ) external nonReentrant {
         require(revenueWallet != address(0), "Revenue wallet not set");
-        
+
         uint256 nullifierHash = pubSignals[0];
         uint256 amount = pubSignals[1];
 

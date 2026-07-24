@@ -185,7 +185,7 @@ contract PrivacyPoolTest is Test {
 
         uint256 fee = (DENOM * FEE_BPS) / FEE_DENOM;
         uint256 recipientAmount = DENOM - fee;
-        
+
         assertEq(recipient.balance, recipientBalBefore + recipientAmount, "recipient not paid 99%");
         assertEq(revenueWallet.balance, revenueBalBefore + fee, "revenue wallet not paid 1% fee");
         assertTrue(pool.nullifierHashes(nullifierHash), "nullifier not marked spent");
